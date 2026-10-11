@@ -496,7 +496,8 @@ def test_the_viewer_without_bridging_has_no_bridge_keys():
     assert [shortcut.key for shortcut in browser.prefix_keys.available()] == ["y", "o", "q"]
     assert browser.prefix_keys.summary() == "Ctrl+/ Keys"
     assert not any(
-        label in {"Summarize", "Merge to /tree"} for _, label in browser.prefix_keys.hint_rows()
+        label in {"Summarize", "Merge into conversation"}
+        for _, label in browser.prefix_keys.hint_rows()
     )
     keys = {binding.keys for binding in browser.app.key_bindings.bindings if binding.filter()}
     assert ("c-s",) not in keys and ("c-t",) not in keys

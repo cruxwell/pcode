@@ -652,7 +652,7 @@ these actions alongside the current popup's navigation and editing keys:
 
 | Popup | Shortcuts |
 | --- | --- |
-| `/btw` | `r` reply · `y` copy · `o` link · `s` summarize · `t` merge to `/tree` · `k` stop (or type `/copy`, `/links`, `/summarize`, `/merge`, `/stop` in the follow-up editor) |
+| `/btw` | `r` reply · `y` copy · `o` link · `s` summarize · `t` merge into the conversation · `k` stop (or type `/copy`, `/links`, `/summarize`, `/merge`, `/stop` in the follow-up editor) |
 | `/tools` | `f` search · `x` failures only · `e` edits only · `t` tool filter · `y` copy command · `o` copy output |
 | `/diffs` | `f` search the focused pane · `s` / `r` next / previous match · `v` next view · `n` note · `a` mark reviewed · `e` open in editor · `g` refresh |
 | `/resume` | `f` search · `r` prompts only · `g` all workspaces · `x` delete (twice) |
