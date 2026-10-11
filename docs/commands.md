@@ -676,48 +676,33 @@ whichever pane is under the pointer. In tmux, mouse events reach pcode only with
 
 ### Selecting and copying text in popups
 
-Drag across a popup's text pane (an answer, a diff's details, job output,
-session info) and pcode highlights the text and copies it when you let go.
-Double-click copies a word, and triple-click copies a whole line, including the
-parts that wrapped onto the rows below it. The popup's notice line says what
-was copied.
+Drag across text in any popup pane and pcode highlights it and copies it when
+you let go, whether or not that pane has focus. Double-click copies a word,
+such as a session ID in `/resume`'s list, and triple-click copies a whole line,
+including any parts that wrapped onto the rows below it. The popup's notice
+line says what was copied.
+
+This works in answer and output panes, the `/diffs` diff and file list, and the
+lists in `/resume`, `/tree`, `/tools`, `/btw`, jobs and agents. A plain click
+never copies, so clicking a row in a list still just selects it.
 
 pcode selects the text itself rather than leaving it to the terminal, so the
 copy is what the pane shows, not the screen rows it happens to sit on:
 
 - A selection stays inside its pane, so frame borders and the pane beside it
   never end up in the copy.
-- Lines the pane wrapped come back as one line. A list item's hanging indent,
-  a quote's `▌` gutter and a code block's padding on the wrapped rows are left
-  out.
+- Lines a text pane wrapped come back as one line. A list item's hanging
+  indent, a quote's `▌` gutter and a code block's padding on the wrapped rows
+  are left out.
 - Hard line breaks stay, so copied code keeps its lines.
 
 The copy uses the same clipboard path as **Ctrl+Y**, so it works over ssh and in
 tmux under the same conditions.
 
-### Using the terminal's own selection
-
-Most terminals still do their own selection while you hold a modifier and drag
-(usually Shift; Option in iTerm2). On macOS, Ctrl+click counts as a right-click,
-so it won't start a drag.
-
-**Ctrl+Q** (or your configured [shortcut prefix](#shortcut-prefix) with `q`)
-hands the mouse to the terminal while a popup stays open: a plain drag selects
-text again, and the same shortcut once more takes clicks and the wheel back.
-Contextual help says which it will do next ("Release mouse" or "Capture mouse"). It lasts until
-the popup closes and works in every popup with shortcuts, from any pane, the
-search line and the `/btw` editor included. In tmux with `mouse on`, a released
-drag goes to tmux's copy mode instead; hold the modifier above for the
-terminal's own selection. To leave the mouse to the terminal in every popup
-instead, giving up clicks, the wheel and pcode's own selection:
-
-```sh
-pcode config set popup_mouse off
-```
-
-Terminals with alternate scroll mode still turn the wheel into ↑/↓ then, moving
-the selection or the pane a line at a time. The setting is read as each popup
-opens, so no restart is needed.
+(The terminal's own selection is still there if you need it, though it ignores
+pane borders and wrapping: hold Shift, or Option in iTerm2, while you drag, or
+press **Ctrl+Q** to hand the mouse to the terminal until you press it again.
+`pcode config set popup_mouse off` does that for every popup.)
 
 ## Diff browser
 

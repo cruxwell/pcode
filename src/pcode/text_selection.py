@@ -21,7 +21,9 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 
 from prompt_toolkit.application import get_app
+from prompt_toolkit.data_structures import Point
 from prompt_toolkit.formatted_text import StyleAndTextTuples
+from prompt_toolkit.layout.processors import Processor, Transformation, TransformationInput
 from prompt_toolkit.layout.utils import explode_text_fragments
 from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
 from rich._wrap import divide_line  # How Text.wrap finds its breaks.
@@ -153,28 +155,6 @@ def copy_selected(text: str) -> str:
     return f"Copied {size}" + (" (truncated)" if truncated else "")
 
 
-def copy_on_select(area, on_select: Callable[[str], None]) -> None:
-    """Hand a TextArea's mouse selection to ``on_select`` when the button comes up.
-
-    prompt_toolkit already drags and double-clicks a buffer selection, and a
-    buffer holds its text unwrapped, so only the copy is missing.
-    """
-    control = area.control
-    handle = control.mouse_handler
-
-    def handler(event: MouseEvent):
-        result = handle(event)
-        buffer = area.buffer
-        if event.event_type == MouseEventType.MOUSE_UP and buffer.selection_state is not None:
-            # What the highlight shows, without clearing it as copy_selection would.
-            selected = buffer.document.cut_selection()[1].text.strip("\n")
-            if selected:
-                on_select(selected)
-        return result
-
-    control.mouse_handler = handler
-
-
 Position = tuple[int, int]  # (row, character index)
 
 
@@ -206,8 +186,11 @@ class Selection:
     def columns(self, row: int) -> tuple[int, int] | None:
         """Selected character indices on ``row``, end exclusive."""
         span = self.span()
+        # Checked before rows(): a processor asks this of every drawn row.
+        if span is None or not span[0][0] <= row <= span[1][0]:
+            return None
         rows = self.rows()
-        if span is None or not span[0][0] <= row <= span[1][0] or row >= len(rows):
+        if row >= len(rows):
             return None
         (first_row, first_index), (last_row, last_index) = span
         start = first_index if row == first_row else 0
@@ -316,3 +299,67 @@ class Selection:
                 self.anchor, self.cursor = (number, match.start()), (number, match.end() - 1)
                 self.active = True
                 return
+
+
+def copy_drags(area, notify: Callable[[str], None]) -> None:
+    """Drag-to-copy over a read-only TextArea, reporting each copy through ``notify``.
+
+    A press still reaches the area, so a click moves its cursor, which is how
+    a list selects its row. The drag, the release and double- and
+    triple-clicks are tracked here instead of in the buffer's own selection:
+    that one only works once the area has focus, and a list rebuilding its
+    text on a timer moves the cursor under a click, which the buffer then
+    reads as a drag.
+    """
+    control = area.control
+    handle = control.mouse_handler
+    selection = Selection(
+        lambda: [Row(line) for line in area.document.lines],
+        lambda text: notify(copy_selected(text)),
+    )
+
+    def source(event: MouseEvent) -> MouseEvent:
+        # The window reports drawn columns; a prompt or an ellipsis shifts them.
+        x, y = event.position.x, event.position.y
+        processed = control._last_get_processed_line
+        if processed is not None:
+            try:
+                x = processed(y).display_to_source(x)
+            except IndexError:
+                pass
+        return MouseEvent(Point(x, y), event.event_type, event.button, event.modifiers)
+
+    def handler(event: MouseEvent):
+        kind = event.event_type
+        if kind in (MouseEventType.SCROLL_UP, MouseEventType.SCROLL_DOWN):
+            return handle(event)
+        if kind == MouseEventType.MOUSE_DOWN:
+            taken = selection.handle(source(event)) is None
+            result = handle(event)
+            return None if taken else result
+        if not selection.pressed:
+            # A drag that began elsewhere: never the buffer's own selection.
+            return None if kind == MouseEventType.MOUSE_UP else NotImplemented
+        selection.handle(source(event))
+        clicked = event.event_type == MouseEventType.MOUSE_UP and selection.span() is None
+        if clicked and get_app().layout.current_control is not control:
+            # A plain click on an unfocused area: let it focus, if it does that.
+            handle(event)
+        return None
+
+    def forget(_) -> None:
+        if not selection.pressed:
+            selection.clear()
+
+    class Highlight(Processor):
+        def apply_transformation(self, ti: TransformationInput) -> Transformation:
+            columns = selection.columns(ti.lineno)
+            if columns is None:
+                return Transformation(ti.fragments)
+            return Transformation(highlight(ti.fragments, *columns))
+
+    control.mouse_handler = handler
+    # First, so it sees the buffer's own columns before a prompt or an ellipsis.
+    control.input_processors.insert(0, Highlight())
+    area.buffer.on_text_changed += forget
+    area.buffer.on_cursor_position_changed += forget

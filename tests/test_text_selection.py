@@ -254,14 +254,17 @@ def test_a_drag_in_a_framed_pane_copies_neither_the_border_nor_the_neighbour():
     assert copied == [f"Copied {len(text)} characters"]
 
 
-def test_a_read_only_text_area_copies_its_drag_selection():
+def test_a_read_only_text_area_copies_and_shows_its_drag_selection():
+    """Screen columns map back past a prompt, and the drag is drawn selected."""
     from prompt_toolkit.widgets import TextArea
 
-    from pcode.text_selection import copy_on_select
+    from pcode.text_selection import copy_drags
 
-    area = TextArea(text="Session  abc123\nPath     /tmp/somewhere", read_only=True)
-    copied = []
-    copy_on_select(area, copied.append)
+    area = TextArea(text="Session  abc123\nPath     /tmp/somewhere", read_only=True, prompt="> ")
+    notices = []
+    copy_drags(area, notices.append)
+
+    drawn = []
 
     async def run():
         with create_pipe_input() as pipe:
@@ -275,11 +278,18 @@ def test_a_read_only_text_area_copies_its_drag_selection():
             task = asyncio.create_task(app.run_async())
             try:
                 await asyncio.sleep(0.05)
-                pipe.send_text("\x1b[<0;10;2M\x1b[<32;24;2M\x1b[<0;24;2m")
+                # The prompt shifts the first row: screen column 12 is "a".
+                pipe.send_text("\x1b[<0;12;1M\x1b[<32;26;1M\x1b[<0;26;1m")
                 await asyncio.sleep(0.05)
+                line = area.control.create_content(40, 5).get_line(0)
+                drawn.append("".join(t for style, t, *_ in line if "selected" in style).rstrip())
             finally:
                 app.exit()
                 await task
 
-    asyncio.run(run())
-    assert copied == ["/tmp/somewhere"]
+    with patch("pcode.text_selection.copy_to_clipboard", return_value=(True, False)) as copy:
+        asyncio.run(run())
+    copy.assert_called_once()
+    assert copy.call_args.args[0] == "abc123"
+    assert notices == ["Copied 6 characters"]
+    assert drawn == ["abc123"]

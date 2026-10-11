@@ -28,6 +28,7 @@ from pcode.popup_ui import (
 )
 from pcode.prefix_keys import PrefixKeys
 from pcode.shell import preview_text
+from pcode.text_selection import copy_drags
 from pcode.tool_display import command_text
 
 REFRESH_SECONDS = 0.5
@@ -124,6 +125,7 @@ class JobBrowser:
         self._rendered: tuple | None = None
         self._refreshing = False
         self.list = TextArea(read_only=True, wrap_lines=False, scrollbar=True)
+        copy_drags(self.list, lambda text: setattr(self, "notice", text))
         self.list.window.cursorline = Always()
         self.detail = RichPane(
             theme=rich_theme,

@@ -84,6 +84,9 @@ POPUP_STYLE = Style.from_dict(
         "popup frame.label": f"{_NATIVE} bold",
         "popup shadow": _NATIVE,
         "popup text-area last-line": "nounderline",
+        # A list row is already drawn in the selection's reverse video, so a
+        # drag inside it would not show: underline it instead.
+        "popup cursor-line selected": "underline",
     }
 )
 # These are fallbacks for standalone popups without a caller theme. Keep them

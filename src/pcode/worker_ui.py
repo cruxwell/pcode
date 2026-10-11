@@ -27,6 +27,7 @@ from pcode.prefix_keys import PrefixKeys
 from pcode.runtime import ToolSummary
 from pcode.session_ui import literal
 from pcode.task_prompt import TaskPrompt
+from pcode.text_selection import copy_drags
 from pcode.tool_display import label, plain
 from pcode.tool_panel import ACTIVE_TASK_ICON, AGENT_ICON, plan_row
 from pcode.workers import Worker, Workers
@@ -104,6 +105,7 @@ class WorkerBrowser:
         self._refreshing = False
         self.notice = ""
         self.list = TextArea(read_only=True, wrap_lines=False, scrollbar=True)
+        copy_drags(self.list, lambda text: setattr(self, "notice", text))
         self.list.window.cursorline = Always()
         self.detail = RichPane(
             theme=rich_theme,

@@ -431,3 +431,83 @@ def test_anchor_on_an_empty_last_renderable_stays_on_a_real_line():
     assert content.line_count == 2
     assert content.cursor_position.y == 1
     content.get_line(content.cursor_position.y)
+
+
+@pytest.mark.parametrize("pane", ["files", "diff"])
+def test_diff_browser_panes_copy_a_drag_but_never_a_click(tmp_path, pane):
+    """Drags copy even while the search line has focus; clicks never copy."""
+    from pcode.edit_ui import DiffBrowser
+    from pcode.git_diff import Review
+    from pcode.runtime import EditCompleted
+
+    def event(kind, column, row=0, button=MouseButton.LEFT):
+        return MouseEvent(Point(column, row), kind, button, frozenset())
+
+    def click(column, row=0):
+        handle(event(MouseEventType.MOUSE_DOWN, column, row))
+        handle(event(MouseEventType.MOUSE_UP, column, row, MouseButton.NONE))
+
+    async def run():
+        nonlocal handle
+        with create_pipe_input() as pipe:
+            browser = DiffBrowser(
+                Review("t", [EditCompleted("1", "a.py", "edited", "+x", added=1)], "none"),
+                input=pipe,
+                output=DummyOutput(),
+            )
+            area = getattr(browser, pane)
+            task = asyncio.create_task(browser.app.run_async())
+            try:
+                await asyncio.sleep(0.05)
+                assert not browser.app.layout.has_focus(area)
+                handle = area.control.mouse_handler
+                first = area.text.splitlines()[0]
+                with patch(
+                    "pcode.text_selection.copy_to_clipboard", return_value=(True, False)
+                ) as copy:
+                    handle(event(MouseEventType.MOUSE_DOWN, 0))
+                    handle(event(MouseEventType.MOUSE_MOVE, 2))
+                    handle(event(MouseEventType.MOUSE_UP, 2, button=MouseButton.NONE))
+                    assert copy.call_args.args[0] == first[:3]
+                    assert browser.notice == "Copied 3 characters"
+                    word = first.index(first.split()[0]) + 1
+                    await asyncio.sleep(0.5)  # Past the double-click window.
+                    click(word)
+                    click(word)
+                    assert copy.call_args.args[0] == first.split()[0]
+                    await asyncio.sleep(0.5)
+                    browser.app.layout.focus(area)
+                    # A list rebuilt on a timer moves the cursor under a click.
+                    handle(event(MouseEventType.MOUSE_DOWN, word))
+                    area.buffer.cursor_position = 0
+                    handle(event(MouseEventType.MOUSE_UP, word, button=MouseButton.NONE))
+                    # Quick clicks on two different spots are not a double-click.
+                    click(word + 1)
+                    click(word + 2)
+                    # A drag from another pane ending here selects nothing in the buffer.
+                    handle(event(MouseEventType.MOUSE_MOVE, 3))
+                    handle(event(MouseEventType.MOUSE_UP, 3, button=MouseButton.NONE))
+                    assert area.buffer.selection_state is None
+                    # The wheel still scrolls mid-drag: the window handles it.
+                    handle(event(MouseEventType.MOUSE_DOWN, 0))
+                    wheel = event(MouseEventType.SCROLL_DOWN, 0, button=MouseButton.NONE)
+                    assert handle(wheel) is NotImplemented
+                    handle(event(MouseEventType.MOUSE_UP, 0, button=MouseButton.NONE))
+                assert copy.call_count == 2
+            finally:
+                browser.app.exit()
+                await task
+
+    handle = None
+    asyncio.run(run())
+
+
+def test_a_selection_inside_the_cursor_row_still_shows():
+    """Selection and the cursor row share one reverse highlight; the overlap underlines."""
+    from prompt_toolkit.styles import Style
+
+    from pcode.popup_ui import popup_style
+
+    style = popup_style(Style.from_dict({"selected": "reverse", "cursor-line": "reverse"}))
+    attrs = style.get_attrs_for_style_str("class:popup class:cursor-line class:selected")
+    assert attrs.underline and attrs.reverse

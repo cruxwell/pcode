@@ -51,6 +51,7 @@ from pcode.popup_ui import (
 from pcode.prefix_keys import PrefixKeys
 from pcode.session_ui import literal
 from pcode.task_prompt import TaskPrompt
+from pcode.text_selection import copy_drags
 from pcode.tool_display import plain
 from pcode.ui import StatusLine, status_parts, status_spinner
 
@@ -173,6 +174,7 @@ class AsideBrowser:
         # The copy or link picker over the viewer, while one is open.
         self.picker: CopyPicker | LinkPicker | None = None
         self.list = TextArea(read_only=True, wrap_lines=False, scrollbar=True)
+        copy_drags(self.list, lambda text: setattr(self, "notice", text))
         self.list.window.cursorline = Always()
         self.detail = RichPane(
             theme=rich_theme,

@@ -44,6 +44,7 @@ from pcode.popup_ui import (
 )
 from pcode.prefix_keys import PrefixKeys
 from pcode.runtime import EditCompleted
+from pcode.text_selection import copy_drags
 
 NO_MATCH = "No matching files."
 PROMPTS = {"paths": "Search paths: ", "diffs": "Search diff lines: "}
@@ -398,9 +399,11 @@ class DiffBrowser:
         self.query = TextArea(height=1, prompt=lambda: PROMPTS[self.scope], multiline=False)
         self.note = TextArea(height=1, prompt=self.note_prompt, multiline=False)
         self.files = TextArea(read_only=True, wrap_lines=False, scrollbar=True)
+        copy_drags(self.files, lambda text: setattr(self, "notice", text))
         self.files.window.cursorline = Always()
         self.lexer = DiffLexer(code_theme)
         self.diff = TextArea(read_only=True, wrap_lines=False, scrollbar=True, lexer=self.lexer)
+        copy_drags(self.diff, lambda text: setattr(self, "notice", text))
         self.diff.window.cursorline = Always()
         self.query.buffer.on_text_changed += lambda _: self.refresh(first_match=True)
         self.files.buffer.on_cursor_position_changed += lambda _: self.follow_files()

@@ -36,6 +36,7 @@ from pcode.popup_ui import (
     steer_list_from_query,
 )
 from pcode.prefix_keys import PrefixKeys
+from pcode.text_selection import copy_drags
 
 STATE_STYLES = {"failed": "bold red", "succeeded": "bold green", "running": "bold yellow"}
 
@@ -207,6 +208,7 @@ class ToolInspector:
         self._refreshing = False
         self.query = TextArea(height=1, prompt="Search tools/commands: ", multiline=False)
         self.list = TextArea(read_only=True, wrap_lines=False, scrollbar=True)
+        copy_drags(self.list, lambda text: setattr(self, "notice", text))
         self.list.window.cursorline = Always()
         self.detail = RichPane(
             theme=rich_theme,

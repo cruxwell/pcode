@@ -37,6 +37,7 @@ from pcode.popup_ui import (
 from pcode.prefix_keys import PrefixKeys
 from pcode.session_ui import literal
 from pcode.task_prompt import TaskPrompt
+from pcode.text_selection import copy_drags
 
 Selection = tuple[str | None, bool]
 
@@ -73,6 +74,7 @@ class TreeBrowser:
         # The quote/code picker over the tree, while one is open.
         self.picker: SnippetPicker | None = None
         self.list = TextArea(read_only=True, wrap_lines=False, scrollbar=True)
+        copy_drags(self.list, lambda text: setattr(self, "notice", text))
         self.list.window.cursorline = Always()
         self.detail = RichPane(
             theme=rich_theme,
