@@ -397,10 +397,8 @@ def test_a_viewer_the_user_opened_reads_in_its_editor():
 
             try:
                 await asyncio.sleep(0.05)
-                # Several threads: the list comes first, since there is a choice.
-                assert app.layout.has_focus(browser.list)
-                await press("\r")
-                # Choosing one lands in the editor, so the follow-up is just typed.
+                # Several threads: still opens in the newest one's editor, so
+                # the follow-up is just typed; the list is an Esc away.
                 assert not browser.listing()
                 assert app.layout.has_focus(browser.input.area)
                 await press("and why?\r")
@@ -415,6 +413,11 @@ def test_a_viewer_the_user_opened_reads_in_its_editor():
                 # Empty, Esc goes back to the list as the answer's Esc would.
                 await press("\x1b", wait=0.7)
                 assert browser.listing() and app.layout.has_focus(browser.list)
+                # Choosing a thread from it lands in the editor again.
+                await press("\r")
+                assert not browser.listing()
+                assert app.layout.has_focus(browser.input.area)
+                await press("\x1b", wait=0.7)
                 assert not task.done()
                 pipe.send_text("\x1b")
                 await asyncio.wait_for(task, 2)

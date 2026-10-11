@@ -68,7 +68,7 @@ single name (`/co`) is enough on its own:
 | `/copy` | Choose an answer from this thread to copy, as Ctrl+Y |
 | `/links` | Open a link from the thread, as Ctrl+O |
 | `/summarize [focus]` | Summarize into the conversation, keeping what *focus* says, as Ctrl+S |
-| `/merge` | Merge into `/tree`, as Ctrl+T |
+| `/merge` | Merge into the conversation, as Ctrl+T |
 | `/stop` | Stop running side questions, as Ctrl+K |
 
 A follow-up that starts with a path of more than one part, such as
@@ -99,10 +99,11 @@ question can become a short back-and-forth without leaving the popup. Press
 Shift+Enter, where the terminal reports it) adds a line. The draft grows to six
 rows before it scrolls, and **PgUp / PgDn** scroll the answer while you type.
 **Escape** leaves the editor and keeps the draft, returning to the list, or to
-the answer when the list is hidden; from there Escape works as above. The
-viewer always opens on the list (or the answer, for a single thread), never in
-the editor, because it can open by itself while you are typing at the main
-prompt.
+the answer when the list is hidden; from there Escape works as above. A bare
+`/btw` opens on the newest thread with the cursor in this editor, so a
+follow-up is just typed. When the viewer opens by itself because an answer
+arrived, it starts on the list (or the answer, for a single thread) instead,
+since you may be mid-keystroke at the main prompt.
 
 A follow-up joins the selected question's **thread**. The list shows one row per
 thread, with a follow-up count, and the answer pane shows the whole exchange in
@@ -150,7 +151,7 @@ so the conversation's cache still covers everything before it. While the summary
 runs, the footer shows it like `/compact`, prompts you send wait behind it, and
 Ctrl+C cancels it with the conversation unchanged.
 
-**Ctrl+T: Merge into `/tree`.** Every answered question in the thread becomes a node
+**Ctrl+T: Merge into the conversation.** Every answered question in the thread becomes a node
 in the [conversation tree](conversation-tree.md), marked `btw:`, forked from the
 point where the thread was asked. Each one is a checkpoint like a turn's:
 selecting it in `/tree` continues from that answer, and it survives resuming the

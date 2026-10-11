@@ -164,8 +164,10 @@ class AsideBrowser:
         self._refreshing = False
         # Enter on the list reads the selected thread full width; Esc brings
         # the list back. A viewer opened on a lone thread starts reading, so
-        # one that arrives meanwhile does not pull the list in beside it.
-        self.reading = len(self.threads) <= 1
+        # one that arrives meanwhile does not pull the list in beside it. One
+        # opened to type in (`edit`) starts reading the newest thread too, with
+        # the cursor in its editor; Esc shows the list.
+        self.reading = len(self.threads) <= 1 or self.edit
         self._ids: list[str] = []
         self.notice = ""
         # The copy or link picker over the viewer, while one is open.
@@ -247,7 +249,7 @@ class AsideBrowser:
                         submit=lambda text: self.finish(Bridge(thread, "summary", text)),
                     )
 
-            @shortcuts.add("t", "Merge to /tree", filter=idle)
+            @shortcuts.add("t", "Merge into conversation", filter=idle)
             def merge(event):
                 if self.bridgeable():
                     self.finish(Bridge(self.selected, "merge"))
@@ -451,7 +453,9 @@ class AsideBrowser:
                     lambda focus: bridge("summary", focus),
                     argument="[focus]",
                 ),
-                PopupCommand("/merge", "Merge to /tree", lambda _: bridge("merge", "")),
+                PopupCommand(
+                    "/merge", "Merge into the conversation", lambda _: bridge("merge", "")
+                ),
             ]
         commands.append(PopupCommand("/stop", "Stop running answers", lambda _: self.stop()))
         return commands
