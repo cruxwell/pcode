@@ -705,7 +705,10 @@ SETTINGS = {
     "popup_mouse": Setting(
         "on",
         ("on", "off"),
-        description="Mouse clicks and wheel scrolling in popups; off keeps native text selection",
+        description=(
+            "Mouse clicks, wheel scrolling and drag-to-copy in popups; "
+            "off leaves text selection to the terminal"
+        ),
     ),
     # Read when a side answer settles, so `/config set` applies without a restart.
     "btw_auto_open": Setting(

@@ -208,7 +208,11 @@ class ToolInspector:
         self.query = TextArea(height=1, prompt="Search tools/commands: ", multiline=False)
         self.list = TextArea(read_only=True, wrap_lines=False, scrollbar=True)
         self.list.window.cursorline = Always()
-        self.detail = RichPane(theme=rich_theme, color_system=color_system)
+        self.detail = RichPane(
+            theme=rich_theme,
+            color_system=color_system,
+            notify=lambda text: setattr(self, "notice", text),
+        )
         self.query.buffer.on_text_changed += lambda _: self.refresh()
         self.list.buffer.on_cursor_position_changed += lambda _: self.select()
         keys = KeyBindings()

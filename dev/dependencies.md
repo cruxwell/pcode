@@ -861,6 +861,23 @@ Persistence is intentional even when hidden. Do not promise secure deletion by
 toggling visibility or clearing terminal history, and do not backfill old sessions
 from potentially opaque native model history without a separate migration design.
 
+### Popup text selection and Rich's wrap points
+
+`text_selection.py` replaces `rich.text.Text.wrap` at import with a wrapper
+that does nothing unless `marked_rendering()` is active, which only
+`RichPane.fragments` enters. Inside it, each row Rich split gets zero-width
+markers (U+2062/U+2063 at the end for a fold or a word break, U+2064 where a
+continued row's text starts), which `unmark` strips before drawing. That is how
+a copy rejoins wrapped lines and drops indents and gutters. The marker is a
+ContextVar, so a Rich render on another thread or task never sees one.
+
+Rich pads a row before returning it, so the wrapper can't see whether a break
+was between words. It calls Rich's private `rich._wrap.divide_line` the way
+`Text.wrap` does to find out. Recheck both on a Rich upgrade:
+`tests/test_text_selection.py` fails if `Text.wrap` stops splitting on newlines
+before wrapping, or `divide_line` changes signature. A disagreement falls back
+to joining with a space rather than failing.
+
 ### Explicit newline key encodings
 
 `input_keys.py` installs a bounded per-parser interceptor around prompt_toolkit

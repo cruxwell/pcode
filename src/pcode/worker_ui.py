@@ -102,9 +102,14 @@ class WorkerBrowser:
         self.selected = latest.call_id if latest else None
         self._rendered: tuple | None = None
         self._refreshing = False
+        self.notice = ""
         self.list = TextArea(read_only=True, wrap_lines=False, scrollbar=True)
         self.list.window.cursorline = Always()
-        self.detail = RichPane(theme=rich_theme, color_system=color_system)
+        self.detail = RichPane(
+            theme=rich_theme,
+            color_system=color_system,
+            notify=lambda text: setattr(self, "notice", text),
+        )
         self.list.buffer.on_cursor_position_changed += lambda _: self.select()
         keys = KeyBindings()
         self.detail.bind_scrolling(keys)
@@ -139,6 +144,7 @@ class WorkerBrowser:
             lambda: (
                 f"Agents · {len(self.items)} this session · {self.workers.running()} running"
                 f" · read-only · thinking {'on' if self.show_thinking else 'off'}"
+                + (f" · {self.notice}" if self.notice else "")
             )
         )
         wide = VSplit(

@@ -74,7 +74,11 @@ class TreeBrowser:
         self.picker: SnippetPicker | None = None
         self.list = TextArea(read_only=True, wrap_lines=False, scrollbar=True)
         self.list.window.cursorline = Always()
-        self.detail = RichPane(theme=rich_theme, color_system=color_system)
+        self.detail = RichPane(
+            theme=rich_theme,
+            color_system=color_system,
+            notify=lambda text: setattr(self, "notice", text),
+        )
         # The pane always reports its top row as the cursor position, so this
         # marks whichever line the Tree selection scrolled to (or wherever the
         # Conversation pane was scrolled to by hand), the same "cursor-line"

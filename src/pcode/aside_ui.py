@@ -172,7 +172,11 @@ class AsideBrowser:
         self.picker: CopyPicker | LinkPicker | None = None
         self.list = TextArea(read_only=True, wrap_lines=False, scrollbar=True)
         self.list.window.cursorline = Always()
-        self.detail = RichPane(theme=rich_theme, color_system=color_system)
+        self.detail = RichPane(
+            theme=rich_theme,
+            color_system=color_system,
+            notify=lambda text: setattr(self, "notice", text),
+        )
         self.list.buffer.on_cursor_position_changed += lambda _: self.select()
         self.prefix_keys = shortcuts = PrefixKeys(key_prefix)
         shortcuts.set_help(self.help)

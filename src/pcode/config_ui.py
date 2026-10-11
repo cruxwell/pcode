@@ -86,7 +86,7 @@ class ConfigBrowser:
             ),
             always_hide_cursor=True,
         )
-        self.detail = RichPane()
+        self.detail = RichPane(notify=lambda text: setattr(self, "message", text))
         self._detail_text = None
         keys = KeyBindings()
         self.detail.bind_scrolling(keys)

@@ -39,6 +39,7 @@ from pcode.sessions import (
     session_turns,
 )
 from pcode.task_prompt import TaskPrompt
+from pcode.text_selection import copy_on_select, copy_selected
 from pcode.tool_display import plain, tool_summary_lines
 from pcode.worktree import SESSION_WORKTREE_PREFIX, repo_scope
 
@@ -144,7 +145,11 @@ class SessionBrowser:
             input_processors=[EllipsisProcessor()],
         )
         self.list.window.cursorline = Always()
-        self.detail = RichPane(theme=rich_theme, color_system=color_system)
+        self.detail = RichPane(
+            theme=rich_theme,
+            color_system=color_system,
+            notify=lambda text: setattr(self, "status", text),
+        )
         self.query.buffer.on_text_changed += lambda _: self.refresh(keep_selection=False)
         self.list.buffer.on_cursor_position_changed += lambda _: self.select()
         keys = KeyBindings()
@@ -508,6 +513,13 @@ def session_info_dialog(
         focus_on_click=True,
         width=fit_width(lines),
     )
+    notice = ""
+
+    def copied(text: str) -> None:
+        nonlocal notice
+        notice = copy_selected(text)
+
+    copy_on_select(body, copied)
     bindings = KeyBindings()
 
     @bindings.add("escape", eager=True)
@@ -532,7 +544,7 @@ def session_info_dialog(
         title="Session",
         body=HSplit(
             [
-                Label("/resume switches session", dont_extend_height=True),
+                Label(lambda: notice or "/resume switches session", dont_extend_height=True),
                 body,
                 Label(shortcuts.summary),
             ],

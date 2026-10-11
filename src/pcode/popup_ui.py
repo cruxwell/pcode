@@ -48,6 +48,14 @@ from pcode.frame import TITLE_CHROME, Frame, text_width
 from pcode.input_keys import configure_newline_keys
 from pcode.preferences import SETTINGS, load_preferences
 from pcode.prefix_keys import PrefixKeys
+from pcode.text_selection import (
+    Row,
+    Selection,
+    copy_selected,
+    highlight,
+    marked_rendering,
+    unmark,
+)
 
 # Rich writes Markdown links as OSC 8 hyperlinks on a terminal, but
 # prompt_toolkit's ANSI parser reads CSI only and spills the rest as literal
@@ -394,14 +402,23 @@ class RichPane:
     """
 
     def __init__(
-        self, *, theme: Theme | None = None, color_system: str | None = "truecolor"
+        self,
+        *,
+        theme: Theme | None = None,
+        color_system: str | None = "truecolor",
+        notify: Callable[[str], None] | None = None,
     ) -> None:
         self.theme = theme
         self.color_system = color_system
+        # Where a mouse copy reports itself, e.g. a popup's notice line.
+        self.notify = notify
         self.renderables: list = []
         self._version = 0
         self._cache: tuple[int, int, list, list[int]] | None = None
-        self._line_cache: tuple[int, int, list] | None = None
+        self._line_cache: tuple[int, int, list, list[Row]] | None = None
+        # The width last drawn at: selection coordinates mean nothing at another.
+        self._width = 0
+        self.selection = Selection(lambda: self.rows(self._width), self._copy)
         # Casefolded words marked wherever they appear, e.g. a search query.
         self.highlight: tuple[str, ...] = ()
         # Renderable index to scroll to on the next render, once the width is known.
@@ -421,6 +438,9 @@ class RichPane:
                 return len(pane.lines(width))
 
             def create_content(self, width, height):
+                if width != pane._width:
+                    pane.selection.clear()
+                    pane._width = width
                 lines = pane.lines(width)
                 if pane._anchor is not None:
                     # Line offsets depend on the wrap width, which only the
@@ -435,12 +455,21 @@ class RichPane:
                 pane.window.vertical_scroll = min(
                     pane.window.vertical_scroll, max(0, len(lines) - 1)
                 )
+                selected = pane.selection.columns
+
+                def get_line(row):
+                    columns = selected(row)
+                    return lines[row] if columns is None else highlight(lines[row], *columns)
+
                 return UIContent(
-                    get_line=lines.__getitem__,
+                    get_line=get_line,
                     line_count=len(lines),
                     show_cursor=False,
                     cursor_position=Point(0, pane.window.vertical_scroll),
                 )
+
+            def mouse_handler(self, mouse_event):
+                return pane.selection.handle(mouse_event)
 
         # The window scrolls to keep the reported cursor visible on every render,
         # so a fixed row 0 would snap keyboard scrolling straight back to the top.
@@ -454,7 +483,15 @@ class RichPane:
         info = self.window.render_info
         offset = self.window.vertical_scroll
         tailing = info is not None and offset >= max(0, info.content_height - info.window_height)
+        # Streaming mostly appends, so a selection (even mid-drag) survives as
+        # long as every row up to its last one is unchanged.
+        selection = self.selection
+        held = selection.anchor, selection.cursor, selection.active, selection.pressed
+        marked = [position[0] for position in held[:2] if position is not None]
+        before = self.rows(self._width)[: max(marked) + 1] if marked and self._width else None
         self.set(renderables, highlight=self.highlight)
+        if before and self.rows(self._width)[: len(before)] == before:
+            selection.anchor, selection.cursor, selection.active, selection.pressed = held
         if info is not None:
             rows = len(self.lines(info.window_width))
             self.window.vertical_scroll = max(0, rows - info.window_height) if tailing else offset
@@ -466,6 +503,7 @@ class RichPane:
         self.renderables = renderables
         self.highlight = tuple(highlight)
         self._version += 1
+        self.selection.clear()
         self.window.vertical_scroll = 0
         self.scroll_to(anchor)
 
@@ -491,14 +529,15 @@ class RichPane:
                 highlight=False,
             )
             offsets, lines, position = [], 0, 0
-            for renderable in self.renderables:
-                offsets.append(lines)
-                console.print(renderable)
-                # Read only the new output; re-reading the whole buffer per
-                # renderable would be quadratic on a long transcript.
-                console.file.seek(position)
-                lines += console.file.read().count("\n")
-                position = console.file.tell()
+            with marked_rendering():
+                for renderable in self.renderables:
+                    offsets.append(lines)
+                    console.print(renderable)
+                    # Read only the new output; re-reading the whole buffer per
+                    # renderable would be quadratic on a long transcript.
+                    console.file.seek(position)
+                    lines += console.file.read().count("\n")
+                    position = console.file.tell()
             rendered = OSC.sub("", console.file.getvalue().rstrip("\n"))
             self._cache = (*key, to_formatted_text(ANSI(rendered)), offsets)
         return self._cache[2]
@@ -506,16 +545,29 @@ class RichPane:
     def lines(self, width: int) -> list:
         key = (self._version, width)
         if self._line_cache is None or self._line_cache[:2] != key:
-            lines = list(split_lines(self.fragments(width)))
+            lines, rows = [], []
+            for line in split_lines(self.fragments(width)):
+                line, row = unmark(line)
+                lines.append(line)
+                rows.append(row)
             if self.highlight:
                 lines = [mark_matches(line, self.highlight) for line in lines]
-            self._line_cache = (*key, lines)
+            self._line_cache = (*key, lines, rows)
         return self._line_cache[2]
+
+    def rows(self, width: int) -> list[Row]:
+        """Each drawn row's plain text and wrap points, for selecting and copying."""
+        self.lines(width)
+        return self._line_cache[3]
 
     def text(self, width: int = 80) -> str:
         """Unstyled rendering without Rich's line padding, for tests and logs."""
-        lines = fragment_list_to_text(self.fragments(width)).splitlines()
-        return "\n".join(line.rstrip() for line in lines)
+        return "\n".join(row.text.rstrip() for row in self.rows(width))
+
+    def _copy(self, text: str) -> None:
+        notice = copy_selected(text)
+        if self.notify is not None:
+            self.notify(notice)
 
     def __pt_container__(self):
         return self.window

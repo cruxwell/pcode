@@ -180,7 +180,7 @@ Every key works with `pcode config set KEY VALUE` and `/config set KEY VALUE`.
 | `vi_key_prefix` | `off` | Additional leader for the main prompt's vi normal mode: `<space>` or a single printable non-whitespace character, such as `,` or `\`. Keeps the global prefix. Requires restart; see [Use Space as the vi leader](keybindings.md#use-space-as-the-vi-leader). |
 | `vi_escape_sequence` | `escape` | Escape-only by default; set `jj` (or another printable sequence without spaces) to also leave vi insert mode with that sequence. Escape remains available. Requires restart; see [vi editing](commands.md#optional-vi-editing). |
 | `key_prefix` | `ctrl` | Direct Ctrl+letter shortcuts, such as Ctrl+L for models and Ctrl+Y to copy. No global action-menu leader by default. Set `ctrl+b`, `ctrl+p`, `ctrl+space`, `f2` or `"ctrl+x ctrl+p"` to use a leader before the action letter. Ctrl+/ browses contextual help. See [shortcut prefix](commands.md#shortcut-prefix) |
-| `popup_mouse` | `on` | `on`, `off` (popups capture clicks and the wheel; `off` keeps native text selection, Ctrl+Q flips it inside one popup, see [popup keys](commands.md#popup-keys)) |
+| `popup_mouse` | `on` | `on`, `off` (popups capture clicks and the wheel, and a drag selects and copies a pane's text; `off` leaves selection to the terminal, Ctrl+Q flips it inside one popup, see [selecting text](commands.md#selecting-and-copying-text-in-popups)) |
 | `btw_auto_open` | `on` | `on`, `off` (open the viewer when a [side answer](side-questions.md) is ready) |
 
 ### Scrollback and display
