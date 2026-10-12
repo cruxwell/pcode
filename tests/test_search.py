@@ -64,6 +64,7 @@ def test_bundled_extension_is_discovered_last_and_shadowed_by_user_files(tmp_pat
     assert extension.path == BUNDLED_DIR / "web_research.py"
     assert extension.summary() == "2 tools"
     assert load_extensions(tmp_path).report(tmp_path) == [
+        "basic_memory (bundled): off by default (/extensions on basic_memory)",
         "browser (bundled): /browser",
         "plan_mode (bundled): 1 tool, 2 hooks, /plan",
         "ponytail (bundled): off by default (/extensions on ponytail)",

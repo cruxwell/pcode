@@ -1,0 +1,50 @@
+filters:
+  and:
+    - file.inFolder("briefs")
+formulas:
+  state: 'if(note.state == "proposed", "📝 proposed", if(note.state == "approved", "✅ approved", if(note.state == "implemented", "🏁 implemented", if(note.state == "dropped", "✖ dropped", "🟢 live"))))'
+  health: 'if(note.health == "on-track", "🟢 on track", if(note.health == "at-risk", "🟠 at risk", if(note.health == "blocked", "🔴 blocked", "⚪ unknown")))'
+properties:
+  formula.state:
+    displayName: State
+  formula.health:
+    displayName: Health
+  note.tldr:
+    displayName: TL;DR
+  note.next:
+    displayName: Next
+views:
+  - type: table
+    name: Projects
+    filters:
+      and:
+        - 'type == "brief"'
+    order:
+      - note.priority
+      - file.name
+      - formula.health
+      - note.stage
+      - note.tldr
+      - note.next
+      - note.reviewed
+    sort:
+      - property: note.priority
+        direction: ASC
+  - type: table
+    name: Plans
+    filters:
+      and:
+        - 'type == "plan"'
+    groupBy:
+      property: note.state
+      direction: DESC
+    order:
+      - file.name
+      - formula.state
+      - note.project
+      - note.tldr
+      - note.next
+      - note.created
+    sort:
+      - property: note.created
+        direction: DESC

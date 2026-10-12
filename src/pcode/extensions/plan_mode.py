@@ -12,9 +12,15 @@ words), or answers the last open questions without raising new ones, it calls
 The model is trusted rather than fenced in: nothing blocks edits, the reminder
 just says what the user wants. The active plan lives in a marker file beside
 the plans, so it survives `/reload` (which re-imports this module) and restarts.
+
+With the `basic_memory` extension on and the workspace in one of its orgs, the
+plan is a note in that org's vault instead (`briefs/Plan — <project> — <title>.md`),
+in the brief format, and on approval the model marks it approved there. The
+marker then holds the note's absolute path rather than a slug.
 """
 
 import re
+from pathlib import Path
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.messages import ModelRequest, ToolReturnPart, UserPromptPart
@@ -39,7 +45,7 @@ Plan mode is on. The user wants to agree on a plan before any implementation.
   raises no new concerns, that is the go-ahead; don't ask again for a
   separate confirmation. Approval with changes ("yes, but skip step 3")
   counts too: fold the change in, then exit. Stay in plan mode only while
-  something is genuinely unresolved or the user asks to keep planning.
+  something is genuinely unresolved or the user asks to keep planning.{extra}
 </plan-mode>"""
 
 
@@ -66,6 +72,9 @@ def setup(pcode) -> None:
         return
     plans = pcode.workspace / PLANS
     marker = plans / ACTIVE
+    from pcode.extensions.basic_memory import plan_location
+
+    location = plan_location(pcode.workspace)  # None: plans stay in .pcode/plans
 
     def active() -> str | None:
         try:
@@ -73,14 +82,31 @@ def setup(pcode) -> None:
         except FileNotFoundError:
             return None
 
-    def relative(slug: str) -> str:
-        return f"{PLANS}/{slug}.md"
+    def is_vault(key: str) -> bool:
+        # A vault plan's marker holds its absolute path; a local one, its slug.
+        return Path(key).is_absolute()
+
+    def path_of(key: str) -> Path:
+        return Path(key) if is_vault(key) else pcode.workspace / PLANS / f"{key}.md"
+
+    def relative(key: str) -> str:
+        if is_vault(key):
+            path = Path(key)
+            return f"~/{path.relative_to(Path.home())}" if Path.home() in path.parents else key
+        return f"{PLANS}/{key}.md"
 
     def latest() -> str | None:
+        # Only local plans: a vault holds every repo's plans, so "the newest" could
+        # be another project's.
+        if location:
+            return None
         files = (
             sorted(plans.glob("*.md"), key=lambda p: p.stat().st_mtime) if plans.is_dir() else []
         )
         return files[-1].stem if files else None
+
+    def new_key(request: str) -> str:
+        return str(location.path_for(request)) if location else topic_slug(request)
 
     def start(slug: str) -> None:
         plans.mkdir(parents=True, exist_ok=True)
@@ -104,9 +130,9 @@ def setup(pcode) -> None:
                 f"Plan mode on: {relative(current)}" if current else "Plan mode is off."
             )
             return
-        slug = topic_slug(argument) if argument else (current or latest() or "plan")
+        slug = new_key(argument) if argument else (current or latest() or new_key("plan"))
         start(slug)
-        exists = (pcode.workspace / relative(slug)).exists()
+        exists = path_of(slug).exists()
         verb = "Resuming" if exists else "Planning in"
         ask = "Say" if argument else "Describe the change; say"
         pcode.ui.notify(
@@ -141,10 +167,17 @@ def setup(pcode) -> None:
             return "Plan mode was not on; carry on."
         marker.unlink(missing_ok=True)
         pcode.ui.notify("Plan approved; plan mode off.")
-        return (
+        result = (
             f"Plan mode off. Implement the plan in {relative(current)} now, "
             "tracking progress with write_plan, and update the file if the plan changes."
         )
+        if is_vault(current):
+            result += (
+                " First mark it approved, as the brief format says: `state: approved`, "
+                "`cssclasses: [approved]`, the APPROVED banner, and ✅ on the brief's Open plans "
+                "line. When the work ships, fold it into the brief and mark the plan implemented."
+            )
+        return result
 
     @pcode.hooks.on.before_tool_execute
     async def workers_cannot_exit(ctx, *, call, tool_def, args):
@@ -168,5 +201,6 @@ def setup(pcode) -> None:
             and not any(isinstance(p, ToolReturnPart) for p in parts)
             and not any(str(p.content).startswith("<plan-mode>") for p in prompts)
         ):
-            parts.append(UserPromptPart(REMINDER.format(path=relative(current))))
+            extra = f"\n{location.guidance}" if location and is_vault(current) else ""
+            parts.append(UserPromptPart(REMINDER.format(path=relative(current), extra=extra)))
         return request_context

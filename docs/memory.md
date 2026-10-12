@@ -1,0 +1,115 @@
+# Project briefs
+
+Ask "where are we on billing?" and get the answer from one note: what the
+project is, where it's at, how it works, what's wrong with it, and what's
+next. The bundled `basic_memory` extension keeps one **brief** per project in
+an [Obsidian](https://obsidian.md/) vault per org, and the model keeps the
+briefs current as you work. A **plan** uses the same format, describing the
+project as it would be after a change, so it reads exactly like the brief it
+will become.
+
+It ships off. Turn it on with:
+
+```
+/extensions on basic_memory
+```
+
+## Orgs and vaults
+
+An org is a directory root. Every directory under it belongs to that org, and
+each org has its own vault, so nothing links across orgs. Create
+`~/.config/pcode/memory.toml`:
+
+```toml
+vault_root = "~/vaults"   # each org's vault defaults to <vault_root>/<name>
+auto_sync = false         # default for /brief sync in every org
+
+[[org]]
+name = "personal"
+root = "~/p"
+
+[[org]]
+name = "acme"
+root = "~/wd"
+auto_sync = true          # optional, per org
+```
+
+The file lives in your config directory, never in a repository, so org names
+stay on your machine. Keep vaults out of `~/basic-memory`: that's
+[Basic Memory](https://docs.basicmemory.com/)'s own default project, and it
+won't register a project inside another one. Outside every org root, the
+extension adds nothing but a `/brief` command that explains how to set it up.
+
+Then run `/brief setup` from a directory in the org. It writes the format
+note, a `Home.md` dashboard and the note styling into the vault, and registers
+the vault with Basic Memory if `bm` is installed. Open the folder as a vault in
+Obsidian and pin `Home.md`.
+
+## Briefs
+
+A brief lives at `briefs/<Name>.md`. It covers whatever scope you name: a
+repository, a subsystem, or an initiative that spans several repositories.
+It's built from evidence: the code (README, layout, main modules, git
+history) and the sessions that worked there.
+
+```
+/brief new coder-pydantic
+/brief new "Repo onboarding" focus on the rollout to the first teams, skip the infra
+```
+
+What to write and how is in the vault's `Brief format.md`. The model reads it
+before every write, so editing it changes how briefs are written from then
+on:
+
+- **Sections:** TL;DR, *Where it's at*, *What it does*, *How it works*
+  (decisions with their reasons and rejected alternatives), *Shortcomings &
+  risks*, *Next steps*, *Open questions* and a *Log*.
+- **Properties:** `health`, `stage`, `tldr` and `next` feed the dashboard;
+  `priority` is yours to set.
+- **The rule:** rewrite, don't append. The body is always the current truth,
+  and only the *Log* grows.
+
+Sessions and briefs don't map one to one. A session can change several
+briefs, or none, and the model names the briefs it changed.
+
+## Keeping briefs current
+
+- **`/brief sync on`** reminds the model, with each of your messages, to
+  update the affected briefs when something a newcomer would need changes: a
+  milestone, a decision, a new shortcoming. Routine progress doesn't count.
+  `/brief sync off` stops it. The default comes from `auto_sync`.
+- **`/brief update [focus]`** asks for an update now.
+- **`/brief import`** lists this directory's recent sessions.
+  `/brief import ID [ID ...] [-- focus]` folds them into the briefs they
+  change. The model gets a trimmed digest of each session and reads full turns
+  where it needs them.
+- **`/brief`** lists the org's briefs by priority, with their open plans.
+
+## Plans
+
+With the extension on, [`/plan`](commands.md) writes its plan into the vault
+as `briefs/Plan — <project> — <title>.md`: a *proposed brief* with a banner saying it isn't
+implemented yet, a yellow tint, and only the sections the change affects.
+Saying "go ahead" marks it approved (blue). When the work ships, the model
+folds it into the brief and marks it implemented. The plan stays as the record
+of why the change was made.
+
+## Answering in the note
+
+Answer a plan's or brief's open questions in place, or add a callout under any
+paragraph:
+
+```markdown
+> [!comment] Cover the retry path too.
+```
+
+With your next message, the model receives a diff of what you changed in any
+note it has read or written in this session. It acts on your answers and
+comments, removes them, and records what changed in the note's *Log*.
+
+## Cost
+
+There are no extra tools. The model edits the notes with its normal file
+tools, and the extension adds one short paragraph to the system prompt in an
+org directory. While `/brief sync` is on, each of your messages carries a
+two-line reminder. Your edits are sent only when you've made some.
