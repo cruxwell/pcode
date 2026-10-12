@@ -6,7 +6,7 @@ config directory, which is never in a repository, so org names stay local.
 
 A **brief** explains a project as it is: what it is, where it's at, how it
 works, what's wrong, what's next. A **plan** is a proposed brief in the same
-format; with this extension on, `/plan` writes it into the vault. How both
+format; `/plan --obsidian` writes it into the vault. How both
 are written lives in the vault's `Brief format.md`, which the model reads
 before writing, so the user can change the format without touching code.
 
@@ -23,9 +23,7 @@ tools. What this module adds is only:
   Obsidian reach the model without being retyped.
 
 Known limits: an edit the user makes mid-turn to a note the model then edits
-again is folded into the model's edit and not reported; and `plan_location`
-trusts the extensions_on preference, so a user file that overrides this
-extension still gets vault plans from this module.
+again is folded into the model's edit and not reported.
 """
 
 import asyncio
@@ -362,37 +360,33 @@ def plan_guidance(directory: Path) -> str:
     )
 
 
-def plan_location(workspace: Path, *, explicit: bool = False) -> PlanLocation | None:
-    """Resolve automatic routing, or require a configured vault independently of memory."""
-    if not explicit and not enabled():
-        return None
+def plan_location(workspace: Path) -> PlanLocation:
+    """The vault for `/plan --obsidian`, whether or not this extension is on.
+
+    Raises ValueError with setup guidance when no writable org vault covers `workspace`.
+    """
     try:
         place = place_for(workspace)
-        if place is None and explicit:
-            raise ValueError(f"No configured org covers {workspace}")
         if place is None:
-            return None
+            raise ValueError(f"No configured org covers {workspace}")
         vault = place.org.vault
-        if explicit:
-            # Planning needs neither the dashboard nor Obsidian settings or sync.
-            format_note = vault / FORMAT_NOTE
-            if (format_note.exists() or format_note.is_symlink()) and not format_note.is_file():
-                raise ValueError(f"{format_note} must be a file")
-            briefs = vault / BRIEFS
-            briefs.mkdir(parents=True, exist_ok=True)
-            # Existing directories and format notes don't prove new plans can be written.
-            with tempfile.NamedTemporaryFile(dir=briefs, prefix=".pcode-plan-") as probe:
-                probe.write(b"plan write probe\n")
-                probe.flush()
-            if not format_note.exists():
-                write_text(format_note, (FILES / FORMAT_NOTE).read_text(encoding="utf-8"))
+        # Planning needs neither the dashboard nor Obsidian settings or sync.
+        format_note = vault / FORMAT_NOTE
+        if (format_note.exists() or format_note.is_symlink()) and not format_note.is_file():
+            raise ValueError(f"{format_note} must be a file")
+        briefs = vault / BRIEFS
+        briefs.mkdir(parents=True, exist_ok=True)
+        # Existing directories and format notes don't prove new plans can be written.
+        with tempfile.NamedTemporaryFile(dir=briefs, prefix=".pcode-plan-") as probe:
+            probe.write(b"plan write probe\n")
+            probe.flush()
+        if not format_note.exists():
+            write_text(format_note, (FILES / FORMAT_NOTE).read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
-        if explicit:
-            raise ValueError(
-                f"/plan --obsidian: {error}. Configure a matching [[org]] with name, root "
-                f"and a writable vault in {config_path()}, then retry (or use /plan --local)."
-            ) from None
-        return None
+        raise ValueError(
+            f"/plan --obsidian: {error}. Configure a matching [[org]] with name, root "
+            f"and a writable vault in {config_path()}, then retry (or use /plan --local)."
+        ) from None
     project = place.repo or (Path(place.dir).name if place.dir != "." else place.org.name)
     return PlanLocation(
         vault / BRIEFS,

@@ -87,8 +87,9 @@ briefs, or none, and the model names the briefs it changed.
 
 ## Plans
 
-Use Obsidian to review an architecture proposal and answer its open questions
-without enabling project memory:
+`/plan` keeps plans in `.pcode/plans/` by default, with or without this
+extension. Add `--obsidian` to review an architecture proposal in Obsidian and
+answer its open questions there instead:
 
 ```text
 /plan --obsidian Design the export pipeline
@@ -108,11 +109,10 @@ project briefs. Saying "go ahead" in the conversation marks it approved and star
 implementation. When the work ships, the model marks it implemented. The plan
 stays as the record of why the change was made.
 
-`/plan --local [request]` explicitly uses `.pcode/plans/`, even with memory on.
-Without a flag, new plans use the vault when memory is enabled and configured,
-otherwise local files. Bare `/plan` resumes the active plan; a destination-only
-command resumes it only when the destination matches, otherwise selects a plan at
-the requested destination without moving the old one. `/plan status` shows the
+Where a plan lives is chosen per plan, never by the memory setting. Bare `/plan`
+resumes the active plan, or else the newest local one. `/plan --local` or
+`/plan --obsidian` with no request resumes the active plan only when it is at that
+destination, and otherwise starts a new one there without moving the old one. `/plan status` shows the
 active path, and `/plan off` leaves the file in place.
 
 With memory enabled, approval and completion also update the linked brief. If

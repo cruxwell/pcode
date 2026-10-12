@@ -312,22 +312,25 @@ def test_import_lists_sessions_here_and_sends_digests(api, org, tmp_path):
         api.commands["/brief"]("import aaa")
 
 
-def test_plans_go_to_the_vault_only_when_the_extension_is_on(org, tmp_path):
-    assert bm.plan_location(org / "app") is None
-    set_enabled("basic_memory", True)
+@pytest.mark.parametrize("memory_on", [False, True])
+def test_plan_location_does_not_depend_on_the_extension(org, tmp_path, memory_on):
+    set_enabled("basic_memory", memory_on)
     location = bm.plan_location(org / "app")
     assert location.directory == vault(tmp_path) / "briefs"
     assert location.path_for("add export button to the orders page").name == (
         "Plan — app — Add export button to the orders page.md"
     )
-    assert bm.plan_location(tmp_path / "elsewhere") is None
+    with pytest.raises(ValueError, match="No configured org"):
+        bm.plan_location(tmp_path / "elsewhere")
 
 
 def test_plan_mode_writes_vault_plans_and_approves_them(org, tmp_path):
     set_enabled("basic_memory", True)
     api = FakeAPI(org / "app", tmp_path / "sessions")
     plan_mode.setup(api)
-    assert api.commands["/plan"]("Add export button") == "Add export button"
+    api.commands["/plan"]("Local by default")
+    assert ".pcode/plans/local-by-default.md" in api.notes[-1]
+    assert api.commands["/plan"]("--obsidian Add export button") == "Add export button"
     path = vault(tmp_path) / "briefs" / "Plan — app — Add export button.md"
     assert "Plan — app — Add export button.md" in api.notes[-1]
     request = ModelRequest(parts=[UserPromptPart("hi")])
@@ -339,11 +342,13 @@ def test_plan_mode_writes_vault_plans_and_approves_them(org, tmp_path):
     result = api.tools["exit_plan_mode"]()
     # The model makes the approval edit itself, so it's never mistaken for the user's.
     assert "state: approved" in result and "Open plans" in result
-    # A bare /plan in vault mode never resumes another project's newest plan.
+    # With no active plan, bare /plan resumes the newest local plan, never a
+    # vault plan (a vault holds every project's plans), even with memory on.
     path.parent.mkdir(parents=True, exist_ok=True)
     (path.parent / "Plan — other — Something.md").write_text("x")
+    (org / "app" / ".pcode/plans/local-by-default.md").write_text("x")
     api.commands["/plan"]("")
-    assert "Plan — other" not in api.notes[-1]
+    assert "Resuming .pcode/plans/local-by-default.md" in api.notes[-1]
 
 
 @pytest.mark.parametrize("plan_first", [True, False])

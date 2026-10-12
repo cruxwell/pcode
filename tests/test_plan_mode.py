@@ -186,8 +186,9 @@ def test_destination_overrides_and_destination_only_resume(
     api = FakeAPI(workspace)
     plan_mode.setup(api)
     command = api.commands["/plan"]
-    command("Default topic")
-    assert Path(marker(workspace).read_text().strip()).is_absolute() == memory_on
+    command("Default topic")  # The default is local whatever memory says.
+    assert not Path(marker(workspace).read_text().strip()).is_absolute()
+    assert not vault.exists()  # Nothing touches the vault until --obsidian asks.
     command("--obsidian Vault topic")
     old = marker(workspace).read_text()
     path = Path(old.strip())

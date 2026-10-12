@@ -13,11 +13,12 @@ The model is trusted rather than fenced in: nothing blocks edits, the reminder
 just says what the user wants. The active plan lives in a marker file beside
 the plans, so it survives `/reload` (which re-imports this module) and restarts.
 
-With the `basic_memory` extension on and the workspace in one of its orgs, the
-plan is a note in that org's vault instead (`briefs/Plan — <project> — <title>.md`).
-`--obsidian` chooses that vault even with memory off; `--local` overrides automatic
-routing. The marker holds a vault note's absolute path rather than a local slug.
-With memory off, only the active note gets edit feedback and lifecycle updates.
+`--obsidian` makes the plan a note in the workspace's org vault instead
+(`briefs/Plan — <project> — <title>.md`, configured in `memory.toml`), whether or
+not the `basic_memory` extension is on: where a plan lives is a per-plan choice,
+not a memory setting. `--local` (the default) keeps it in `.pcode/plans`. The
+marker holds a vault note's absolute path rather than a local slug. With memory
+off, only the active note gets edit feedback and lifecycle updates.
 """
 
 import asyncio
@@ -95,7 +96,6 @@ def setup(pcode) -> None:
         plan_location,
     )
 
-    location = plan_location(pcode.workspace)  # None: plans stay in .pcode/plans
     memory_on = enabled()
     feedback = NoteFeedback()
     session = None
@@ -119,11 +119,9 @@ def setup(pcode) -> None:
             return f"~/{path.relative_to(Path.home())}" if Path.home() in path.parents else key
         return f"{PLANS}/{key}.md"
 
-    def latest(destination) -> str | None:
+    def latest() -> str | None:
         # Only local plans: a vault holds every repo's plans, so "the newest" could
         # be another project's.
-        if destination:
-            return None
         files = (
             sorted(plans.glob("*.md"), key=lambda p: p.stat().st_mtime) if plans.is_dir() else []
         )
@@ -154,11 +152,7 @@ def setup(pcode) -> None:
                 f"Plan mode on: {relative(current)}" if current else "Plan mode is off."
             )
             return
-        destination = location
-        if flag == "--obsidian":
-            destination = plan_location(pcode.workspace, explicit=True)
-        elif flag == "--local":
-            destination = None
+        destination = plan_location(pcode.workspace) if flag == "--obsidian" else None
         compatible = current
         if flag and current:
             matches = (
@@ -172,9 +166,7 @@ def setup(pcode) -> None:
             new_key(argument, destination)
             if argument
             else (
-                compatible
-                or (latest(destination) if flag is None else None)
-                or new_key("plan", destination)
+                compatible or (latest() if flag is None else None) or new_key("plan", destination)
             )
         )
         start(slug)
@@ -200,8 +192,8 @@ def setup(pcode) -> None:
         arguments=("off", "status", "--obsidian", "--local"),
         free_arguments=True,  # anything else is the request to plan
         argument_descriptions={
-            "--obsidian": "Use the configured vault, even with project memory off",
-            "--local": "Use .pcode/plans, even with project memory on",
+            "--obsidian": "Keep the plan in the org's Obsidian vault",
+            "--local": "Keep the plan in .pcode/plans (the default)",
             "off": "Leave plan mode (the plan file is kept)",
             "status": "Show whether plan mode is on and its file",
         },
