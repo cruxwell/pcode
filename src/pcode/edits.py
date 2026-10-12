@@ -14,10 +14,7 @@ MAX_PATCH_LINES = 400
 
 
 def edit_text(text: str) -> str:
-    """Edit content as shown: credentials masked and terminal controls removed.
-
-    Masks whole values before diff prefixes or clipping split them.
-    """
+    """Edit content as shown: terminal controls removed, tabs expanded."""
     return command_text(text)
 
 
@@ -25,7 +22,7 @@ _HUNK = re.compile(r"@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
 
 
 def patch_text(patch: str, *, dedent: bool) -> str:
-    """A stored patch as it is displayed: redacted, and dedented if asked."""
+    """A stored patch as it is displayed: sanitized, and dedented if asked."""
     text = edit_text(patch)
     return dedent_patch(text) if dedent else text
 
@@ -118,7 +115,7 @@ def completed_change(path, before, after, *, existed=True, call_id="", omitted="
         return EditCompleted(call_id, path, operation, omitted="File exceeds preview line limit")
     if before == after:
         return EditCompleted(call_id, path, "unchanged" if existed else "created")
-    # Count actual changed source lines, even where redaction hides a change.
+    # Count actual changed source lines, even where sanitizing hides a change.
     raw = list(difflib.unified_diff(source_lines(before), source_lines(after), n=3))
     added = sum(line.startswith("+") for line in raw[2:])
     removed = sum(line.startswith("-") for line in raw[2:])
@@ -137,5 +134,5 @@ def completed_change(path, before, after, *, existed=True, call_id="", omitted="
     truncated = len(lines) > MAX_PATCH_LINES or len(patch) > MAX_PATCH
     patch = patch[:MAX_PATCH]
     if not patch:
-        omitted = "Changes hidden by redaction or newline normalization"
+        omitted = "Changes hidden by control-character or newline normalization"
     return EditCompleted(call_id, path, operation, patch, added, removed, truncated, omitted)

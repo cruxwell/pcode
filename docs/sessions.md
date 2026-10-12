@@ -371,7 +371,7 @@ Default location: `$XDG_STATE_HOME/pcode/sessions`, or
 - `steps.sqlite3`: full message snapshots (including tool arguments and results
   and provider reasoning metadata) used for resume, and a record of tool effects.
 - `transcript.jsonl`: submitted prompts, streamed text, tool summaries, bounded
-  redacted tool arguments and results, and failure details (HTTP status, provider
+  tool arguments and results, and failure details (HTTP status, provider
   code and message).
 - `errors.log`: tracebacks from failed turns and side questions.
 

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from rich.text import Text
 
 from pcode.code_mode import SANDBOXED_TOOLS
-from pcode.diagnostics import mask_secrets
+from pcode.diagnostics import strip_controls
 
 if TYPE_CHECKING:
     from pcode.jobs import JobRegistry
@@ -57,24 +57,13 @@ def label(name: str) -> str:
     return LABELS.get(name, plain(name))
 
 
-_CREDENTIAL_OPTION = re.compile(
-    r"(?i)(--?(?:password|passwd|token|access[-_]token|refresh[-_]token|"
-    r"api[-_]key|secret|client[-_]secret|authorization)(?:=|\s+))"
-    r"(\"[^\"]*\"|'[^']*'|[^\s;|&]+)"
-)
-
-
-def argument(value: str, *, command: bool = False) -> str:
-    if command:
-        value = _CREDENTIAL_OPTION.sub(r"\1[redacted]", value)
-    # Redact before formatting, so neither wrapping nor sanitization splits credentials.
-    return plain(mask_secrets(value).replace("\n", r"\n").replace("\t", r"\t"), limit=None)
+def argument(value: str) -> str:
+    return plain(strip_controls(value).replace("\n", r"\n").replace("\t", r"\t"), limit=None)
 
 
 def command_text(value: str) -> str:
-    """Redact first, then preserve layout without allowing terminal controls."""
-    value = _ANSI.sub("", value)
-    value = mask_secrets(_CREDENTIAL_OPTION.sub(r"\1[redacted]", value))
+    """Preserve layout without allowing terminal controls."""
+    value = strip_controls(_ANSI.sub("", value))
     return "\n".join(plain(line.expandtabs(4), limit=None) for line in value.split("\n"))
 
 
@@ -459,10 +448,8 @@ def command_error(content: object) -> str:
         text = stderr[1]
     else:
         text = re.sub(r"(?:^|\n)\[(?:stdout|stderr)\]\n?", "\n", text)
-    # Remove escape sequences before redaction, then redact before clipping to avoid
-    # leaking pieces of a credential across formatting or excerpt boundaries.
-    text = _ANSI.sub("", text)
-    text = mask_secrets(_CREDENTIAL_OPTION.sub(r"\1[redacted]", text))
+    # Remove escape sequences whole, before `plain` turns their introducer into a space.
+    text = strip_controls(_ANSI.sub("", text))
     lines = [plain(line.expandtabs(4), limit=None) for line in text.splitlines()]
     while lines and not lines[0].strip():
         lines.pop(0)

@@ -92,7 +92,6 @@ def test_copy_command_copies_a_plain_response_without_a_picker(monkeypatch):
     ("older", "answer_keys", "snippet_keys", "expected"),
     [
         ("older plain answer", "older\r", None, "older plain answer"),
-        ("export OPENAI_KEY=sk-0123456789ab", "OPENAI\r", None, "export OPENAI_KEY=[redacted]"),
         ("older plain answer", "\x1b", None, None),
         (RESPONSE, "Two things\r", "\x1b[B\r", "zed schema read"),
         (RESPONSE, "Two things\r", "\r", "SAML login fails for\n**all** users.\nlazy continuation"),
@@ -139,7 +138,7 @@ def test_main_copy_history_by_keyboard(monkeypatch, older, answer_keys, snippet_
                 dialogs.append("copy_dialog")
                 assert [answer.text for answer in choices] == [
                     "newest answer",
-                    older.strip().replace("sk-0123456789ab", "[redacted]"),
+                    older.strip(),
                 ]
                 dialog = original(choices, **kwargs)
                 dialog.pre_run_callables.append(

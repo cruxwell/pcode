@@ -20,7 +20,7 @@ REDUCED_SHELL_OUTPUT = "[Shell output reduced; full output remains in the comman
 
 
 def preview_text(text, *, final=False):
-    """Sanitize before clipping; an unfinished line can hold half a credential."""
+    """Sanitize before clipping; an unfinished line can hold half an escape sequence."""
     if not final:
         text = text[: text.rfind("\n") + 1]
     return command_text(text).rstrip()[-131072:]

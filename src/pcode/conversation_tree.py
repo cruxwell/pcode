@@ -113,11 +113,11 @@ class ConversationTree:
 
     def rows(self) -> list[tuple[tuple[str | None, bool], str]]:
         """Depth-first user/edit and assistant/continue rows, with stable IDs."""
-        from pcode.diagnostics import mask_secrets
+        from pcode.diagnostics import strip_controls
         from pcode.ui import plain
 
         def excerpt(text):
-            return plain(mask_secrets(" ".join(text.split())), 100)
+            return plain(strip_controls(" ".join(text.split())), 100)
 
         rows = [
             ((None, False), "Conversation start" + (" ← active" if self.active is None else ""))

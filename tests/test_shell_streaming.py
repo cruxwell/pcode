@@ -89,17 +89,14 @@ def test_output_arrives_before_exit_and_final_result_is_unchanged(tmp_path):
 
 
 def test_preview_sanitizes_before_clipping_and_waits_for_complete_lines():
-    assert preview_text("token=sk-synthetic") == ""
-    assert "sk-0123456789ab" not in preview_text("token=sk-0123456789ab\n")
-    assert preview_text("password = form.data\n") == "password = form.data"
-    assert "private body" not in preview_text("-----BEGIN PRIVATE KEY-----\nprivate body\n")
+    assert preview_text("unfinished") == ""
+    assert preview_text("token=abc\n") == "token=abc"
     output = preview_text("\x1b[31m[bold]literal[/bold]\x1b[0m\n")
     assert "\x1b" not in output
     assert "[bold]literal[/bold]" in output
     assert "界" in preview_text("界\n")
     assert len(preview_text("x\n" * 100000)) <= 131072
     assert preview_text("last line", final=True) == "last line"
-    assert "sk-0123456789ab" not in preview_text("token=sk-0123456789ab", final=True)
 
 
 @pytest.mark.parametrize("background", [False, True])
@@ -297,33 +294,3 @@ def test_result_marker_supersedes_an_earlier_running_event():
     assert job_status("boom\n[j4 · exit 9 · 2.0s]") == ("j4 · exit 9", True)
     assert job_status("[j4 · exit 0 · 2.0s]") == ("", False)
     assert job_status("no marker here") == ("", False)
-
-
-def test_a_key_is_masked_in_the_preview_and_its_clipped_tail_in_the_result(tmp_path):
-    from pcode.sessions import SavedSession
-
-    # The result keeps only the log's tail, past the key's header; only its end
-    # marker identifies what is left. A middle cut by the spill preview has no
-    # marker at all and is shown, as the model saw it.
-    # Synthetic content, generated without putting its body in the command text.
-    marker = "SYNTHETICPRIVATEBODY"
-    source = (
-        "import sys; print('-----BEGIN PRIVATE KEY-----'); "
-        f"print(''.join(map(chr, {list(map(ord, marker))!r})) * 1000); "
-        "print('-----END PRIVATE KEY-----'); sys.exit(3)"
-    )
-    saved = SavedSession.create("test:local", tmp_path, tmp_path / "sessions")
-    runtime = runtime_for(tmp_path, source, session=saved)
-
-    async def run():
-        try:
-            events = [event async for event in runtime.stream("run")]
-            result = next(e for e in events if isinstance(e, ToolSummary))
-            assert result.failed
-            assert "[private key redacted]\n\n[j1 · exit 3" in result.result
-            assert f"{marker}\n-----END" not in result.result
-            assert all(marker not in e.output for e in events if isinstance(e, CommandOutput))
-        finally:
-            runtime.close()
-
-    asyncio.run(run())

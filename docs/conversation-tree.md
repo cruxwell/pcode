@@ -27,7 +27,7 @@ selected row the pane follows the active branch where the tree forks.
 - **Ctrl+Y:** copy the selected prompt or response to the system clipboard, from
   either pane (or your [shortcut prefix](commands.md#shortcut-prefix), then
   `y`, if you set one). It copies the text as the Conversation pane shows it
-  (redacted, truncated at 64 KiB), and the header says what was copied. On a response holding
+  (truncated at 64 KiB), and the header says what was copied. On a response holding
   quotes or fenced code blocks, it opens a picker like
   [`/copy`](commands.md#slash-commands)'s to copy one of those, or the whole response.
 - **Escape / Ctrl+C:** close the picker without changing context or the draft.

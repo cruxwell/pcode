@@ -831,7 +831,7 @@ Native model history remains separate from this readable presentation history.
 
 `TerminalOutput.thinking_delta` commits complete plain-text lines through
 `Transcript.thinking`, flushing the unfinished line on block/turn termination.
-Thinking is control-sanitized and display-redacted like command text, and uses the
+Thinking is control-sanitized like command text, and uses the
 named Rich `pcode.thinking` style (muted + dim; terminal-color mode uses dim default).
 Define compound styles in the theme: a string such as `pcode.muted dim` is not a
 valid composite of a theme alias and an attribute in Rich's style parser.
@@ -1093,13 +1093,11 @@ cancelling: `detach` for a typed follow-up (abandon the wait, keep the command),
 resets it to `detach` after every turn. A job the model backgrounded is never
 caught by either, because nothing was waiting on it.
 
-An already-truncated result is shown as it is: display masking
-(`diagnostics.mask_secrets`) matches only self-contained credential formats, plus
-the tail of a private-key block whose header was clipped, so it needs no context
-from before the cut. `shell.split_envelope` is the single parser for the boundary
+An already-truncated result is shown as it is; nothing on screen is
+secret-redacted, only control-sanitized. `shell.split_envelope` is the single parser for the boundary
 between output and the job envelope, shared with `CodingToolOutputLimits` so
 reduction can never spill the handles a running job is reached through. The model
-result and raw log are not masked for display. `--no-save` does not disable job logs.
+result and raw log are never altered. `--no-save` does not disable job logs.
 
 A live preview and the settled block it becomes are framed alike: `pcode.block`
 owns the rule character, the two-space body indent and the heading text, Rich
@@ -1168,8 +1166,8 @@ install with the `PATH` npm and the proxy's own install, found from `/health`'s
 ### Completed file diffs (verified Harness 0.52.0)
 
 `FileWrittenEvent` still has no before/after contents. `FileEditedEvent` carries
-a bounded diff, but it is already truncated and not secret-redacted; it cannot
-replace pcode's full-source redaction and precise counts. Reading the file when
+a bounded diff, but it is already truncated; it cannot replace pcode's
+full-source diff and precise counts. Reading the file when
 either event reaches the UI cannot recover the previous version.
 
 `DisplayFileSystemToolset` leaves Harness's `_write_file` and `_edit_file`

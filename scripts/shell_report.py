@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from pcode.diagnostics import redact  # noqa: E402
 from pcode.sessions import (  # noqa: E402
     SessionError,
     list_sessions,
@@ -32,7 +33,8 @@ from pcode.sessions import (  # noqa: E402
     session_root,
     snapshot_messages_json,
 )
-from pcode.shell import REDUCED_SHELL_OUTPUT, preview_text  # noqa: E402
+from pcode.shell import REDUCED_SHELL_OUTPUT  # noqa: E402
+from pcode.tool_display import command_text  # noqa: E402
 
 JOB_TOOLS = ("shell", "wait_for_job", "job_output", "stop_job", "list_jobs")
 # A foreground wait this close to the tool's ceiling (shell_tools.MAX_WAIT_SECONDS)
@@ -316,7 +318,7 @@ def render(report: Report, *, verbose: bool = False) -> str:
             flags = ("bg " if call.background else "") + (
                 f"[{call.purpose}] " if call.purpose else ""
             )
-            command = " ".join(preview_text(call.command, final=True).split())
+            command = " ".join(command_text(redact(call.command)).split())
             lines.append(
                 f"  {call.job:>5}  {call.tool:<14} {duration:>7}  {status:<8} {flags}{command[:90]}"
             )

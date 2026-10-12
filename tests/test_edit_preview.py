@@ -59,13 +59,10 @@ def test_parallel_previews_clear_only_the_settled_call():
     assert preview.update(FunctionToolCallEvent(second.part)) == [EditPreview("edit-preview:1")]
 
 
-def test_preview_bounds_and_sanitizes():
+def test_preview_bounds():
     preview = StreamingEditPreview()
-    args = json.dumps(
-        {"path": "example.py", "content": "-----BEGIN PRIVATE KEY-----\nfirst\nsecond"}
-    )[:-2]
-    events = preview.update(start(args, name="write_file"))
-    assert "first" not in repr(events) and "second" not in repr(events)
+    args = json.dumps({"path": "example.py", "content": "first\nsecond"})[:-2]
+    assert preview.update(start(args, name="write_file"))
     assert preview.update(start("x" * (MAX_SOURCE * 2 + 1), name="write_file")) == [
         EditPreview("edit-preview:0")
     ]
@@ -162,24 +159,6 @@ def test_streamed_outside_paths_are_hidden(tmp_path):
                 {"path": path, "old_text": "synthetic confidential text", "new_text": "replacement"}
             )
         )
-
-
-def test_credentials_are_redacted_in_partial_arguments(tmp_path):
-    preview = StreamingEditPreview(tmp_path)
-    events = preview.update(
-        start(
-            json.dumps(
-                {
-                    "path": "example.ini",
-                    "content": "token = sk-0123456789ab\nauth = Bearer other-value\nunfinished",
-                }
-            )[:-2],
-            name="write_file",
-        )
-    )
-    assert events and "[redacted]" in events[-1].text
-    assert "sk-0123456789ab" not in repr(events)
-    assert "other-value" not in repr(events)
 
 
 def test_batched_replacement_preview_waits_for_complete_strings(tmp_path):

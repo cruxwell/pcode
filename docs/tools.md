@@ -335,7 +335,7 @@ steer the same turn into other work while a build continues.
 
 Jobs outlive the turn, the conversation, and pcode itself. Use
 [`/jobs`](commands.md#slash-commands) to browse them and read each
-one's log (the last 128 KiB, redacted like the preview), and **Ctrl+K** there,
+one's log (the last 128 KiB), and **Ctrl+K** there,
 `/jobs stop ID`, or `/jobs stop all` to stop one. A stop sends `SIGTERM` to the
 job's whole process group, so a server can release its port, then `SIGKILL` to
 whatever is left two seconds later. Logs of finished jobs are deleted on exit and

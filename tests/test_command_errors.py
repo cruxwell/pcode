@@ -43,9 +43,8 @@ def test_command_error_prefers_stderr_and_falls_back_to_stdout(content, expected
     assert command_error(content) == expected
 
 
-def test_command_error_redacts_before_truncation_and_removes_controls(monkeypatch):
+def test_command_error_removes_controls_and_keeps_text():
     marker = "synthetic-command-error-fixture"
-    monkeypatch.setenv("EXAMPLE_API_KEY", marker)
     content = (
         "[stderr]\n\x1b[31mFailure\x1b[0m\n"
         f"Authorization: Bearer {marker}\n"
@@ -54,9 +53,8 @@ def test_command_error_redacts_before_truncation_and_removes_controls(monkeypatc
     )
     error = command_error(content)
     assert "Failure" in error
-    assert "[redacted]" in error
-    assert marker not in error
-    assert "dummy credential" not in error
+    assert f"Bearer {marker}" in error
+    assert "client --password 'dummy credential'" in error
     assert "window title" not in error
     assert "\x1b" not in error
     assert "\u202e" not in error

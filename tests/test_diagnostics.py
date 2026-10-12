@@ -6,7 +6,7 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.models.function import FunctionModel
 
-from pcode.diagnostics import REPORT_CHARS, error_details, error_report, mask_secrets, redact
+from pcode.diagnostics import REPORT_CHARS, error_details, error_report
 from pcode.live import AgentRuntime
 from pcode.sessions import SavedSession
 
@@ -257,24 +257,3 @@ def test_error_report_delegates_while_the_package_is_intact():
     error = ModelAPIError("test:local", "Connection error.")
     assert reported(error) == described(error)
     assert reported(error, unexpected="/diffs failed") == "/diffs failed (ModelAPIError)."
-
-
-def test_display_masking_skips_keywords_that_error_reports_still_redact():
-    code = 'input_token: int = 0\npassword = form.data["pw"]'
-    assert mask_secrets(code) == code
-    assert "form.data" not in redact(code)
-    for secret in ("sk-0123456789ab", "ghp_0123456789abcdef", "AKIA0123456789ABCDEF"):
-        assert mask_secrets(f"key: {secret}") == "key: [redacted]"
-    assert mask_secrets("curl https://user:pw@host") == "curl https://[redacted]@host"
-
-
-def test_a_clipped_key_tail_is_masked_in_linear_time():
-    import time
-
-    tail = "TKEY\n" + "QUJD" * 16 + "\n-----END PRIVATE KEY-----\nafter"
-    assert mask_secrets("before:\n" + tail) == "before:\n[private key redacted]\nafter"
-    # Long base64-like output (`seq`, hashes) is rescanned on every live chunk.
-    started = time.perf_counter()
-    for text in ("1\n" * 50_000, "PRIVATE KEY-----\n" + "1\n" * 50_000 + tail):
-        mask_secrets(text)
-    assert time.perf_counter() - started < 1

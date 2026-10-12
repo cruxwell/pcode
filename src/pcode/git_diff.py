@@ -35,7 +35,7 @@ from pcode.runtime import EditCompleted
 from pcode.tool_display import plain
 
 # One file's raw diff beyond this is counted but not shown; a lockfile rewrite
-# would otherwise stall redaction and the browser's search.
+# would otherwise stall sanitizing and the browser's search.
 MAX_FILE_DIFF = 1024 * 1024
 MAX_DIFF_LINES = 2000
 OPERATIONS = {"A": "created", "C": "copied", "D": "deleted", "R": "renamed"}

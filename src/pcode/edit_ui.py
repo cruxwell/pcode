@@ -747,7 +747,7 @@ class DiffBrowser:
         terms = self.terms()
         if self.scope == "paths":
             return all(fuzzy_match(term, change.path.casefold()) for term in terms)
-        # Match the redacted text, so redaction cannot hide the row a query matched.
+        # Match the text as shown, so sanitizing cannot hide the row a query matched.
         text = "\n".join([change_heading(change), patch_text(change.patch, dedent=self.dedent)])
         return not terms or bool(matching_rows(text, terms))
 

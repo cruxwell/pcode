@@ -68,9 +68,6 @@ def test_binary_large_named_path_and_missing_newline():
     change = completed_change("token_accounting.py", "old\n", "new\n")
     assert change.path == "token_accounting.py" and (change.added, change.removed) == (1, 1)
     assert r"\ No newline at end of file" in completed_change("x", "old", "new\n").patch
-    key = "-----BEGIN PRIVATE KEY-----\nc3ludGhldGljIGtleSBib2R5\n-----END PRIVATE KEY-----\n"
-    change = completed_change("x", "", key)
-    assert "c3ludGhldGlj" not in change.patch and "[private key redacted]" in change.patch
 
 
 def test_completed_diffs_retained_while_hidden_and_reprojected():
@@ -233,10 +230,10 @@ def test_parallel_writes_capture_their_own_operation(tmp_path):
     asyncio.run(exercise())
 
 
-def test_known_credential_formats_are_redacted_but_keyword_code_is_not():
+def test_edits_are_shown_as_written_even_where_they_look_like_credentials():
     code = 'input_token: int = 0\npassword = form.data["pw"]\n'
     change = completed_change("example.py", "", code + "api_key = sk-0123456789ab\n")
-    assert "sk-0123456789ab" not in change.patch and "api_key = [redacted]" in change.patch
+    assert "+api_key = sk-0123456789ab" in change.patch
     assert "+input_token: int = 0" in change.patch
     assert '+password = form.data["pw"]' in change.patch
 

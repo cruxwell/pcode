@@ -48,8 +48,7 @@ def test_preview_is_literal_sanitized_and_cell_width_aware():
     )
     text = "\n".join(line for _, line in rows)
     assert "[bold]" in text and "```diff" in text.replace("\n", "")
-    assert "\x1b" not in text and "sk-0123456789ab" not in text.replace("\n", "")
-    assert "[redacted]" in text.replace("\n", "")
+    assert "\x1b" not in text and "sk-0123456789ab" in text.replace("\n", "")
     assert all(cell_len(line) <= 8 for _, line in rows)
 
 
@@ -94,7 +93,7 @@ def test_created_markdown_renders_as_markdown_not_a_diff():
     assert "Plan" in text and "# Plan" not in text
     assert "first step" in text and "**" not in text and "+-" not in text
     assert "x = 1" in text and "```" not in text
-    assert "sk-0123456789ab" not in text and "[redacted]" in text
+    assert "sk-0123456789ab" in text
 
 
 @pytest.mark.parametrize(

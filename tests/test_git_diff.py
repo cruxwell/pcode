@@ -129,7 +129,7 @@ def test_renames_deletions_type_and_mode_changes_line_up_with_their_patches(repo
     assert changes["ünï.py"].operation == "created" and "+u" in changes["ünï.py"].patch
 
 
-def test_secret_looking_files_are_diffed_with_values_redacted(repo, linked):
+def test_secret_looking_files_are_diffed_like_any_other(repo, linked):
     path = linked.path
     commit(path, "config.env", "A=1\n")
     (path / "config.env").write_text("A=2\n")
@@ -140,8 +140,7 @@ def test_secret_looking_files_are_diffed_with_values_redacted(repo, linked):
 
     assert changes[".env.local"].operation == "created" and "+B=3" in changes[".env.local"].patch
     assert "+A=2" in changes["config.env"].patch
-    assert "sk-0123456789ab" not in changes["app.py"].patch
-    assert "[redacted]" in changes["app.py"].patch
+    assert '+token = "sk-0123456789ab"' in changes["app.py"].patch
 
 
 def test_large_diffs_are_clipped_or_only_counted(repo, linked, monkeypatch):

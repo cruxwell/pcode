@@ -588,8 +588,7 @@ class AsideBrowser:
     def links(self) -> list[Link]:
         """URLs in the selected thread's questions and answers, oldest first.
 
-        From the raw text, as `/links` reads the conversation: redaction would
-        cut a URL holding a token short, and the browser would get the stub.
+        From the raw text, as `/links` reads the conversation.
         """
         found: dict[str, Link] = {}
         for aside in self.current():

@@ -302,14 +302,13 @@ def test_real_soft_outcomes_are_not_reported_as_success(outcome):
     asyncio.run(run())
 
 
-def test_delegation_display_redacts_and_bounds_assignment():
+def test_delegation_display_sanitizes_and_bounds_assignment():
     detail = target(
         "delegate_task",
         {"agent_name": "explorer\x1b", "task": "token=sk-" + "x" * 80 + "\n" + "long " * 100},
     )
     assert "\x1b" not in detail and "\n" not in detail
     assert len(detail) < 225
-    assert "x" * 80 not in detail
     assert "agent unavailable" in target("delegate_task", {})
 
 

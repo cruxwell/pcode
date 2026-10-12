@@ -16,7 +16,7 @@ several lines hangs under its text, with the mark on the first line only.
 
 Shell tool calls show a compact two-row preview with their result and duration.
 Long arguments and embedded scripts are abbreviated; short commands stay
-readable. Previews are redacted and stripped of terminal control sequences.
+readable. Previews are stripped of terminal control sequences.
 Failure excerpts stay visible. To see a command's full output, use `/tools`, or
 turn on [`show_commands`](#command-output-in-scrollback) to mirror it into
 scrollback.
@@ -53,11 +53,8 @@ before diffs were captured show their transcript without reconstructed diffs.
 
 Limits:
 
-- Terminal controls are stripped, and text that is unmistakably a credential is
-  redacted: private-key blocks, `Bearer` tokens, passwords in URLs, well-known key
-  formats (`sk-…`, `ghp_…`, `AKIA…` and the like), and the values of your own
-  `*_TOKEN`/`*_SECRET`/`*_PASSWORD`/`*_API_KEY` environment variables. Ordinary
-  code such as `password = form.data` is shown as written.
+- Terminal controls are stripped. Nothing else is hidden: a diff shows what the
+  model wrote, credentials included.
 - Files over 256 Ki characters or 4,000 lines aren't diffed.
 - A saved diff is capped at 400 patch lines / 64 Ki characters, and each block
   on screen shows at most 60 wrapped rows, with an omission marker.
@@ -207,8 +204,7 @@ with `show_commands` off they keep only their summary line; with it on, they
 show that line plus captured output, but the output only appears when
 `tool_error_scrollback` is also on. Application errors, warnings, and
 cancellation notices are always shown. These display settings don't change what
-is saved. Saved command diagnostics are capped at 200 lines / 32,000 characters
-after redaction.
+is saved. Saved command diagnostics are capped at 200 lines / 32,000 characters.
 
 ## Delegated work in scrollback
 
@@ -316,15 +312,11 @@ Details:
   `shell` calls return PID/log/status handles instead of streaming.
 - When shown, a failed command prints one block with its captured output, or
   the saved diagnostic if there is none.
-- Output is redacted and sanitized, then trimmed to the last
+- Output is sanitized, then trimmed to the last
   `command_scrollback_lines` wrapped rows, with a marker counting what was
   omitted. The command, marker, and borders don't count against the budget, so
   even a budget of 1 keeps the final output row. Capture itself is capped at
   128 KiB.
-- If upstream truncation leaves the output starting partway through a
-  credential, pcode hides that output from scrollback and `/tools` rather than
-  risk showing part of it. The process, log, and status handles stay, and the
-  model's result is unchanged.
 - Verbose commands can push earlier conversation out of terminal history. Raise
   your terminal or tmux scrollback limit before turning this on.
 

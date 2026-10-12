@@ -34,70 +34,35 @@ def stale_install() -> str | None:
     return f"pcode's source changed since this session started. {RESTART}" if changed else None
 
 
-# Formats that are a credential wherever they appear, so masking them never
-# mangles ordinary text or code.
 _TOKEN = re.compile(
-    r"\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{12,}|github_pat_[A-Za-z0-9_]{20,}|"
-    r"glpat-[A-Za-z0-9_-]{20,}|xox[abeoprs]-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{35}|"
-    r"(?:AKIA|ASIA)[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b"
+    r"\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{12,}|"
+    r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b"
 )
-# A whole key block; one cut short (streamed, or clipped by an output limit)
-# hides through the end of the text, since its end marker may never come.
-_PRIVATE_KEY = re.compile(
-    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)",
-    re.DOTALL,
-)
-_KEY_END = re.compile(r"\s*-----END [A-Z ]*PRIVATE KEY-----\s*")
-_BASE64_LINE = re.compile(r"[A-Za-z0-9+/=]+\s*")
-# Keyword matching, for error reports and text that leaves this machine only:
-# on screen it mangles ordinary code (`input_token: int`).
 _ASSIGNMENT = re.compile(
     r"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|"
     r"password|secret|authorization)[\"']?\s*[:=]\s*[\"']?)([^\s\"',;}]+)"
 )
 
 
-def mask_secrets(text: str) -> str:
-    """Hide text that is certainly a credential, and strip terminal controls.
+def strip_controls(text: str) -> str:
+    """Drop control characters other than newline and tab."""
+    return re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
 
-    For what is shown on screen. The model has already seen the text, so this
-    only guards against a screen share or a pasted transcript; it matches only
-    unambiguous formats and the values of this process's secret environment
-    variables, never keyword assignments in the text.
+
+def redact(text: str) -> str:
+    """Best-effort credential removal for error reports and text sent off the machine.
+
+    Not for the screen: the model has already seen what pcode displays, and
+    keyword matching rewrites ordinary code.
     """
     for name, value in os.environ.items():
         if len(value) >= 8 and re.search(r"TOKEN|SECRET|PASSWORD|API_KEY|ACCESS_KEY", name):
             text = text.replace(value, "[redacted]")
-    if "PRIVATE KEY-----" in text:
-        text = _clipped_key_tail(_PRIVATE_KEY.sub("[private key redacted]", text))
     text = re.sub(r"(?i)\bBearer\s+[^\s\"',;}]+", "Bearer [redacted]", text)
     text = re.sub(r"(?i)(https?://)[^/\s@]+@", r"\1[redacted]@", text)
     text = _TOKEN.sub("[redacted]", text)
-    return re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
-
-
-def _clipped_key_tail(text: str) -> str:
-    """Mask a key block whose header was clipped away, from its end marker back.
-
-    Walks back over the base64 lines before each orphaned end marker, the
-    first of which may be partial. A loop, not a regex: an unanchored pattern
-    retries from every character of long base64-like output (`seq`, hashes),
-    which the live shell preview rescans on every chunk.
-    """
-    lines = text.split("\n")
-    shown: list[str] = []
-    for line in lines:
-        if _KEY_END.fullmatch(line):
-            while shown and _BASE64_LINE.fullmatch(shown[-1]):
-                shown.pop()
-            line = "[private key redacted]"
-        shown.append(line)
-    return "\n".join(shown)
-
-
-def redact(text: str) -> str:
-    """`mask_secrets` plus keyword assignments, for error reports and outbound text."""
-    return _ASSIGNMENT.sub(r"\1[redacted]", mask_secrets(text))
+    text = _ASSIGNMENT.sub(r"\1[redacted]", text)
+    return strip_controls(text)
 
 
 # Enough for a deep cause chain through the agent graph, small enough that a

@@ -3451,7 +3451,7 @@ class SessionController:
 
     async def merge_thread(self, thread: str) -> None:
         """Add a side thread to the conversation tree where it was asked."""
-        from pcode.diagnostics import mask_secrets
+        from pcode.diagnostics import strip_controls
 
         follows = self.check_bridge(thread)
         asked = self.asides.thread(thread)
@@ -3468,8 +3468,8 @@ class SessionController:
         count = f"{len(steps)} side question{'s' if len(steps) > 1 else ''}"
         if moved:
             for question, answer, _ in steps:
-                self.view.user(mask_secrets(question))
-                self.view.show_events((Message(mask_secrets(answer)),))
+                self.view.user(strip_controls(question))
+                self.view.show_events((Message(strip_controls(answer)),))
             self.view.note(
                 f"Merged {count} into the conversation, which continues from the last answer."
             )
@@ -3481,7 +3481,7 @@ class SessionController:
 
     async def summarize_thread(self, follows: Aside, instructions: str) -> None:
         """Add a summary of `follows`'s thread to the conversation, and show it."""
-        from pcode.diagnostics import mask_secrets
+        from pcode.diagnostics import strip_controls
 
         asked = self.asides.thread(follows.thread)
         questions = [aside.question for aside, _ in exchanges(asked, follows.reply.messages)]
@@ -3489,8 +3489,8 @@ class SessionController:
         summary = await self.runtime.summarize_aside(follows.reply, request, instructions)
         follows.bridged = "summarized"
         self.view.aside_changed(follows)
-        self.view.user(mask_secrets(request))
-        self.view.show_events((Message(mask_secrets(summary)),))
+        self.view.user(strip_controls(request))
+        self.view.show_events((Message(strip_controls(summary)),))
 
     def aside_completions(self, argument: str):
         """Complete a `$MODEL` word in `/btw` arguments from the /model catalog.
