@@ -11,19 +11,11 @@ MAX_SOURCE = 256 * 1024
 MAX_LINES = 4000
 MAX_PATCH = 64 * 1024
 MAX_PATCH_LINES = 400
-_SENSITIVE = re.compile(
-    r"(?i)(secret|token|password|credential|api.?key|private.?key|\.env|kubeconfig|"
-    r"(?:^|/)\.kube/|(?:^|/)\.aws/|\.tfvars|\.pem$|\.key$|(?:^|/)id_(?:rsa|ed25519)(?:$|\.))"
-)
 _OPEN_SECRET = re.compile(
     r"(?i)((?:password|passwd|secret|token|api[_-]?key|authorization)[\"']?\s*[:=]\s*)"
     r"([\"'])(.*?)(?:(?<!\\)\2|\Z)",
     re.DOTALL,
 )
-
-
-def sensitive_path(path: str) -> bool:
-    return bool(_SENSITIVE.search(path))
 
 
 def edit_text(text: str) -> str:
@@ -124,8 +116,6 @@ def change_from_record(record: dict) -> EditCompleted:
 def completed_change(path, before, after, *, existed=True, call_id="", omitted=""):
     """Build display evidence while raw snapshots are still local to execution."""
     operation = "edited" if existed else "created"
-    if sensitive_path(path):
-        return EditCompleted(call_id, "[sensitive path]", operation, omitted="Sensitive file")
     path = plain(edit_text(path), limit=None)
     if omitted or before is None:
         return EditCompleted(

@@ -791,10 +791,8 @@ agent is still writing; the view, your place, and your notes are kept.
 - Escape or Ctrl+C closes the popup and restores the editor draft, with any
   notes added to it.
 
-Untracked files are included without touching your staging area. Untracked files
-that look sensitive (`.env`, keys, credentials) are listed but never read, and
-tracked ones show only their line counts. Secrets in other diffs are redacted as
-in scrollback. A file's diff is clipped at 2,000 lines, and a file over 1 MB
+Untracked files are included without touching your staging area. Secrets in
+diffs are redacted as in scrollback. A file's diff is clipped at 2,000 lines, and a file over 1 MB
 shows only its counts. When git can't produce the review (no commits yet, a
 detached mainline), `/diffs` says why instead of opening.
 

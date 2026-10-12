@@ -992,8 +992,8 @@ paths are unconfined while relative ones resolve from the workspace and walked
 paths come back relative to it; read-only patterns get a `**/` prefix to match at
 any depth. `DisplayFileSystemToolset` takes the before snapshot for edit
 previews in `_request`, which Harness calls under its per-file lock just before
-writing, and reads through the real path so an alias to a sensitive file is
-hidden like the file.
+writing, and reads through the real path so an alias is reported as the file
+it reaches.
 
 The port leans on private upstream names, which the `<0.53` pin keeps stable
 but an upgrade must recheck: `FileSystemToolset._request`, `_write_file`,
@@ -1191,8 +1191,8 @@ Pydantic AI exposes tool arguments through `ToolCallPartDelta.args_delta`.
 executing anything, using
 `pydantic_core.from_json(..., allow_partial="trailing-strings")` for incomplete
 string values. A separate parse with `allow_partial=True` requires a complete
-path before exposing content; resolve it against the filesystem root to exclude
-sensitive symlink targets too. Preview events bypass the session journal;
+path before exposing content; resolve it against the workspace root to exclude
+symlinks that lead outside it. Preview events bypass the session journal;
 completed change events replay through the same recorded transcript method even
 when hidden. Keep `tests/test_edits_tmux.py`: no-CPR PTYs don't verify the shared
 preview/editor height budget or redraw behavior in a real terminal.

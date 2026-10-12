@@ -142,7 +142,7 @@ def test_retry_is_not_reported_as_retrying_and_shows_error_body():
 def test_targets_are_relative_bounded_and_show_shell_arguments(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert target("read_file", {"path": str(tmp_path / "a.py")}) == "a.py"
-    assert target("read_file", {"path": ".env"}) == "[sensitive path]"
+    assert target("read_file", {"path": ".env"}) == ".env"
     command = 'MODE=test python -c "print(123)" | head -n 1'
     assert target("run_command", {"command": command}) == command
     assert target("start_command", {"command": command}) == command

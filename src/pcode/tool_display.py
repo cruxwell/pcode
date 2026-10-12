@@ -45,9 +45,6 @@ LABELS = {
     "read_session": "Read session",
     "inventory_agent_context": "Context",
 }
-_SENSITIVE = re.compile(
-    r"(?i)(secret|token|password|credential|api.?key|private.?key|\.env|kubeconfig|\.tfvars)"
-)
 
 
 def plain(value: str, limit: int | None = 90) -> str:
@@ -408,14 +405,13 @@ def target(name: str, args: dict, source: str = "") -> str:
         value = args.get("path", ".")
         if not isinstance(value, str):
             return "path unavailable"
-        sensitive = bool(_SENSITIVE.search(value))
         path = Path(value)
         if path.is_absolute():
             try:
                 value = str(path.relative_to(Path.cwd()))
             except ValueError:
                 pass
-        where = "[sensitive path]" if sensitive else plain(value)
+        where = plain(value)
         if name in {"search_files", "find_files", "list_files", "grep"} and isinstance(
             args.get("pattern"), str
         ):

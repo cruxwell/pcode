@@ -59,10 +59,8 @@ def test_parallel_previews_clear_only_the_settled_call():
     assert preview.update(FunctionToolCallEvent(second.part)) == [EditPreview("edit-preview:1")]
 
 
-def test_preview_bounds_sanitizes_and_skips_sensitive_paths():
+def test_preview_bounds_and_sanitizes():
     preview = StreamingEditPreview()
-    for path in (".envrc", "private.key", "secrets/data.py", "project.tfvars", ".kube/config"):
-        assert not preview.update(start({"path": path, "content": "hidden"}, name="write_file"))
     args = json.dumps({"path": "example.py", "content": 'token = "first\nsecond'})[:-2]
     events = preview.update(start(args, name="write_file"))
     assert "first" not in repr(events) and "second" not in repr(events)
@@ -153,9 +151,8 @@ def test_runtime_streams_previews_but_never_saves_them(tmp_path, outcome):
     asyncio.run(exercise())
 
 
-def test_streamed_sensitive_alias_and_outside_paths_are_hidden(tmp_path):
-    # Resolving a symlink doesn't read its target's contents.
-    (tmp_path / "alias.py").symlink_to(tmp_path / ".envrc")
+def test_streamed_outside_paths_are_hidden(tmp_path):
+    (tmp_path / "alias.py").symlink_to(tmp_path.parent / "outside.py")
     preview = StreamingEditPreview(tmp_path)
     for path in ("alias.py", "../outside.py", str(tmp_path / "absolute.py")):
         assert not preview.update(

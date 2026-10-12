@@ -53,8 +53,7 @@ before diffs were captured show their transcript without reconstructed diffs.
 
 Limits:
 
-- Sensitive paths are skipped, and recognizable credentials and terminal
-  controls are redacted.
+- Recognizable credentials and terminal controls are redacted.
 - Files over 256 Ki characters or 4,000 lines aren't diffed.
 - A saved diff is capped at 400 patch lines / 64 Ki characters, and each block
   on screen shows at most 60 wrapped rows, with an omission marker.

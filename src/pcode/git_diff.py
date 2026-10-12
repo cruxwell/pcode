@@ -17,8 +17,7 @@ with the tree it was compared against.
 user's index. So the working tree is recorded into a throwaway copy of the index
 (`GIT_INDEX_FILE`), written out as a tree, and diffed tree to tree; the real
 index is never written. The copy sits beside the real one because a split index
-finds its shared half there. Untracked files that look sensitive are listed but
-never hashed, so their contents do not reach the object store.
+finds its shared half there.
 """
 
 import os
@@ -31,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from pcode import worktree
-from pcode.edits import edit_text, sensitive_path, source_lines
+from pcode.edits import edit_text, source_lines
 from pcode.runtime import EditCompleted
 from pcode.tool_display import plain
 
@@ -144,20 +143,16 @@ def load_review(
         base, title, empty, only = _session_base(workspace, top, edited, start, since)
     if only is not None and not only:
         return Review(title, [], empty, root=top)
-    tree, secret = _snapshot(top, only)
-    unread = [
-        EditCompleted("", plain(path, limit=None), "created", omitted="Sensitive file; not read")
-        for path in sorted(secret)
-    ]
-    changes = _tree_diff(top, base, tree, only) + unread
-    uncommitted = changes if base == "HEAD" else _tree_diff(top, "HEAD", tree, only) + unread
+    tree = _snapshot(top, only)
+    changes = _tree_diff(top, base, tree, only)
+    uncommitted = changes if base == "HEAD" else _tree_diff(top, "HEAD", tree, only)
     since_review = None
     if reviewed is not None:
         try:
             # Only the session's work: files that differ from the base now, or
             # differed from the base of the time when reviewed. A file
             # mainline's merge (or a pull) brought in differs from neither, so
-            # it is not news. The reviewed tree never held the unread files.
+            # it is not news.
             then = reviewed.base or base
             ours = _names(top, base, tree, only) | _names(top, then, reviewed.tree, only)
             since_review = _tree_diff(top, reviewed.tree, tree, ours) if ours else []
@@ -302,12 +297,11 @@ def _committed(top: Path, start: str, since: str | None) -> set[str]:
     return _paths(_git(top, *args, f"{start}..HEAD", "--"))
 
 
-def _snapshot(top: Path, only: set[str] | None = None) -> tuple[str, set[str]]:
-    """Record the working tree as a tree object, and the untracked secrets left out.
+def _snapshot(top: Path, only: set[str] | None = None) -> str:
+    """Record the working tree as a tree object.
 
     Untracked files are included, limited to `only` where given; the real
-    index is never written. Untracked files that look sensitive are not
-    hashed, so their contents never reach the object store.
+    index is never written.
     """
     index = Path(
         _git(top, "rev-parse", "--path-format=absolute", "--git-path", "index").decode().strip()
@@ -333,8 +327,7 @@ def _snapshot(top: Path, only: set[str] | None = None) -> tuple[str, set[str]]:
         # A tree cannot hold a conflict, so a merge in progress outside `only`
         # is recorded as its files stand; the diffs never look outside `only`.
         unmerged = _paths(_git(top, "diff", "--name-only", "-z", "--diff-filter=U", env=env))
-        secret = {path for path in untracked if sensitive_path(path)}
-        stage = sorted(changed | unmerged | (untracked - secret))
+        stage = sorted(changed | unmerged | untracked)
         if stage:
             listing = b"\0".join(path.encode("utf-8", "surrogateescape") for path in stage)
             _git(
@@ -349,7 +342,7 @@ def _snapshot(top: Path, only: set[str] | None = None) -> tuple[str, set[str]]:
         tree = _git(top, "write-tree", env=env).decode().strip()
     finally:
         Path(scratch).unlink(missing_ok=True)
-    return tree, secret
+    return tree
 
 
 DIFF_ENV = {"GIT_LITERAL_PATHSPECS": "1", "GIT_OPTIONAL_LOCKS": "0"}
@@ -411,8 +404,6 @@ def _change(status: str, old: str, new: str, chunk: bytes) -> EditCompleted:
     text = chunk.decode("utf-8", "replace")
     lines = [line.rstrip("\n").removesuffix("\r") for line in source_lines(text)]
     added, removed = _counts(lines)
-    if sensitive_path(old) or sensitive_path(new):
-        return EditCompleted("", path, operation, "", added, removed, omitted="Sensitive file")
     if len(chunk) > MAX_FILE_DIFF:
         return EditCompleted(
             "", path, operation, "", added, removed, omitted="Diff exceeds preview size limit"
