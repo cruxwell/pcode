@@ -87,12 +87,36 @@ briefs, or none, and the model names the briefs it changed.
 
 ## Plans
 
-With the extension on, [`/plan`](commands.md) writes its plan into the vault
-as `briefs/Plan — <project> — <title>.md`: a *proposed brief* with a banner saying it isn't
-implemented yet, a yellow tint, and only the sections the change affects.
-Saying "go ahead" marks it approved (blue). When the work ships, the model
-folds it into the brief and marks it implemented. The plan stays as the record
-of why the change was made.
+Use Obsidian to review an architecture proposal and answer its open questions
+without enabling project memory:
+
+```text
+/plan --obsidian Design the export pipeline
+```
+
+Configure an org and vault in `memory.toml` as described [above](#orgs-and-vaults).
+You do not need to enable `basic_memory` or run `/brief setup`. The command creates
+only the missing `Brief format.md` and `briefs/` directory, keeping your existing
+format unchanged. It does not set up dashboards, styling, session imports or sync,
+and it does not open Obsidian automatically. Missing or invalid configuration is
+an error, not a silent fallback to a local plan.
+
+The plan lives at `briefs/Plan — <project> — <title>.md`: a *proposed brief* with a
+banner saying it isn't implemented yet. It links an existing brief when there is
+one, but can stand alone. With memory off, the model maintains only the plan, not
+project briefs. Saying "go ahead" in the conversation marks it approved and starts
+implementation. When the work ships, the model marks it implemented. The plan
+stays as the record of why the change was made.
+
+`/plan --local [request]` explicitly uses `.pcode/plans/`, even with memory on.
+Without a flag, new plans use the vault when memory is enabled and configured,
+otherwise local files. Bare `/plan` resumes the active plan; a destination-only
+command resumes it only when the destination matches, otherwise selects a plan at
+the requested destination without moving the old one. `/plan status` shows the
+active path, and `/plan off` leaves the file in place.
+
+With memory enabled, approval and completion also update the linked brief. If
+you ran `/brief setup`, the proposed and approved notes have yellow and blue tints.
 
 ## Answering in the note
 
@@ -103,9 +127,13 @@ paragraph:
 > [!comment] Cover the retry path too.
 ```
 
-With your next message, the model receives a diff of what you changed in any
-note it has read or written in this session. It acts on your answers and
-comments, removes them, and records what changed in the note's *Log*.
+With your next terminal message, the model receives a diff of your edits. With
+memory off, only the active Obsidian plan is watched. With memory on, this covers
+vault notes the model has read or written in this session. It acts on your answers
+and comments, removes them, and records what changed in the note's *Log*.
+
+Edit between turns: simultaneous model and user edits are not conflict-free.
+Saving a note does not trigger a model turn or start implementation by itself.
 
 ## Cost
 

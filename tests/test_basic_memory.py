@@ -346,6 +346,29 @@ def test_plan_mode_writes_vault_plans_and_approves_them(org, tmp_path):
     assert "Plan — other" not in api.notes[-1]
 
 
+@pytest.mark.parametrize("plan_first", [True, False])
+def test_plan_and_memory_hooks_emit_one_diff(org, tmp_path, plan_first):
+    set_enabled("basic_memory", True)
+    memory = FakeAPI(org / "app", tmp_path / "sessions")
+    planner = FakeAPI(org / "app", tmp_path / "sessions")
+    bm.setup(memory)
+    plan_mode.setup(planner)
+    planner.commands["/plan"]("--obsidian Topic")
+    path = vault(tmp_path) / "briefs" / "Plan — app — Topic.md"
+    path.write_text("Before")
+    tool(memory, "read_file", path)
+    path.write_text("External answer")
+    request = ModelRequest(parts=[UserPromptPart("Continue")])
+    context = ctx(messages=[request])
+    hooks = (planner, memory) if plan_first else (memory, planner)
+    for api in hooks:
+        run(api.hooked["before_model_request"](context, SimpleNamespace(messages=[request])))
+    assert sum("```diff" in str(part.content) for part in request.parts) == 1
+    for api in hooks:  # Retry neither repeats nor consumes additional feedback.
+        run(api.hooked["before_model_request"](context, SimpleNamespace(messages=[request])))
+    assert sum("```diff" in str(part.content) for part in request.parts) == 1
+
+
 def test_sync_works_in_unsaved_sessions_and_edits_reset_per_conversation(org, tmp_path):
     api = FakeAPI(org / "app", tmp_path / "sessions")  # no session directory: --no-save
     bm.setup(api)

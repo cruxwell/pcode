@@ -34,6 +34,7 @@ import json
 import re
 import shlex
 import shutil
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -120,11 +121,22 @@ def load_orgs(path: Path | None = None) -> list[Org]:
     except (OSError, tomllib.TOMLDecodeError) as error:
         raise ValueError(f"{path}: {error}") from None
     default_sync = bool(data.get("auto_sync", False))
-    vault_root = Path(str(data.get("vault_root", DEFAULT_VAULT_ROOT))).expanduser()
+    root_value = data.get("vault_root", DEFAULT_VAULT_ROOT)
+    if not isinstance(root_value, str) or not root_value.strip():
+        raise ValueError(f"{path}: vault_root must be a nonempty path string")
+    vault_root = Path(root_value).expanduser()
+    entries = data.get("org", [])
+    if not isinstance(entries, list):
+        raise ValueError(f"{path}: org must be an array of [[org]] tables")
     orgs = []
-    for entry in data.get("org", []):
-        if not isinstance(entry, dict) or not entry.get("name") or not entry.get("root"):
+    for entry in entries:
+        if not isinstance(entry, dict) or any(
+            not isinstance(entry.get(key), str) or not entry[key].strip()
+            for key in ("name", "root")
+        ):
             raise ValueError(f"{path}: every [[org]] needs a name and a root")
+        if "vault" in entry and (not isinstance(entry["vault"], str) or not entry["vault"].strip()):
+            raise ValueError(f"{path}: vault must be a nonempty path string")
         name = str(entry["name"])
         if safe_name(name) != name:
             raise ValueError(f"{path}: org name {name!r} must be a plain file name")
@@ -235,6 +247,43 @@ def edit_diff(path: Path, before: str, after: str) -> str:
     return "\n".join(lines)
 
 
+def is_side(ctx) -> bool:
+    """Side questions and shared workers must not consume the main conversation's edits."""
+    from pcode.aside_guard import AsideGuard
+
+    if getattr(getattr(ctx, "agent", None), "name", None) == "worker":
+        return True
+    capabilities = getattr(ctx, "capabilities", None) or {}
+    return any(isinstance(c, AsideGuard) for c in capabilities.values())
+
+
+class NoteFeedback:
+    """Snapshots shared by broad memory feedback and active-plan-only feedback."""
+
+    def __init__(self):
+        self.seen: dict[Path, str] = {}
+
+    def observe(self, path: Path) -> None:
+        try:
+            self.seen[path] = path.read_text(encoding="utf-8")
+        except OSError:
+            self.seen.pop(path, None)
+
+    def edits(self, only: Path | None = None) -> list[str]:
+        changed = []
+        for path, before in list(self.seen.items()):
+            if only is not None and path != only:
+                continue
+            try:
+                after = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if after != before:
+                self.seen[path] = after
+                changed.append(f"`{path}`:\n```diff\n{edit_diff(path, before, after)}\n```")
+        return changed
+
+
 # --- Vault setup ---------------------------------------------------------------------
 
 
@@ -302,24 +351,53 @@ def enabled() -> bool:
     return NAME in name_list("extensions_on") - name_list("extensions_off")
 
 
-def plan_location(workspace: Path) -> PlanLocation | None:
-    """Where `/plan` writes when this extension is on and `workspace` is in an org."""
-    if not enabled():
+def plan_guidance(directory: Path) -> str:
+    """Guidance also works for a saved absolute marker without current org configuration."""
+    return (
+        f"- This plan is a proposed brief: re-read `{directory.parent / FORMAT_NOTE}` before "
+        "creating or revising it and follow its Plans section (type: plan, state: proposed, "
+        "cssclasses: [proposed], the PROPOSED banner). Link an existing project brief via "
+        f"`project:` if one in `{directory}` matches this workspace's `dirs`. "
+        "If none exists, write a standalone plan; do not create a project brief."
+    )
+
+
+def plan_location(workspace: Path, *, explicit: bool = False) -> PlanLocation | None:
+    """Resolve automatic routing, or require a configured vault independently of memory."""
+    if not explicit and not enabled():
         return None
     try:
         place = place_for(workspace)
-    except ValueError:
+        if place is None and explicit:
+            raise ValueError(f"No configured org covers {workspace}")
+        if place is None:
+            return None
+        vault = place.org.vault
+        if explicit:
+            # Planning needs neither the dashboard nor Obsidian settings or sync.
+            format_note = vault / FORMAT_NOTE
+            if (format_note.exists() or format_note.is_symlink()) and not format_note.is_file():
+                raise ValueError(f"{format_note} must be a file")
+            briefs = vault / BRIEFS
+            briefs.mkdir(parents=True, exist_ok=True)
+            # Existing directories and format notes don't prove new plans can be written.
+            with tempfile.NamedTemporaryFile(dir=briefs, prefix=".pcode-plan-") as probe:
+                probe.write(b"plan write probe\n")
+                probe.flush()
+            if not format_note.exists():
+                write_text(format_note, (FILES / FORMAT_NOTE).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        if explicit:
+            raise ValueError(
+                f"/plan --obsidian: {error}. Configure a matching [[org]] with name, root "
+                f"and a writable vault in {config_path()}, then retry (or use /plan --local)."
+            ) from None
         return None
-    if place is None:
-        return None
-    vault = place.org.vault
     project = place.repo or (Path(place.dir).name if place.dir != "." else place.org.name)
     return PlanLocation(
         vault / BRIEFS,
         safe_name(project, 40) or place.org.name,
-        f"- This plan is a proposed brief: read `{vault / FORMAT_NOTE}` first and follow its "
-        "Plans section (type: plan, state: proposed, cssclasses: [proposed], the PROPOSED "
-        "banner, `project:` linking the brief it changes, and only the sections that change).",
+        plan_guidance(vault / BRIEFS),
     )
 
 
@@ -410,7 +488,7 @@ def setup(pcode) -> None:
     current: dict = {"session": None}
     # Sync per session; None holds a choice made before the first message.
     sync: dict[str | None, bool] = {}
-    seen: dict[Path, str] = {}  # Note text as the model last read or wrote it.
+    feedback = NoteFeedback()
 
     def session_of(ctx) -> str | None:
         return base_conversation(getattr(ctx, "conversation_id", None)) or current["session"]
@@ -433,14 +511,6 @@ def setup(pcode) -> None:
         if session and state_path(session).parent.is_dir():  # Unsaved sessions have none.
             write_text(state_path(session), json.dumps({"sync": on}))
 
-    def is_side(ctx) -> bool:
-        from pcode.aside_guard import AsideGuard
-
-        if getattr(getattr(ctx, "agent", None), "name", None) == "worker":
-            return True
-        capabilities = getattr(ctx, "capabilities", None) or {}
-        return any(isinstance(c, AsideGuard) for c in capabilities.values())
-
     def in_vault(path: Path) -> bool:
         return path.suffix == ".md" and (path == vault or vault in path.parents)
 
@@ -450,7 +520,7 @@ def setup(pcode) -> None:
         if is_side(ctx) or not session or session == current["session"]:
             return
         current["session"] = session
-        seen.clear()  # Notes read in another conversation are not this one's to diff.
+        feedback.seen.clear()  # Another conversation's notes are not this one's to diff.
         if None in sync:
             set_sync(sync.pop(None), session)
 
@@ -460,23 +530,8 @@ def setup(pcode) -> None:
             path = Path(str(args.get("path", ""))).expanduser()
             path = (path if path.is_absolute() else pcode.workspace / path).resolve()
             if in_vault(path):
-                try:
-                    seen[path] = await asyncio.to_thread(path.read_text, encoding="utf-8")
-                except OSError:
-                    seen.pop(path, None)
+                await asyncio.to_thread(feedback.observe, path)
         return result
-
-    def edits() -> list[str]:
-        changed = []
-        for path, before in list(seen.items()):
-            try:
-                after = path.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            if after != before:
-                seen[path] = after
-                changed.append(f"`{path}`:\n```diff\n{edit_diff(path, before, after)}\n```")
-        return changed
 
     @pcode.hooks.on.before_model_request
     async def remind(ctx, request_context):
@@ -494,7 +549,7 @@ def setup(pcode) -> None:
         ):
             return request_context
         lines = [SYNC] if sync_on(session_of(ctx)) else []
-        changed = await asyncio.to_thread(edits)
+        changed = await asyncio.to_thread(feedback.edits)
         if changed:
             lines += [EDITED, *changed]
         if lines:

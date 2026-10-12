@@ -14,17 +14,20 @@ just says what the user wants. The active plan lives in a marker file beside
 the plans, so it survives `/reload` (which re-imports this module) and restarts.
 
 With the `basic_memory` extension on and the workspace in one of its orgs, the
-plan is a note in that org's vault instead (`briefs/Plan — <project> — <title>.md`),
-in the brief format, and on approval the model marks it approved there. The
-marker then holds the note's absolute path rather than a slug.
+plan is a note in that org's vault instead (`briefs/Plan — <project> — <title>.md`).
+`--obsidian` chooses that vault even with memory off; `--local` overrides automatic
+routing. The marker holds a vault note's absolute path rather than a local slug.
+With memory off, only the active note gets edit feedback and lifecycle updates.
 """
 
+import asyncio
 import re
 from pathlib import Path
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.messages import ModelRequest, ToolReturnPart, UserPromptPart
 
+from pcode.conversation_ids import base_conversation
 from pcode.steering import run_request
 
 PLANS = ".pcode/plans"
@@ -49,11 +52,6 @@ Plan mode is on. The user wants to agree on a plan before any implementation.
 </plan-mode>"""
 
 
-def is_worker(ctx) -> bool:
-    """A shared delegate runs this extension's hooks too; plan mode is the parent's."""
-    return getattr(ctx.agent, "name", None) == "worker"
-
-
 def slugify(text: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     if len(slug) > 60:  # Cut at a word boundary when there is one.
@@ -67,14 +65,40 @@ def topic_slug(request: str) -> str:
     return slugify(" ".join(request.split("\n", 1)[0].split()[:8]))
 
 
+def parse_destination(argument: str) -> tuple[str | None, str]:
+    """Consume only leading flags, leaving the request's internal whitespace untouched."""
+    destination = None
+    argument = argument.strip()
+    while argument.startswith("-"):
+        flag, *rest = argument.split(maxsplit=1)
+        if flag not in ("--obsidian", "--local"):
+            raise ValueError(f"Unknown /plan flag {flag!r}; use --obsidian or --local.")
+        if destination is not None and destination != flag:
+            raise ValueError("/plan --obsidian and --local cannot be combined.")
+        destination = flag
+        argument = rest[0] if rest else ""
+    return destination, argument
+
+
 def setup(pcode) -> None:
     if pcode.is_worker:
         return
     plans = pcode.workspace / PLANS
     marker = plans / ACTIVE
-    from pcode.extensions.basic_memory import plan_location
+    from pcode.extensions.basic_memory import (
+        EDITED,
+        NOTE_TOOLS,
+        NoteFeedback,
+        enabled,
+        is_side,
+        plan_guidance,
+        plan_location,
+    )
 
     location = plan_location(pcode.workspace)  # None: plans stay in .pcode/plans
+    memory_on = enabled()
+    feedback = NoteFeedback()
+    session = None
 
     def active() -> str | None:
         try:
@@ -95,18 +119,18 @@ def setup(pcode) -> None:
             return f"~/{path.relative_to(Path.home())}" if Path.home() in path.parents else key
         return f"{PLANS}/{key}.md"
 
-    def latest() -> str | None:
+    def latest(destination) -> str | None:
         # Only local plans: a vault holds every repo's plans, so "the newest" could
         # be another project's.
-        if location:
+        if destination:
             return None
         files = (
             sorted(plans.glob("*.md"), key=lambda p: p.stat().st_mtime) if plans.is_dir() else []
         )
         return files[-1].stem if files else None
 
-    def new_key(request: str) -> str:
-        return str(location.path_for(request)) if location else topic_slug(request)
+    def new_key(request: str, destination) -> str:
+        return str(destination.path_for(request)) if destination else topic_slug(request)
 
     def start(slug: str) -> None:
         plans.mkdir(parents=True, exist_ok=True)
@@ -116,22 +140,48 @@ def setup(pcode) -> None:
         marker.write_text(slug + "\n")
 
     def plan_command(argument: str) -> str | None:
-        argument = argument.strip()
+        flag, argument = parse_destination(argument)
         current = active()
-        if argument == "off":
+        if flag is None and argument == "off":
             if current is None:
                 pcode.ui.notify("Plan mode is already off.")
                 return
             marker.unlink(missing_ok=True)
             pcode.ui.notify(f"Plan mode off. The plan stays in {relative(current)}.")
             return
-        if argument == "status":
+        if flag is None and argument == "status":
             pcode.ui.notify(
                 f"Plan mode on: {relative(current)}" if current else "Plan mode is off."
             )
             return
-        slug = new_key(argument) if argument else (current or latest() or new_key("plan"))
+        destination = location
+        if flag == "--obsidian":
+            destination = plan_location(pcode.workspace, explicit=True)
+        elif flag == "--local":
+            destination = None
+        compatible = current
+        if flag and current:
+            matches = (
+                Path(current).parent == destination.directory
+                if destination
+                else not is_vault(current)
+            )
+            if not matches:
+                compatible = None
+        slug = (
+            new_key(argument, destination)
+            if argument
+            else (
+                compatible
+                or (latest(destination) if flag is None else None)
+                or new_key("plan", destination)
+            )
+        )
         start(slug)
+        if not memory_on and is_vault(slug):
+            path = path_of(slug).resolve()
+            if slug != current or path not in feedback.seen:
+                feedback.observe(path)
         exists = path_of(slug).exists()
         verb = "Resuming" if exists else "Planning in"
         ask = "Say" if argument else "Describe the change; say"
@@ -147,9 +197,11 @@ def setup(pcode) -> None:
         "/plan",
         "Plan before implementing; the model exits when you approve",
         plan_command,
-        arguments=("off", "status"),
+        arguments=("off", "status", "--obsidian", "--local"),
         free_arguments=True,  # anything else is the request to plan
         argument_descriptions={
+            "--obsidian": "Use the configured vault, even with project memory off",
+            "--local": "Use .pcode/plans, even with project memory on",
             "off": "Leave plan mode (the plan file is kept)",
             "status": "Show whether plan mode is on and its file",
         },
@@ -174,16 +226,60 @@ def setup(pcode) -> None:
         if is_vault(current):
             result += (
                 " First mark it approved, as the brief format says: `state: approved`, "
-                "`cssclasses: [approved]`, the APPROVED banner, and ✅ on the brief's Open plans "
-                "line. When the work ships, fold it into the brief and mark the plan implemented."
+                "`cssclasses: [approved]`, and the APPROVED banner."
             )
+            if memory_on:
+                result += (
+                    " If an existing brief is linked, add ✅ on the brief's Open plans line "
+                    "and, when the work ships, fold it into the brief. Mark the plan implemented "
+                    "when shipped, even if it is standalone; do not create a brief implicitly."
+                )
+            else:
+                result += (
+                    " When the work ships, mark the plan implemented. Project memory is off: "
+                    "update only this plan, not a project brief; do not create or maintain one."
+                )
         return result
 
     @pcode.hooks.on.before_tool_execute
     async def workers_cannot_exit(ctx, *, call, tool_def, args):
-        if tool_def.name == "exit_plan_mode" and is_worker(ctx):
+        if tool_def.name == "exit_plan_mode" and is_side(ctx):
             raise ModelRetry("Only the main agent can leave plan mode.")
         return args
+
+    if not memory_on:
+        current = active()
+        if current and is_vault(current):
+            feedback.observe(path_of(current).resolve())
+
+        @pcode.hooks.on.before_run
+        async def remember_session(ctx):
+            nonlocal session
+            incoming = base_conversation(getattr(ctx, "conversation_id", None))
+            if is_side(ctx) or not incoming or incoming == session:
+                return
+            if session is not None:
+                feedback.seen.clear()
+                current = active()
+                if current and is_vault(current):
+                    await asyncio.to_thread(feedback.observe, path_of(current).resolve())
+            session = incoming
+
+        @pcode.hooks.on.after_tool_execute
+        async def note_seen(ctx, *, call, tool_def, args, result):
+            current = active()
+            if (
+                current
+                and is_vault(current)
+                and tool_def.name in NOTE_TOOLS
+                and not is_side(ctx)
+                and isinstance(args, dict)
+            ):
+                path = Path(str(args.get("path", ""))).expanduser()
+                path = (path if path.is_absolute() else pcode.workspace / path).resolve()
+                if path == path_of(current).resolve():
+                    await asyncio.to_thread(feedback.observe, path)
+            return result
 
     @pcode.hooks.on.before_model_request
     async def remind(ctx, request_context):
@@ -191,7 +287,7 @@ def setup(pcode) -> None:
         # cached. A retried turn resends the same request, so skip one that
         # already carries the reminder or is mid-turn (holds tool results).
         current = active()
-        if current is None or is_worker(ctx):
+        if current is None or is_side(ctx):
             return request_context
         request = run_request(ctx, request_context)
         parts = request.parts if isinstance(request, ModelRequest) else ()
@@ -201,6 +297,16 @@ def setup(pcode) -> None:
             and not any(isinstance(p, ToolReturnPart) for p in parts)
             and not any(str(p.content).startswith("<plan-mode>") for p in prompts)
         ):
-            extra = f"\n{location.guidance}" if location and is_vault(current) else ""
+            extra = ""
+            if is_vault(current):
+                extra = "\n" + plan_guidance(path_of(current).parent)
+                if not memory_on:
+                    extra += (
+                        "\n- Project memory is off. Update only this plan, not project briefs, "
+                        "including on approval and completion."
+                    )
+                    changed = await asyncio.to_thread(feedback.edits, path_of(current).resolve())
+                    if changed:
+                        extra += "\n" + EDITED + "\n" + "\n\n".join(changed)
             parts.append(UserPromptPart(REMINDER.format(path=relative(current), extra=extra)))
         return request_context
