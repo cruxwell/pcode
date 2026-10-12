@@ -53,7 +53,7 @@ class DisplayFileSystemToolset(FileSystemToolset):
         await ctx.emit(FileChangeEvent(change=change))
 
     @staticmethod
-    def _display_path(scope, path: str, resolved: str) -> str:
+    def _display_path(scope, resolved: str) -> str:
         """Workspace-relative inside the workspace, absolute outside it."""
         relative = posixpath.relpath(resolved, scope.cwd)
         return resolved if relative == ".." or relative.startswith("../") else relative
@@ -61,17 +61,17 @@ class DisplayFileSystemToolset(FileSystemToolset):
     async def _request(self, scope, ctx, change, *, path, resolved):
         snapshot = _snapshot.get()
         if ctx is not None and snapshot is not None:
-            await self._take(snapshot, scope, path, resolved)
+            await self._take(snapshot, scope, resolved)
         return await super()._request(scope, ctx, change, path=path, resolved=resolved)
 
-    async def _take(self, snapshot: _Snapshot, scope, path: str, resolved: str) -> None:
+    async def _take(self, snapshot: _Snapshot, scope, resolved: str) -> None:
         snapshot.taken = True
         # Harness writes through the path as written; name the file it reaches.
         try:
             real = await scope.workspace.realpath(resolved)
         except OSError:
             real = resolved
-        snapshot.display_path = self._display_path(scope, path, real)
+        snapshot.display_path = self._display_path(scope, real)
         try:
             raw = await scope.workspace.read_bytes(real)
         except FileNotFoundError:

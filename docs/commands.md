@@ -792,9 +792,9 @@ agent is still writing; the view, your place, and your notes are kept.
   notes added to it.
 
 Untracked files are included without touching your staging area. Secrets in
-diffs are redacted as in scrollback. A file's diff is clipped at 2,000 lines, and a file over 1 MB
-shows only its counts. When git can't produce the review (no commits yet, a
-detached mainline), `/diffs` says why instead of opening.
+diffs are redacted as in scrollback. A file's diff is clipped at 2,000 lines,
+and a file over 1 MB shows only its counts. When git can't produce the review
+(no commits yet, a detached mainline), `/diffs` says why instead of opening.
 
 ## Tool-call inspector
 
