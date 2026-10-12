@@ -27,6 +27,20 @@ jobs:
       - run: uv run --locked ruff check .
       - run: uv run --locked ruff format --check .
 
+  obsidian-plugin:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: integrations/obsidian
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run build
+
   test:
     name: test (${{ matrix.os }}, py${{ matrix.python }})
     runs-on: ${{ matrix.os }}

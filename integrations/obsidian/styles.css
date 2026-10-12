@@ -1,0 +1,86 @@
+.pcode-bridge {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
+	height: 100%;
+}
+
+.pcode-header .pcode-note {
+	font-weight: var(--font-semibold);
+}
+
+.pcode-status {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	overflow-wrap: anywhere;
+}
+
+.pcode-warn {
+	color: var(--text-warning);
+}
+
+.pcode-actions,
+.pcode-entry-footer {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-1);
+	align-items: center;
+}
+
+.pcode-bridge button {
+	display: inline-flex;
+	gap: var(--size-4-1);
+	align-items: center;
+}
+
+.pcode-log {
+	flex: 1;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-3);
+}
+
+.pcode-entry {
+	border-top: 1px solid var(--background-modifier-border);
+	padding-top: var(--size-4-2);
+}
+
+.pcode-sent {
+	color: var(--text-muted);
+	font-style: italic;
+	margin-bottom: var(--size-4-1);
+}
+
+.pcode-activity pre {
+	font-size: var(--font-ui-smaller);
+	white-space: pre-wrap;
+	max-height: 12em;
+	overflow-y: auto;
+}
+
+.pcode-state {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	margin-right: auto;
+}
+
+.pcode-composer {
+	display: flex;
+	gap: var(--size-4-1);
+	align-items: flex-end;
+}
+
+.pcode-composer textarea,
+.pcode-question {
+	flex: 1;
+	width: 100%;
+	resize: vertical;
+}
+
+.pcode-quote {
+	color: var(--text-muted);
+	white-space: pre-wrap;
+	max-height: 10em;
+	overflow-y: auto;
+}

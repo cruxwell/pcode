@@ -127,7 +127,8 @@ paragraph:
 > [!comment] Cover the retry path too.
 ```
 
-With your next terminal message, the model receives a diff of your edits. With
+With your next message, from the terminal or from Obsidian with the
+[pcode bridge plugin](obsidian.md), the model receives a diff of your edits. With
 memory off, only the active Obsidian plan is watched. With memory on, this covers
 vault notes the model has read or written in this session. It acts on your answers
 and comments, removes them, and records what changed in the note's *Log*.

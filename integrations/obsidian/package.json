@@ -1,0 +1,17 @@
+{
+	"name": "pcode-bridge",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Obsidian plugin: talk to a note's pcode session",
+	"type": "module",
+	"scripts": {
+		"build": "tsc --noEmit && node esbuild.config.mjs",
+		"test": "node --experimental-strip-types --test tests/*.test.ts"
+	},
+	"devDependencies": {
+		"@types/node": "^22",
+		"esbuild": "^0.28.2",
+		"obsidian": "^1.14.4",
+		"typescript": "~5.9.0"
+	}
+}

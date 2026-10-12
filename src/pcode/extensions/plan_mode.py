@@ -292,6 +292,12 @@ def setup(pcode) -> None:
             extra = ""
             if is_vault(current):
                 extra = "\n" + plan_guidance(path_of(current).parent)
+                if conversation := base_conversation(getattr(ctx, "conversation_id", None)):
+                    # The Obsidian bridge plugin finds this conversation through it.
+                    extra += (
+                        f"\n- Keep `session: {conversation}` in the plan's front matter "
+                        "(add it, or update it if it names another session)."
+                    )
                 if not memory_on:
                     extra += (
                         "\n- Project memory is off. Update only this plan, not project briefs, "

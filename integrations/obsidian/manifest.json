@@ -1,0 +1,9 @@
+{
+	"id": "pcode-bridge",
+	"name": "pcode bridge",
+	"version": "0.1.0",
+	"minAppVersion": "1.7.2",
+	"description": "Ask, comment and approve a plan from Obsidian, answered by the pcode session that owns it.",
+	"author": "pcode",
+	"isDesktopOnly": true
+}

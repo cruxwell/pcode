@@ -436,6 +436,27 @@ def test_memory_owns_feedback_when_enabled(configured_vault, monkeypatch):
     assert "fold it into the brief" in api.tools["exit_plan_mode"]()
 
 
+def test_vault_plans_name_their_session_for_the_obsidian_bridge(configured_vault):
+    workspace, _, _ = configured_vault
+    api = FakeAPI(workspace)
+    plan_mode.setup(api)
+
+    def reminder(conversation_id):
+        request = ModelRequest(parts=[UserPromptPart("hi")])
+        ctx = SimpleNamespace(
+            agent=SimpleNamespace(name="pcode"), messages=[request], conversation_id=conversation_id
+        )
+        asyncio.run(api.hook(ctx, SimpleNamespace(messages=[request])))
+        return request.parts[-1].content
+
+    api.commands["/plan"]("Local topic")
+    assert "session:" not in reminder("abc123")  # Only vault plans are opened in Obsidian.
+    api.commands["/plan"]("--obsidian Vault topic")
+    # A side model's run id is folded back to the session it belongs to.
+    assert "`session: abc123`" in reminder("abc123.btw-deadbeef")
+    assert "session:" not in reminder(None)
+
+
 def test_destination_only_does_not_resume_unrelated_local_plan(configured_vault):
     workspace, _, _ = configured_vault
     api = FakeAPI(workspace)

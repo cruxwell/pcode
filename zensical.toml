@@ -33,6 +33,7 @@ nav = [
     { "Working in a repository" = "workspace.md" },
     { "Sessions and recovery" = "sessions.md" },
     { "Project briefs" = "memory.md" },
+    { "Planning in Obsidian" = "obsidian.md" },
     { "Email remote control" = "email.md" },
     { "Conversation tree" = "conversation-tree.md" },
     { "Side questions" = "side-questions.md" },

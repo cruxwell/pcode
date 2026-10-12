@@ -1395,6 +1395,41 @@ def test_registry_forgets_hosts_whose_process_is_gone(host_dir):
         find_host("nothing")
 
 
+def test_hosts_json_lists_running_hosts_for_scripts(host_dir, monkeypatch, capsys):
+    from pcode.app import main
+
+    write_entry(
+        HostEntry(
+            id="live0000",
+            pid=os.getpid(),
+            model="m",
+            workspace="/repo",
+            session_id="abc123",
+            state="idle",
+            title="Plan",
+        )
+    )
+    monkeypatch.setattr(sys, "argv", ["pcode", "--hosts", "--json"])
+    main()
+    (entry,) = json.loads(capsys.readouterr().out)
+    assert entry == {
+        "id": "live0000",
+        "session_id": "abc123",
+        "state": "idle",
+        "workspace": "/repo",
+        "title": "Plan",
+        "last_prompt": "",
+        "attached": 0,
+    }
+    remove_entry("live0000")
+    main()
+    assert json.loads(capsys.readouterr().out) == []
+    monkeypatch.setattr(sys, "argv", ["pcode", "--json"])
+    with pytest.raises(SystemExit):
+        main()
+    assert "--json applies to --hosts" in capsys.readouterr().err
+
+
 def test_socket_paths_that_are_too_long_fail_with_advice(tmp_path):
     with pytest.raises(OSError, match="PCODE_HOST_DIR"):
         socket_path("abcd1234", tmp_path / ("x" * 120))

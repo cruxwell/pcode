@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install update uninstall run test test-socket test-tmux test-all lint fmt docs docs-serve screenshots screenshot-live icons cache-report shell-report harness-src worktree worktree-merge worktree-remove worktree-clean worktrees clean-merged brew-stats brew-install brew-update brew-uninstall sync release
+.PHONY: help install update uninstall run test test-socket test-tmux test-all lint fmt docs docs-serve screenshots screenshot-live icons cache-report shell-report harness-src obsidian-plugin worktree worktree-merge worktree-remove worktree-clean worktrees clean-merged brew-stats brew-install brew-update brew-uninstall sync release
 
 # Harness lives in the pydantic-ai repo (src/pydantic_ai_harness, docs/harness,
 # tests/harness) and ships with each Pydantic AI release.
@@ -72,6 +72,15 @@ harness-src: ## Check out upstream Harness source at the locked Pydantic AI rele
 	git -C $(HARNESS_DIR) rev-parse --verify --quiet "$$tag^{commit}" >/dev/null || git -C $(HARNESS_DIR) fetch --quiet origin tag "$$tag"; \
 	git -C $(HARNESS_DIR) checkout --quiet --detach "$$tag"; \
 	echo "$(HARNESS_DIR) @ $$tag"
+
+obsidian-plugin: ## Build the Obsidian bridge plugin and install it into a vault (make obsidian-plugin VAULT=~/vaults/personal)
+	@test -n "$(VAULT)" || { echo 'usage: make obsidian-plugin VAULT=path/to/vault' >&2; exit 1; }
+	cd integrations/obsidian && npm ci --no-audit --no-fund && npm test && npm run build
+	@vault="$(VAULT)"; case "$$vault" in "~"*) vault="$$HOME$${vault#\~}";; esac; \
+		test -d "$$vault/.obsidian" || { echo "$$vault has no .obsidian folder: open it as a vault in Obsidian first" >&2; exit 1; }; \
+		dest="$$(cd "$$vault" && pwd)/.obsidian/plugins/pcode-bridge" && mkdir -p "$$dest" \
+		&& cp integrations/obsidian/manifest.json integrations/obsidian/main.js integrations/obsidian/styles.css "$$dest/" \
+		&& echo "Installed into $$dest. Enable \"pcode bridge\" under Settings > Community plugins (reload Obsidian if it was open)."
 
 worktree: ## Create an isolated worktree under .worktrees/ (make worktree NAME=fix-foo [BASE=ref]); `pcode --worktree` does this per session
 	@uv run python -m pcode.worktree new $(NAME) $(if $(BASE),--base $(BASE))

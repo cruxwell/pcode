@@ -2709,6 +2709,9 @@ def main() -> None:
         "hosts",
     )
     parser.add_argument("--hosts", action="store_true", help="List running session hosts and exit")
+    parser.add_argument(
+        "--json", action="store_true", help="With --hosts: one JSON array, for scripts and plugins"
+    )
     host_kinds = ("all", "stale", "idle")
     parser.add_argument(
         "--kill-hosts",
@@ -3179,6 +3182,8 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         parser.error("--fork cannot be combined with --attach")
     if args.compact and not args.sessions:
         parser.error("--compact applies to --sessions")
+    if args.json and not args.hosts:
+        parser.error("--json applies to --hosts")
     if args.print:
         if args.theme_preview or args.sessions:
             parser.error("--print cannot be combined with --theme-preview or --sessions")
@@ -3224,6 +3229,13 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         entries = ordered(list_hosts())
         if args.kill_hosts:
             _kill_hosts(args.kill_hosts, entries, code)
+            return
+        if args.json:
+            import json
+
+            # A contract for callers such as the Obsidian bridge: add keys, never rename.
+            keys = ("id", "session_id", "state", "workspace", "title", "last_prompt", "attached")
+            print(json.dumps([{key: getattr(entry, key) for key in keys} for entry in entries]))
             return
         for entry in entries:
             print(f"{entry.id}  {host_row(entry, None, code=code).strip()}")

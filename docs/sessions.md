@@ -26,7 +26,7 @@ leave, switch to another session, or close, and the work carries on.
 ```sh
 pcode                            # start a session in this terminal
 pcode --host                     # start it in a background host instead
-pcode --hosts                    # list running hosts
+pcode --hosts                    # list running hosts (--json for scripts)
 pcode --attach                   # reattach to the newest host in this repository
 pcode --attach 3f9c              # ...or to one by host or session ID prefix
 pcode --kill-hosts idle          # stop hosts with nothing running (or: stale, all)
