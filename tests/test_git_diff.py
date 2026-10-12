@@ -134,13 +134,13 @@ def test_secret_looking_files_are_diffed_with_values_redacted(repo, linked):
     commit(path, "config.env", "A=1\n")
     (path / "config.env").write_text("A=2\n")
     (path / ".env.local").write_text("B=3\n")
-    (path / "app.py").write_text('token = "synthetic-secret"\n')
+    (path / "app.py").write_text('token = "sk-0123456789ab"\n')
 
     changes = by_path(load_review(path, []))
 
     assert changes[".env.local"].operation == "created" and "+B=3" in changes[".env.local"].patch
     assert "+A=2" in changes["config.env"].patch
-    assert "synthetic-secret" not in changes["app.py"].patch
+    assert "sk-0123456789ab" not in changes["app.py"].patch
     assert "[redacted]" in changes["app.py"].patch
 
 

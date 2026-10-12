@@ -394,7 +394,7 @@ def test_literal_keeps_every_line_and_drops_only_the_outer_blanks():
     assert literal("x" * 400) == "x" * 400
     # Terminal controls still cannot survive, and secrets are still redacted.
     assert "\x1b" not in literal("a\x1b[31mb")
-    assert "hunter2" not in literal("export PASSWORD=hunter2")
+    assert "sk-0123456789ab" not in literal("export OPENAI_KEY=sk-0123456789ab")
 
 
 @pytest.mark.parametrize("keys", ["\x1b", "\r", "q"])

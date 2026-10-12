@@ -518,10 +518,8 @@ slicing. `indented_json` makes structured returns pageable but does not split lo
 string fields. Verify this behavior against the installed source on upgrades.
 
 `CodingToolOutputLimits` reduces only the persistent shell's body, leaving its
-PID/log/status footer intact even for head truncation and small budgets. It marks
-changed bodies so `shell.result_projection` omits previews whose clipping removed
-redaction context. Length-based detection alone stops working after reduction,
-especially for delegated calls that have no `CommandFinishedEvent` in the parent.
+PID/log/status footer intact even for head truncation and small budgets, and
+marks changed bodies with `REDUCED_SHELL_OUTPUT`.
 Keep the real-shell parent/worker tests, long-line recovery, serialized-history
 readback, and spill-failure fallback tests in `tests/test_tool_output_limits.py`.
 
@@ -1095,21 +1093,21 @@ cancelling: `detach` for a typed follow-up (abandon the wait, keep the command),
 resets it to `detach` after every turn. A job the model backgrounded is never
 caught by either, because nothing was waiting on it.
 
-An already-truncated result can begin inside a secret whose opening marker was
-dropped. `result_projection` conservatively omits that raw tail from UI/inspection
-payloads, keeping the job envelope; it does not reread the log. `shell.split_envelope`
-is the single parser for that boundary, shared with `CodingToolOutputLimits` so
-reduction can never spill the handles a running job is reached through. Apply it
-to delegated shell results too. The model result and raw log are not redacted by
-this display adapter. `--no-save` does not disable job logs.
+An already-truncated result is shown as it is: display masking
+(`diagnostics.mask_secrets`) matches only self-contained credential formats, plus
+the tail of a private-key block whose header was clipped, so it needs no context
+from before the cut. `shell.split_envelope` is the single parser for the boundary
+between output and the job envelope, shared with `CodingToolOutputLimits` so
+reduction can never spill the handles a running job is reached through. The model
+result and raw log are not masked for display. `--no-save` does not disable job logs.
 
 A live preview and the settled block it becomes are framed alike: `pcode.block`
 owns the rule character, the two-space body indent and the heading text, Rich
 draws it in scrollback (`CommandTranscript`, `EditTranscript`) and prompt_toolkit
 windows draw it in the panel. Change the framing there, not in one surface.
 
-Wait for complete lines, sanitize before clipping, and redact unfinished quoted
-credentials and private-key blocks before displaying a preview. `CommandOutput`
+Wait for complete lines, and sanitize before clipping, so a credential split
+across chunks is masked whole before a preview shows it. `CommandOutput`
 bypasses session/tree journals. Remove per-call previews when tool results arrive,
 and clear them on cancellation/failure/reset. Preserve `tests/test_shell_streaming.py`,
 `tests/test_jobs.py`, and the real-tmux command-height tests; no-CPR PTYs cannot

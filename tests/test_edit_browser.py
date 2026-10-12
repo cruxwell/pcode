@@ -110,8 +110,8 @@ def test_an_empty_review_shows_its_notice():
 
 def test_secrets_are_redacted_before_display():
     with create_pipe_input() as pipe:
-        ui = browser([change("app.py", patch='+token = "synthetic-secret"')], pipe)
-        assert "synthetic-secret" not in ui.diff.text
+        ui = browser([change("app.py", patch='+token = "sk-0123456789ab"')], pipe)
+        assert "sk-0123456789ab" not in ui.diff.text
         assert "[redacted]" in ui.diff.text
 
 
@@ -288,9 +288,9 @@ def test_diff_search_filters_changes_and_jumps_between_matching_rows():
 
 def test_diff_search_matches_the_redacted_text():
     with create_pipe_input() as pipe:
-        ui = browser([change("app.py", patch='+token = "synthetic-secret"')], pipe)
+        ui = browser([change("app.py", patch='+token = "sk-0123456789ab"')], pipe)
         ui.search("diffs")
-        ui.query.text = "synthetic-secret"
+        ui.query.text = "sk-0123456789ab"
         assert ui.visible == []
         ui.query.text = "redacted"
         assert len(ui.visible) == 1 and ui.diff_rows()

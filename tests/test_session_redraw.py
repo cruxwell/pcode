@@ -97,9 +97,7 @@ def test_resume_keeps_routine_job_inspection_hidden_but_preserves_helper_errors(
 
 
 @pytest.mark.parametrize("truncated", [False, True])
-def test_background_completion_survives_reopening_without_retaining_unsafe_tails(
-    tmp_path, truncated
-):
+def test_background_completion_survives_reopening_with_clipped_key_masked(tmp_path, truncated):
     save_preferences(show_commands="on", tool_error_scrollback="on")
     root = tmp_path / "sessions"
     saved = SavedSession.create("test:local", tmp_path, root)
@@ -117,7 +115,9 @@ def test_background_completion_survives_reopening_without_retaining_unsafe_tails
         purpose="running the suite",
     )
     jobs.jobs[job.id] = job
-    output = 'token="' + "SYNTHETIC_PRIVATE_VALUE\n" * 1000 + '"' if truncated else "2 failed\n"
+    # Long enough that the saved tail starts inside the key, past its header.
+    key = "-----BEGIN PRIVATE KEY-----\n" + "SYNTHETICPRIVATEVALUE\n" * 1000
+    output = key + "-----END PRIVATE KEY-----\n" if truncated else "2 failed\n"
     job.output_path.write_text(output)
     try:
         saved.append("turn_started", run_id="test-turn", prompt="run")
@@ -137,7 +137,7 @@ def test_background_completion_survives_reopening_without_retaining_unsafe_tails
         completions = [r for r in records if r["kind"] == "JobFinished"]
         assert len(completions) == 1
         assert completions[0]["run_id"] == "test-turn"
-        assert "SYNTHETIC_PRIVATE_VALUE" not in repr(records)
+        assert "SYNTHETICPRIVATEVALUE" not in repr(records)
         # A job's eventual exit is not another invocation in the tools browser.
         assert len([r for r in saved.tool_events() if r["kind"] == "ToolSummary"]) == 1
     finally:
@@ -157,8 +157,8 @@ def test_background_completion_survives_reopening_without_retaining_unsafe_tails
         assert "26.4s" in text
         assert "wait_for_job" not in text
         if truncated:
-            assert "Output tail omitted" in text
-            assert "SYNTHETIC_PRIVATE_VALUE" not in text
+            assert "[private key redacted]" in text
+            assert "SYNTHETICPRIVATEVALUE" not in text
         else:
             assert "2 failed" in text
     finally:

@@ -61,7 +61,9 @@ def test_parallel_previews_clear_only_the_settled_call():
 
 def test_preview_bounds_and_sanitizes():
     preview = StreamingEditPreview()
-    args = json.dumps({"path": "example.py", "content": 'token = "first\nsecond'})[:-2]
+    args = json.dumps(
+        {"path": "example.py", "content": "-----BEGIN PRIVATE KEY-----\nfirst\nsecond"}
+    )[:-2]
     events = preview.update(start(args, name="write_file"))
     assert "first" not in repr(events) and "second" not in repr(events)
     assert preview.update(start("x" * (MAX_SOURCE * 2 + 1), name="write_file")) == [
@@ -162,21 +164,21 @@ def test_streamed_outside_paths_are_hidden(tmp_path):
         )
 
 
-def test_unquoted_credentials_are_redacted_in_partial_arguments(tmp_path):
+def test_credentials_are_redacted_in_partial_arguments(tmp_path):
     preview = StreamingEditPreview(tmp_path)
     events = preview.update(
         start(
             json.dumps(
                 {
                     "path": "example.ini",
-                    "content": "token = synthetic-value\npasswd = other-value\nunfinished",
+                    "content": "token = sk-0123456789ab\nauth = Bearer other-value\nunfinished",
                 }
             )[:-2],
             name="write_file",
         )
     )
     assert events and "[redacted]" in events[-1].text
-    assert "synthetic-value" not in repr(events)
+    assert "sk-0123456789ab" not in repr(events)
     assert "other-value" not in repr(events)
 
 

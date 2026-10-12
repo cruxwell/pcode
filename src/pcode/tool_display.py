@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from rich.text import Text
 
 from pcode.code_mode import SANDBOXED_TOOLS
-from pcode.diagnostics import redact
+from pcode.diagnostics import mask_secrets
 
 if TYPE_CHECKING:
     from pcode.jobs import JobRegistry
@@ -68,15 +68,13 @@ def argument(value: str, *, command: bool = False) -> str:
     if command:
         value = _CREDENTIAL_OPTION.sub(r"\1[redacted]", value)
     # Redact before formatting, so neither wrapping nor sanitization splits credentials.
-    return plain(redact(value).replace("\n", r"\n").replace("\t", r"\t"), limit=None)
+    return plain(mask_secrets(value).replace("\n", r"\n").replace("\t", r"\t"), limit=None)
 
 
 def command_text(value: str) -> str:
     """Redact first, then preserve layout without allowing terminal controls."""
     value = _ANSI.sub("", value)
-    value = _PRIVATE_KEY.sub("[private key redacted]", value)
-    value = _QUOTED_CREDENTIAL.sub(r"\1\2[redacted]\2", value)
-    value = redact(_CREDENTIAL_OPTION.sub(r"\1[redacted]", value))
+    value = mask_secrets(_CREDENTIAL_OPTION.sub(r"\1[redacted]", value))
     return "\n".join(plain(line.expandtabs(4), limit=None) for line in value.split("\n"))
 
 
@@ -440,16 +438,6 @@ def failure_reason(content: object) -> str:
 
 
 _ANSI = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]")
-_PRIVATE_KEY = re.compile(
-    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)",
-    re.DOTALL,
-)
-
-_QUOTED_CREDENTIAL = re.compile(
-    r"(?i)((?:password|passwd|secret|token|api[_-]?key|authorization)[\"']?\s*[:=]\s*)"
-    r"([\"'])(.*?)(?<!\\)\2",
-    re.DOTALL,
-)
 
 
 def command_error(content: object) -> str:
@@ -474,8 +462,7 @@ def command_error(content: object) -> str:
     # Remove escape sequences before redaction, then redact before clipping to avoid
     # leaking pieces of a credential across formatting or excerpt boundaries.
     text = _ANSI.sub("", text)
-    text = _PRIVATE_KEY.sub("[private key redacted]", text)
-    text = redact(_CREDENTIAL_OPTION.sub(r"\1[redacted]", text))
+    text = mask_secrets(_CREDENTIAL_OPTION.sub(r"\1[redacted]", text))
     lines = [plain(line.expandtabs(4), limit=None) for line in text.splitlines()]
     while lines and not lines[0].strip():
         lines.pop(0)

@@ -347,12 +347,12 @@ def test_unsaved_capture_survives_failure_and_new_resets(tmp_path):
 def test_string_payload_secrets_are_redacted_before_persistence(tmp_path):
     # Deliberately non-key fixture text; no credential files are involved.
     content = (
-        'password="synthetic multi word phrase"\n'
+        "OPENAI_KEY=sk-0123456789ab\n"
         "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----\n"
         "plain output remains"
     )
     projected = capture(content)
-    assert "synthetic" not in projected and "multi word" not in projected
+    assert "sk-0123456789ab" not in projected
     assert "not-a-real-key" not in projected
     assert "plain output remains" in projected
     saved = SavedSession.create("test", tmp_path, tmp_path / "sessions")

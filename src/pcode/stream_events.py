@@ -65,7 +65,7 @@ from pcode.runtime import (
     ToolStarted,
     ToolSummary,
 )
-from pcode.shell import ShellPreview, result_projection
+from pcode.shell import ShellPreview
 from pcode.tool_display import (
     COMMAND_TOOLS,
     assignment,
@@ -450,17 +450,12 @@ class EventTranslator:
         if items != self.plan_items:
             self.plan_items = items
             yield PlanUpdated(items)
-        display_content = (
-            result_projection(event.part.content, shell_end)
-            if name == "shell"
-            else event.part.content
-        )
         yield ToolSummary(
             name,
             detail,
             failed=failed,
             call_id=event.tool_call_id,
-            result=capture(display_content),
+            result=capture(event.part.content),
             run_id=self.run_id,
             outcome=outcome,
             process_id=(
@@ -475,7 +470,7 @@ class EventTranslator:
             elapsed_seconds=max(0, monotonic() - started),
             command=invocation(name, args),
             purpose=stated_purpose(args),
-            error=command_error(display_content) if failed and name in COMMAND_TOOLS else "",
+            error=command_error(event.part.content) if failed and name in COMMAND_TOOLS else "",
         )
         yield self.activity()
 

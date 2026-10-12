@@ -39,7 +39,6 @@ from pcode.planning import PlanSnapshot
 from pcode.preferences import SETTINGS, load_preferences
 from pcode.retries import RequestCheckpoint
 from pcode.runtime import ToolStarted, ToolSummary
-from pcode.shell import result_projection
 from pcode.tool_display import (
     COMMAND_TOOLS,
     assignment,
@@ -208,9 +207,6 @@ async def stream_child_activity(_ctx, events):
             detail, failed = result_detail(
                 name, args, event.part.content, outcome, stored_source(args, called)
             )
-            content = (
-                result_projection(event.part.content) if name == "shell" else event.part.content
-            )
             child = ToolSummary(
                 name,
                 detail,
@@ -219,8 +215,8 @@ async def stream_child_activity(_ctx, events):
                 elapsed_seconds=max(0, monotonic() - started),
                 command=invocation(name, args),
                 purpose=stated_purpose(args),
-                error=command_error(content) if failed and name in COMMAND_TOOLS else "",
-                result=capture(content),
+                error=command_error(event.part.content) if failed and name in COMMAND_TOOLS else "",
+                result=capture(event.part.content),
                 run_id=parent.run_id or "",
                 outcome=outcome,
                 parent_call_id=parent_id,

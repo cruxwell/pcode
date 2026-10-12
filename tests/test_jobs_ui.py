@@ -83,10 +83,10 @@ def test_browser_lists_running_first_follows_the_log_and_stops_and_watches(tmp_p
 
 def test_details_redact_the_log_and_say_when_it_is_gone(tmp_path):
     _, jobs = app_with_jobs()
-    job = jobs.launch(command("print('token=hunter2')"), cwd=tmp_path)
+    job = jobs.launch(command("print('token=sk-0123456789ab')"), cwd=tmp_path)
     until_finished(jobs, job)
     shown = " ".join(str(block) for block in details(jobs, job, code_theme="ansi_dark"))
-    assert "hunter2" not in shown and "[redacted]" in shown
+    assert "sk-0123456789ab" not in shown and "[redacted]" in shown
     shutil.rmtree(job.directory)
     shown = " ".join(str(block) for block in details(jobs, job, code_theme="ansi_dark"))
     assert "The log has been removed." in shown

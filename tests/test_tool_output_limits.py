@@ -25,6 +25,7 @@ from pcode.config import configure
 from pcode.live import AgentRuntime
 from pcode.preferences import SETTINGS, load_preferences, preferences_path, save_preferences
 from pcode.runtime import ToolSummary
+from pcode.shell import REDUCED_SHELL_OUTPUT
 from pcode.tool_display import job_status, result_detail
 from pcode.tool_output_limits import create_tool_output_limits, tool_results_path
 
@@ -275,21 +276,14 @@ def test_real_worker_and_parent_share_retrievable_spills(tmp_path):
 
 @pytest.mark.parametrize("delegated", [False, True])
 @pytest.mark.parametrize("mode", ["spill", "truncate"])
-def test_reduced_shell_keeps_handles_status_and_safe_inspection(tmp_path, delegated, mode):
+def test_reduced_shell_keeps_handles_and_status(tmp_path, delegated, mode):
     save_preferences(
         tool_output_mode=mode,
         tool_output_strategy="head",
         tool_output_max_chars="100",
         tool_output_preview_chars="100",
     )
-    marker = "SYNTHETIC_PRIVATE_BODY"
-    # The native shell tail drops the opening marker. Reduction must not let
-    # that clipped content bypass the display's upstream-truncation safeguard.
-    source = (
-        "import sys; print('-----BEGIN PRIVATE KEY-----'); "
-        f"print(''.join(map(chr, {list(map(ord, marker))!r})) * 1000); "
-        "print('-----END PRIVATE KEY-----'); sys.exit(7)"
-    )
+    source = "import sys; print('x' * 22000); sys.exit(7)"
     command = f"{shlex.quote(sys.executable)} -c {shlex.quote(source)}"
     observed_shell = False
 
@@ -323,8 +317,7 @@ def test_reduced_shell_keeps_handles_status_and_safe_inspection(tmp_path, delega
         shell = next(e for e in events if isinstance(e, ToolSummary) and e.name == "shell")
         assert shell.failed
         assert "exit 7" in shell.detail
-        assert "Output tail omitted" in shell.result
-        assert marker not in shell.result and marker not in shell.error
+        assert shell.result.startswith(REDUCED_SHELL_OUTPUT)
         assert observed_shell
 
     asyncio.run(run())

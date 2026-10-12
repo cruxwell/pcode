@@ -16,7 +16,7 @@ from rich.padding import Padding
 from rich.text import Text
 from rich.theme import Theme
 
-from pcode.diagnostics import redact
+from pcode.diagnostics import mask_secrets
 from pcode.frame import Dialog, Frame
 from pcode.popup_ui import (
     EllipsisProcessor,
@@ -51,7 +51,7 @@ def literal(text: str) -> str:
     the turn said. Blank lines inside are structure, so only the surrounding
     ones go, which would otherwise draw an empty quote rail.
     """
-    lines = [plain(line, limit=None) for line in redact(text).splitlines()]
+    lines = [plain(line, limit=None) for line in mask_secrets(text).splitlines()]
     while lines and not lines[0].strip():
         lines.pop(0)
     while lines and not lines[-1].strip():
@@ -372,7 +372,7 @@ class SessionBrowser:
         # Listing reads only the first prompt; the full transcript loads on select/search.
         if info.id not in self._titles:
             marker = "* " if info.id == self.active_id else "  "
-            first = redact(first_prompt(info, self.root))
+            first = mask_secrets(first_prompt(info, self.root))
             if name := display_name(info):
                 first = f"{name} · {first}"
             when = info.updated[5:16].replace("T", " ")

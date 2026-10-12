@@ -1,9 +1,8 @@
 """Sanitized UI projections of the shell tool's output events.
 
 Execution, polling and process ownership live in `pcode.jobs`; this module only
-accumulates the bounded output events for the transient preview, and decides
-how much of a job result is safe to show once upstream clipping has already
-removed the context redaction depends on.
+accumulates the bounded output events for the transient preview, and splits a
+job result's output from its control envelope.
 """
 
 import re
@@ -19,28 +18,18 @@ from pcode.tool_display import command_text
 
 REDUCED_SHELL_OUTPUT = "[Shell output reduced; full output remains in the command log.]"
 
-# A quoted secret may span chunks and lines. Redact through EOF until its
-# closing quote arrives, not just after a complete quoted value is available.
-_OPEN_SECRET = re.compile(
-    r"(?i)((?:password|passwd|secret|token|api[_-]?key|authorization)[\"']?\s*[:=]\s*)"
-    r"([\"'])(.*?)(?:(?<!\\)\2|\Z)",
-    re.DOTALL,
-)
-
 
 def preview_text(text, *, final=False):
-    """Sanitize before clipping; unfinished lines can contain split credentials."""
+    """Sanitize before clipping; an unfinished line can hold half a credential."""
     if not final:
         text = text[: text.rfind("\n") + 1]
-    text = _OPEN_SECRET.sub(r"\1\2[redacted]\2", text)
-    text = re.sub(r"(?i)(\btoken\s*[:=]\s*)[^\s\"',;}]+", r"\1[redacted]", text)
     return command_text(text).rstrip()[-131072:]
 
 
 # Every job result ends with a `[jN · outcome · elapsed]` marker and, while the
 # command runs, the lines telling the model how to get back to it. That block
-# is control information, never command output, so it survives both reduction
-# and redaction while the body above it may not.
+# is control information, never command output, so it survives reduction while
+# the body above it may not.
 _JOB_MARKER = re.compile(r"^\[j\d+ · (?:running|stopped|exit -?\d+) · [^]]*\]", re.MULTILINE)
 
 
@@ -56,34 +45,6 @@ def split_envelope(content):
     if marker is None:
         return None
     return content[: marker.start()], content[marker.start() :]
-
-
-def result_projection(content, finished=None):
-    """Omit already-truncated tails that have lost their redaction context.
-
-    A result carries the last 16 KB of the log, which can start inside a quoted
-    credential or private-key block. Do not read the raw log to reconstruct it.
-    Keep only the control envelope in the UI and inspection journal. Model tool
-    results and the log files themselves are unaffected. The tool-output limiter
-    marks reduced bodies explicitly, since their length no longer proves whether
-    clipping removed the opening credential marker.
-    """
-    if not isinstance(content, str):
-        return content
-    split = split_envelope(content)
-    if split is None:
-        return content
-    output, envelope = split
-    if (
-        content.startswith(REDUCED_SHELL_OUTPUT)
-        or (finished is not None and finished.truncated)
-        or len(output.encode("utf-8")) >= 16000
-    ):
-        return (
-            "[Output tail omitted: clipping removed redaction context. "
-            "Raw output remains in the command log.]\n" + envelope
-        )
-    return content
 
 
 class ShellPreview:

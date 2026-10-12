@@ -44,11 +44,11 @@ def test_wrapped_continuations_keep_the_source_line_color():
 
 def test_preview_is_literal_sanitized_and_cell_width_aware():
     rows = edit_preview_rows(
-        '+[bold]```diff\n-\x1b[31m界界界\n+token = "synthetic-secret"', 8, "monokai"
+        '+[bold]```diff\n-\x1b[31m界界界\n+token = "sk-0123456789ab"', 8, "monokai"
     )
     text = "\n".join(line for _, line in rows)
     assert "[bold]" in text and "```diff" in text.replace("\n", "")
-    assert "\x1b" not in text and "synthetic-secret" not in text
+    assert "\x1b" not in text and "sk-0123456789ab" not in text.replace("\n", "")
     assert "[redacted]" in text.replace("\n", "")
     assert all(cell_len(line) <= 8 for _, line in rows)
 
@@ -85,14 +85,16 @@ def _plain(renderable, width=60) -> str:
 def test_created_markdown_renders_as_markdown_not_a_diff():
     from pcode.edits import completed_change
 
-    source = '# Plan\n\n- **first** step\n- second\n\n```py\nx = 1\n```\n\ntoken = "abc123"\n'
+    source = (
+        '# Plan\n\n- **first** step\n- second\n\n```py\nx = 1\n```\n\ntoken = "sk-0123456789ab"\n'
+    )
     change = completed_change("plans/plan.md", "", source, existed=False)
     text = _plain(EditTranscript(change))
     assert "Created plans/plan.md · +10 −0" in text
     assert "Plan" in text and "# Plan" not in text
     assert "first step" in text and "**" not in text and "+-" not in text
     assert "x = 1" in text and "```" not in text
-    assert "abc123" not in text and "[redacted]" in text
+    assert "sk-0123456789ab" not in text and "[redacted]" in text
 
 
 @pytest.mark.parametrize(

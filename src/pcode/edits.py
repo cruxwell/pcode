@@ -11,24 +11,13 @@ MAX_SOURCE = 256 * 1024
 MAX_LINES = 4000
 MAX_PATCH = 64 * 1024
 MAX_PATCH_LINES = 400
-_OPEN_SECRET = re.compile(
-    r"(?i)((?:password|passwd|secret|token|api[_-]?key|authorization)[\"']?\s*[:=]\s*)"
-    r"([\"'])(.*?)(?:(?<!\\)\2|\Z)",
-    re.DOTALL,
-)
 
 
 def edit_text(text: str) -> str:
-    # Redact whole strings before adding diff prefixes or clipping. A credential
-    # can span lines, and a streamed quoted value may not have its closing quote.
-    text = _OPEN_SECRET.sub(r"\1\2[redacted]\2", text)
-    text = re.sub(
-        r"(?i)((?:password|passwd|secret|token|api[_-]?key|authorization)[\"']?\s*[:=]\s*)"
-        r"[^\s\"',;}]+",
-        r"\1[redacted]",
-        text,
-    )
-    text = re.sub(r"-----BEGIN [^-]*PRIVATE KEY-----.*", "[private key redacted]", text, flags=re.S)
+    """Edit content as shown: credentials masked and terminal controls removed.
+
+    Masks whole values before diff prefixes or clipping split them.
+    """
     return command_text(text)
 
 

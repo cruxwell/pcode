@@ -53,7 +53,11 @@ before diffs were captured show their transcript without reconstructed diffs.
 
 Limits:
 
-- Recognizable credentials and terminal controls are redacted.
+- Terminal controls are stripped, and text that is unmistakably a credential is
+  redacted: private-key blocks, `Bearer` tokens, passwords in URLs, well-known key
+  formats (`sk-…`, `ghp_…`, `AKIA…` and the like), and the values of your own
+  `*_TOKEN`/`*_SECRET`/`*_PASSWORD`/`*_API_KEY` environment variables. Ordinary
+  code such as `password = form.data` is shown as written.
 - Files over 256 Ki characters or 4,000 lines aren't diffed.
 - A saved diff is capped at 400 patch lines / 64 Ki characters, and each block
   on screen shows at most 60 wrapped rows, with an omission marker.

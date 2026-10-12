@@ -68,9 +68,9 @@ def test_binary_large_named_path_and_missing_newline():
     change = completed_change("token_accounting.py", "old\n", "new\n")
     assert change.path == "token_accounting.py" and (change.added, change.removed) == (1, 1)
     assert r"\ No newline at end of file" in completed_change("x", "old", "new\n").patch
-    change = completed_change("x", 'token = "old\nsecret"\n', 'token = "new\nsecret"\n')
-    assert "old" not in change.patch and "new" not in change.patch
-    assert "secret" not in change.patch
+    key = "-----BEGIN PRIVATE KEY-----\nc3ludGhldGljIGtleSBib2R5\n-----END PRIVATE KEY-----\n"
+    change = completed_change("x", "", key)
+    assert "c3ludGhldGlj" not in change.patch and "[private key redacted]" in change.patch
 
 
 def test_completed_diffs_retained_while_hidden_and_reprojected():
@@ -233,10 +233,12 @@ def test_parallel_writes_capture_their_own_operation(tmp_path):
     asyncio.run(exercise())
 
 
-def test_unquoted_credentials_are_redacted_before_persistence():
-    change = completed_change("example.ini", "", "token = synthetic-value\npasswd = other-value\n")
-    assert "synthetic-value" not in change.patch and "other-value" not in change.patch
-    assert "[redacted]" in change.patch
+def test_known_credential_formats_are_redacted_but_keyword_code_is_not():
+    code = 'input_token: int = 0\npassword = form.data["pw"]\n'
+    change = completed_change("example.py", "", code + "api_key = sk-0123456789ab\n")
+    assert "sk-0123456789ab" not in change.patch and "api_key = [redacted]" in change.patch
+    assert "+input_token: int = 0" in change.patch
+    assert '+password = form.data["pw"]' in change.patch
 
 
 def test_external_mutations_keep_absolute_evidence_paths(tmp_path):

@@ -680,7 +680,7 @@ def test_tool_failure_preserves_feedback_but_redacts_credentials(monkeypatch):
     monkeypatch.setenv("TEST_API_KEY", "synthetic-environment-credential")
     message = (
         "\x1b[31mAccess rejected\x1b[0m for /tmp/repo: "
-        "synthetic-environment-credential; password='two word secret'; "
+        "synthetic-environment-credential; key=sk-0123456789ab; "
         "Bearer synthetic-bearer-value\nTry a workspace-relative path."
     )
     detail, failed = result_detail("read_file", {}, message, "retry")
@@ -688,7 +688,7 @@ def test_tool_failure_preserves_feedback_but_redacts_credentials(monkeypatch):
     assert "Access rejected" in detail
     assert "/tmp/repo" in detail
     assert "Try a workspace-relative path." in detail
-    for secret in ("synthetic-environment-credential", "two word secret", "synthetic-bearer-value"):
+    for secret in ("synthetic-environment-credential", "sk-0123456789ab", "synthetic-bearer-value"):
         assert secret not in detail
     assert "\x1b" not in detail
 
