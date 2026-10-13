@@ -30,8 +30,10 @@ From a pcode checkout, with Node.js installed:
 make obsidian-plugin VAULT=~/vaults/personal
 ```
 
-Then enable **pcode bridge** under *Settings → Community plugins* (reload
-Obsidian if it was open). If it can't find `pcode`, set its path in the
+This builds the plugin, copies it into the vault and enables it (adding it to
+the vault's `.obsidian/community-plugins.json`). If Obsidian is open, reload
+it. Community plugins must be turned on for the vault (*Settings → Community
+plugins*). If it can't find `pcode`, set its path in the
 plugin's settings. Apps opened from the Dock don't get your shell's `PATH`,
 or any other variable your shell profile sets. If you set `PCODE_HOST_DIR` or
 `XDG_STATE_HOME` there, Obsidian looks in the default place and finds no

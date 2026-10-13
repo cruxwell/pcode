@@ -73,14 +73,16 @@ harness-src: ## Check out upstream Harness source at the locked Pydantic AI rele
 	git -C $(HARNESS_DIR) checkout --quiet --detach "$$tag"; \
 	echo "$(HARNESS_DIR) @ $$tag"
 
-obsidian-plugin: ## Build the Obsidian bridge plugin and install it into a vault (make obsidian-plugin VAULT=~/vaults/personal)
+obsidian-plugin: ## Build, install and enable the Obsidian bridge plugin in a vault (make obsidian-plugin VAULT=~/vaults/personal)
 	@test -n "$(VAULT)" || { echo 'usage: make obsidian-plugin VAULT=path/to/vault' >&2; exit 1; }
 	cd integrations/obsidian && npm ci --no-audit --no-fund && npm test && npm run build
 	@vault="$(VAULT)"; case "$$vault" in "~"*) vault="$$HOME$${vault#\~}";; esac; \
 		test -d "$$vault/.obsidian" || { echo "$$vault has no .obsidian folder: open it as a vault in Obsidian first" >&2; exit 1; }; \
 		dest="$$(cd "$$vault" && pwd)/.obsidian/plugins/pcode-bridge" && mkdir -p "$$dest" \
 		&& cp integrations/obsidian/manifest.json integrations/obsidian/main.js integrations/obsidian/styles.css "$$dest/" \
-		&& echo "Installed into $$dest. Enable \"pcode bridge\" under Settings > Community plugins (reload Obsidian if it was open)."
+		&& echo "Installed into $$dest." \
+		&& node integrations/obsidian/scripts/enable.mjs "$$vault" \
+		&& echo "If Obsidian is open, reload it (Cmd+P > Reload app without saving). Community plugins must be on (Settings > Community plugins)."
 
 worktree: ## Create an isolated worktree under .worktrees/ (make worktree NAME=fix-foo [BASE=ref]); `pcode --worktree` does this per session
 	@uv run python -m pcode.worktree new $(NAME) $(if $(BASE),--base $(BASE))
