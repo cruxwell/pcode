@@ -99,6 +99,24 @@ export function calloutInsertion(
 	};
 }
 
+export const SEND_HINT = "Enter to send, Shift+Enter for a new line";
+
+/**
+ * Whether a keydown in a question box sends it: Enter, as in chat apps, with
+ * Shift+Enter for a new line. Cmd/Ctrl+Enter still sends, as it used to. An
+ * Enter that confirms an input method's composition (Japanese, Chinese, ...)
+ * never sends.
+ */
+export function isSendKey(event: {
+	key: string;
+	shiftKey: boolean;
+	isComposing?: boolean;
+	keyCode?: number;
+}): boolean {
+	if (event.key !== "Enter" || event.shiftKey) return false;
+	return !(event.isComposing || event.keyCode === 229);
+}
+
 /** A reply kept in the note: a callout, so it reads as pcode's words and not yours. */
 export function replyCallout(reply: string): string {
 	return `> [!note] pcode\n${quote(reply)}\n`;

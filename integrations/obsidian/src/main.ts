@@ -24,6 +24,8 @@ import {
 	Host,
 	askPrompt,
 	COMMENT,
+	SEND_HINT,
+	isSendKey,
 	calloutInsertion,
 	goAheadPrompt,
 	replyCallout,
@@ -214,7 +216,7 @@ class QuestionModal extends Modal {
 		}
 		const input = this.contentEl.createEl("textarea", {
 			cls: "pcode-question",
-			attr: { rows: "4", placeholder: "Your question (Ctrl/Cmd+Enter to send)" },
+			attr: { rows: "4", placeholder: `Your question (${SEND_HINT})` },
 		});
 		const submit = () => {
 			const question = input.value.trim();
@@ -223,7 +225,7 @@ class QuestionModal extends Modal {
 			this.submitQuestion(question);
 		};
 		input.addEventListener("keydown", (event) => {
-			if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+			if (isSendKey(event)) {
 				event.preventDefault();
 				submit();
 			}

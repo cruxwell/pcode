@@ -57,6 +57,7 @@ the panel from the ribbon:
   goes to the session's conversation as a normal message, and the reply
   streams into the pcode panel. Follow-ups are just more questions, since
   they're all one conversation. A question waits if a turn is already running.
+  Enter sends; Shift+Enter starts a new line.
 - **Add comment**: inserts a `> [!comment]` callout under the paragraph. pcode
   sees it, with the rest of your edits, the next time you send anything.
 - **Review my comments**: asks the session to act on your comments and

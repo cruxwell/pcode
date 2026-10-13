@@ -5,6 +5,7 @@ import {
 	askPrompt,
 	attachArgs,
 	calloutInsertion,
+	isSendKey,
 	exitMessage,
 	findHost,
 	notRunningMessage,
@@ -83,6 +84,16 @@ test("a multi-line reply callout lands the cursor at its end", () => {
 	const { result, cursor } = apply(["Para"], 0, replyCallout("one\ntwo"));
 	assert.deepEqual(result, ["Para", "", "> [!note] pcode", "> one", "> two"]);
 	assert.deepEqual(cursor, { line: 4, ch: 5 });
+});
+
+test("Enter sends, Shift+Enter is a new line, and IME composition never sends", () => {
+	const key = (extra = {}) => ({ key: "Enter", shiftKey: false, ...extra });
+	assert.equal(isSendKey(key()), true);
+	assert.equal(isSendKey(key({ metaKey: true })), true);
+	assert.equal(isSendKey(key({ shiftKey: true })), false);
+	assert.equal(isSendKey(key({ isComposing: true })), false);
+	assert.equal(isSendKey(key({ keyCode: 229 })), false);
+	assert.equal(isSendKey({ key: "a", shiftKey: false }), false);
 });
 
 test("stderr is split into whole lines across chunks", () => {

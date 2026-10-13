@@ -2,7 +2,7 @@
 // what you sent from Obsidian. Follow-ups are just more messages: everything
 // goes to the session's one conversation.
 import { Component, ItemView, MarkdownRenderer, Notice, TFile, WorkspaceLeaf, setIcon } from "obsidian";
-import { Host, LineBuffer, exitMessage, findHost, notRunningMessage, stripAnsi } from "./core";
+import { Host, LineBuffer, SEND_HINT, exitMessage, isSendKey, findHost, notRunningMessage, stripAnsi } from "./core";
 import type PcodeBridge from "./main";
 import { Run, listHosts, send } from "./pcode";
 
@@ -51,10 +51,10 @@ export class PcodeView extends ItemView {
 		this.log = root.createDiv("pcode-log");
 		const composer = root.createDiv("pcode-composer");
 		this.input = composer.createEl("textarea", {
-			attr: { placeholder: "Ask about this note… (Ctrl/Cmd+Enter to send)", rows: "3" },
+			attr: { placeholder: `Ask about this note… (${SEND_HINT})`, rows: "3" },
 		});
 		this.input.addEventListener("keydown", (event) => {
-			if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+			if (isSendKey(event)) {
 				event.preventDefault();
 				this.submit();
 			}
