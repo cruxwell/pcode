@@ -200,10 +200,7 @@ def reference_fragment(text: str) -> str | None:
 
 
 class ReferenceLexer(Lexer):
-    """Style file references in the editor so they read as paths, not prose.
-
-    ``extra`` adds further ``(pattern, style)`` tokens, such as paste markers.
-    """
+    """Style file references in the editor so they read as paths, not prose."""
 
     def __init__(self, extra: list[tuple[re.Pattern[str], str]] = ()) -> None:
         self.patterns = [(REFERENCE_PATTERN, "class:reference"), *extra]

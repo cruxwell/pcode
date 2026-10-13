@@ -226,7 +226,7 @@ it is open. Enter, the arrows, Ctrl+J, Ctrl+C, and Ctrl+D never change.
 | Ctrl+^ | Back to the session this terminal showed before (`/switch -`) |
 | Ctrl+O | Show/hide the Tasks/Tools widget (saves the default) |
 | Ctrl+T | Choose where thinking shows: `o` off, `s` status line, `b` scrollback (saves the default) |
-| Ctrl+Y | Copy the current draft to the system clipboard (collapsed pastes are expanded first); with an empty editor, `/copy` chooses a response |
+| Ctrl+Y | Copy the current draft to the system clipboard; with an empty editor, `/copy` chooses a response |
 | Ctrl+G | Mirror commands and their output to scrollback (saves the default) |
 | Ctrl+V | Show/hide edit diffs in scrollback (`/show-edits`, saves the default) |
 | Ctrl+] | Group/ungroup runs of tool calls (`/group-tools`, saves the default) |
@@ -239,8 +239,7 @@ cycles send mode and Ctrl+O replaces the editor's insert-newline binding;
 Ctrl+J still inserts a newline.
 
 **Ctrl+Y** copies whatever is in the editor, so you can move a draft elsewhere
-without sending it. A collapsed paste marker is expanded first, so the clipboard
-gets exactly what Enter would send. In direct chord mode only, this replaces
+without sending it. In direct chord mode only, this replaces
 `yank` in Emacs mode and copy-character-from-above in vi insert mode. With
 nothing typed it runs `/copy` instead, to choose a response or a quote
 from it. Copying uses a local helper (`pbcopy`, `wl-copy`,

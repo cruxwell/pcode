@@ -10,14 +10,12 @@ from dataclasses import dataclass
 
 from prompt_toolkit.application import get_app
 from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition, vi_insert_mode, vi_mode
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 from prompt_toolkit.key_binding.vi_state import InputMode
 from prompt_toolkit.keys import Keys
 
 from pcode.clipboard import copy as copy_to_clipboard
-from pcode.paste import PastedText
 from pcode.preferences import SETTINGS, load_preferences
 from pcode.prefix_keys import Choice, PrefixKeys
 
@@ -45,18 +43,17 @@ def prompt_key_bindings(
     key_prefix: str | None,
     default_buffer: Callable[[], Buffer],
 ) -> tuple[KeyBindings, PrefixKeys]:
-    """The editor's own keys and its shortcuts, sharing one paste collapser.
+    """The editor's own keys and its shortcuts.
 
     ``default_buffer`` is asked for at keypress time, since the session that
     owns the buffer is built from these bindings.
     """
-    pasted = PastedText()
     # The prompt and popups share one contextual keybinding overlay.
     shortcuts = PrefixKeys(
         key_prefix,
         vi_prefix=load_preferences().get("vi_key_prefix", SETTINGS["vi_key_prefix"].default),
     )
-    _add_shortcuts(shortcuts, activity, transcript, callbacks, pasted)
+    _add_shortcuts(shortcuts, activity, transcript, callbacks)
     shortcuts.set_help(
         lambda: [
             ("Enter", "Send"),
@@ -70,13 +67,11 @@ def prompt_key_bindings(
         ],
         title="Keybindings · Prompt",
     )
-    keys = _editing_keys(activity, transcript, callbacks, pasted, default_buffer)
+    keys = _editing_keys(activity, transcript, callbacks, default_buffer)
     return keys, shortcuts
 
 
-def _add_shortcuts(
-    shortcuts: PrefixKeys, activity, transcript, callbacks: PromptCallbacks, pasted: PastedText
-) -> None:
+def _add_shortcuts(shortcuts: PrefixKeys, activity, transcript, callbacks: PromptCallbacks) -> None:
     on_send_mode = callbacks.on_send_mode
     on_model = callbacks.on_model
     on_effort = callbacks.on_effort
@@ -159,9 +154,7 @@ def _add_shortcuts(
 
     @shortcuts.add("y", "Copy draft / choose response")
     def copy_draft(event: KeyPressEvent) -> None:
-        # Collapsed pastes are a display device, so copy what sending would:
-        # the expanded text, not the `[pasted …]` marker standing in for it.
-        text = pasted.expand(event.current_buffer.text)
+        text = event.current_buffer.text
         # With nothing typed, there is no draft to copy: choose a response.
         if not text and on_copy_response is not None:
             on_copy_response()
@@ -195,17 +188,9 @@ def _editing_keys(
     activity,
     transcript,
     callbacks: PromptCallbacks,
-    pasted: PastedText,
     default_buffer: Callable[[], Buffer],
 ) -> KeyBindings:
     keys = KeyBindings()
-
-    @keys.add(Keys.BracketedPaste)
-    def paste(event: KeyPressEvent) -> None:
-        # Same line-ending cleanup as prompt_toolkit's default paste binding,
-        # then large pastes collapse to a preview until the prompt is sent.
-        data = event.data.replace("\r\n", "\n").replace("\r", "\n")
-        event.current_buffer.insert_text(pasted.collapse(data))
 
     @keys.add("enter")
     @keys.add(Keys.ControlF24)
@@ -218,10 +203,6 @@ def _editing_keys(
             # First Enter accepts the selected completion; next Enter sends it.
             buffer.complete_state = None
         else:
-            expanded = pasted.expand(buffer.text)
-            if expanded != buffer.text:
-                buffer.document = Document(expanded, len(expanded))
-            pasted.clear()
             accept_handler = buffer.accept_handler
             if interrupt and callbacks.on_interrupt_submit is not None:
                 # Keep validation, history, and buffer reset identical to Enter.
@@ -286,7 +267,6 @@ def _editing_keys(
             on_cancel()
             return
         buffer.reset()
-        pasted.clear()
         transcript.note(
             "Input discarded. Ctrl+C again interrupts."
             if activity.busy

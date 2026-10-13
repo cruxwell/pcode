@@ -159,7 +159,7 @@ and visual-block selection; run `/unbind v` to get those back. Terminals that
 paste on Ctrl+V never send it to pcode, so there use `/bind` to put
 `/show-edits` on another key.
 
-`@copy` expands collapsed pastes before copying. It is different from binding
+`@copy` is different from binding
 `/copy`, which operates on responses rather than choosing between the draft and
 the last response. Likewise, `@thinking` opens the visibility selector, while
 `/show-thinking off` selects a specific mode.

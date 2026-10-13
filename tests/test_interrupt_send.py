@@ -109,7 +109,7 @@ def test_ctrl_enter_interrupts_regardless_of_selected_mode(editing_mode, mode):
     asyncio.run(run())
 
 
-def test_ctrl_enter_expands_paste_and_bypasses_completion_without_changing_enter():
+def test_ctrl_enter_sends_paste_and_bypasses_completion_without_changing_enter():
     async def run():
         sent = []
         interrupted = []
@@ -131,7 +131,7 @@ def test_ctrl_enter_expands_paste_and_bypasses_completion_without_changing_enter
                 text = "\n".join(f"line {i}" for i in range(100))
                 pipe.send_text("\x1b[200~" + text + "\x1b[201~")
                 await wait(lambda: bool(session.default_buffer.text))
-                assert session.default_buffer.text != text
+                assert session.default_buffer.text == text
                 press(session, Keys.ControlF24)
                 assert interrupted == [text]
                 assert not session.default_buffer.text

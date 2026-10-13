@@ -62,7 +62,6 @@ from pcode.jobs import WATCHED_PREFIX
 from pcode.keyboard_protocol import keyboard_output
 from pcode.keymap import PromptKeymap
 from pcode.layout_speed import install_fast_layout_division
-from pcode.paste import MARKER_PATTERN
 from pcode.popup_ui import shortcut_hint
 from pcode.preferences import (
     SETTINGS,
@@ -326,9 +325,6 @@ class Palette:
                 # A file reference is neither prose nor a command: underlining
                 # it marks the token without competing with the prompt chevron.
                 "reference": f"{self.task_heading} underline",
-                # The marker stands in for hidden text; make it impossible to
-                # mistake for something the user typed.
-                "paste-marker": "bold reverse",
                 "auto-suggestion": self.muted,
                 **(ICON_TASK_STYLES if task_style == "icons" else {}),
             }
@@ -2998,7 +2994,7 @@ def create_prompt(
         multiline=True,
         erase_when_done=True,
         completer=merge_completers([SlashCompleter(registry), FileReferenceCompleter(workspace)]),
-        lexer=ReferenceLexer(extra=[(MARKER_PATTERN, "class:paste-marker")]),
+        lexer=ReferenceLexer(),
         complete_while_typing=Condition(_completes_while_typing),
         reserve_space_for_menu=0,
         auto_suggest=AutoSuggestFromHistory(),
