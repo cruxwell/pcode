@@ -174,7 +174,7 @@ class ToolHistory:
     def record_edit(self, change: EditCompleted) -> None:
         """Note an edit's line counts on its call, running or just settled.
 
-        A change with no diff (binary, sensitive, too large) has no counts to
+        A change with no diff (binary, too large) has no counts to
         give: `+0 −0` would say it changed nothing.
         """
         if change.omitted or change.operation == "unchanged":

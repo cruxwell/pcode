@@ -89,17 +89,14 @@ def test_output_arrives_before_exit_and_final_result_is_unchanged(tmp_path):
 
 
 def test_preview_sanitizes_before_clipping_and_waits_for_complete_lines():
-    assert preview_text("token=super") == ""
-    assert "supersecret" not in preview_text("token=supersecret\n")
-    assert "secret body" not in preview_text('password="first\nsecret body\n')
-    assert "private body" not in preview_text("-----BEGIN PRIVATE KEY-----\nprivate body\n")
+    assert preview_text("unfinished") == ""
+    assert preview_text("token=abc\n") == "token=abc"
     output = preview_text("\x1b[31m[bold]literal[/bold]\x1b[0m\n")
     assert "\x1b" not in output
     assert "[bold]literal[/bold]" in output
     assert "界" in preview_text("界\n")
     assert len(preview_text("x\n" * 100000)) <= 131072
     assert preview_text("last line", final=True) == "last line"
-    assert "supersecret" not in preview_text("token=supersecret", final=True)
 
 
 @pytest.mark.parametrize("background", [False, True])
@@ -297,31 +294,3 @@ def test_result_marker_supersedes_an_earlier_running_event():
     assert job_status("boom\n[j4 · exit 9 · 2.0s]") == ("j4 · exit 9", True)
     assert job_status("[j4 · exit 0 · 2.0s]") == ("", False)
     assert job_status("no marker here") == ("", False)
-
-
-def test_truncated_secret_output_is_omitted_before_inspection_and_persistence(tmp_path):
-    from pcode.sessions import SavedSession
-
-    # Synthetic content, generated without putting its body in the command text.
-    marker = "SYNTHETIC_PRIVATE_BODY"
-    source = (
-        "import sys; print('-----BEGIN PRIVATE KEY-----'); "
-        f"print(''.join(map(chr, {list(map(ord, marker))!r})) * 1000); "
-        "print('-----END PRIVATE KEY-----'); sys.exit(3)"
-    )
-    saved = SavedSession.create("test:local", tmp_path, tmp_path / "sessions")
-    runtime = runtime_for(tmp_path, source, session=saved)
-
-    async def run():
-        try:
-            events = [event async for event in runtime.stream("run")]
-            result = next(e for e in events if isinstance(e, ToolSummary))
-            assert result.failed
-            assert "Output tail omitted" in result.result
-            assert marker not in result.result and marker not in result.error
-            assert all(marker not in e.output for e in events if isinstance(e, CommandOutput))
-            assert marker not in (saved.directory / "transcript.jsonl").read_text()
-        finally:
-            runtime.close()
-
-    asyncio.run(run())

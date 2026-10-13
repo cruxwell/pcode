@@ -392,9 +392,8 @@ def test_literal_keeps_every_line_and_drops_only_the_outer_blanks():
     assert literal("\n\none\n\ntwo\n\n") == "one\n\ntwo"
     # Long lines are not cut: the pane scrolls and wraps instead.
     assert literal("x" * 400) == "x" * 400
-    # Terminal controls still cannot survive, and secrets are still redacted.
+    # Terminal controls still cannot survive.
     assert "\x1b" not in literal("a\x1b[31mb")
-    assert "hunter2" not in literal("export PASSWORD=hunter2")
 
 
 @pytest.mark.parametrize("keys", ["\x1b", "\r", "q"])

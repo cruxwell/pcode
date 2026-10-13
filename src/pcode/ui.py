@@ -3556,7 +3556,7 @@ class Transcript:
         invocation = (
             command_text(event.command) if event.command else plain(event.detail, limit=None)
         )
-        # Live results arrive redacted and length-bounded from the capture step;
+        # Live results arrive length-bounded from the capture step;
         # sanitize again so replayed or synthesized events cannot emit controls.
         output = command_text(event.result or event.error or "").rstrip("\n")
         # The job's closing marker repeats the heading's marker and elapsed

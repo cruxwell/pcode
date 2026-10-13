@@ -47,26 +47,25 @@ def test_answers_follow_active_branch_newest_first():
     assert answers(tree) == []
 
 
-def test_answers_redact_and_clean_before_search_display_and_pick(monkeypatch):
-    secret = "synthetic-answer-test-credential"
-    monkeypatch.setenv("TEST_COPY_API_KEY", secret)
+def test_answers_are_cleaned_before_search_display_and_pick():
+    secret = "synthetic-answer-text"
     tree = ConversationTree()
     tree.nodes["one"] = TurnNode(
         "one", None, f"\nquestion {secret}\n", response=f"\nanswer {secret}\x00\n"
     )
     tree.active = "one"
     answer = answers(tree)[0]
-    assert answer == Answer("question [redacted]", "answer [redacted]")
+    assert answer == Answer(f"question {secret}", f"answer {secret}")
     assert last_response(tree) == tree.nodes["one"].response  # Legacy API stays raw.
     with pytest.raises(FrozenInstanceError):
         answer.text = "changed"
     picker = AnswerPicker([answer], lambda _: None, lambda: None)
-    assert secret not in picker.list.text
-    assert picker.selected().text == "answer [redacted]"
-    picker.query.text = secret
+    assert secret in picker.list.text
+    assert picker.selected().text == f"answer {secret}"
+    picker.query.text = "no such answer"
     assert picker.selected() is None
-    # Directly supplied aside choices get the same protection.
-    assert Answer(secret, secret) == Answer("[redacted]", "[redacted]")
+    # Directly supplied aside choices are cleaned the same way.
+    assert Answer("a\x00b", "c") == Answer("ab", "c")
 
 
 def test_answers_skip_text_that_is_blank_after_cleaning():

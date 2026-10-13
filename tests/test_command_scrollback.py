@@ -324,8 +324,7 @@ def test_mirrored_output_is_sanitized_and_literal():
         )
     )
     output = stream.getvalue()
-    assert "dummy credential" not in output
-    assert "[redacted]" in output
+    assert "client --token 'dummy credential'" in output
     assert "[bold]literal[/bold]" in output
     assert "\x1b" not in output
     assert "\u202e" not in output

@@ -11,32 +11,10 @@ MAX_SOURCE = 256 * 1024
 MAX_LINES = 4000
 MAX_PATCH = 64 * 1024
 MAX_PATCH_LINES = 400
-_SENSITIVE = re.compile(
-    r"(?i)(secret|token|password|credential|api.?key|private.?key|\.env|kubeconfig|"
-    r"(?:^|/)\.kube/|(?:^|/)\.aws/|\.tfvars|\.pem$|\.key$|(?:^|/)id_(?:rsa|ed25519)(?:$|\.))"
-)
-_OPEN_SECRET = re.compile(
-    r"(?i)((?:password|passwd|secret|token|api[_-]?key|authorization)[\"']?\s*[:=]\s*)"
-    r"([\"'])(.*?)(?:(?<!\\)\2|\Z)",
-    re.DOTALL,
-)
-
-
-def sensitive_path(path: str) -> bool:
-    return bool(_SENSITIVE.search(path))
 
 
 def edit_text(text: str) -> str:
-    # Redact whole strings before adding diff prefixes or clipping. A credential
-    # can span lines, and a streamed quoted value may not have its closing quote.
-    text = _OPEN_SECRET.sub(r"\1\2[redacted]\2", text)
-    text = re.sub(
-        r"(?i)((?:password|passwd|secret|token|api[_-]?key|authorization)[\"']?\s*[:=]\s*)"
-        r"[^\s\"',;}]+",
-        r"\1[redacted]",
-        text,
-    )
-    text = re.sub(r"-----BEGIN [^-]*PRIVATE KEY-----.*", "[private key redacted]", text, flags=re.S)
+    """Edit content as shown: terminal controls removed, tabs expanded."""
     return command_text(text)
 
 
@@ -44,7 +22,7 @@ _HUNK = re.compile(r"@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
 
 
 def patch_text(patch: str, *, dedent: bool) -> str:
-    """A stored patch as it is displayed: redacted, and dedented if asked."""
+    """A stored patch as it is displayed: sanitized, and dedented if asked."""
     text = edit_text(patch)
     return dedent_patch(text) if dedent else text
 
@@ -124,8 +102,6 @@ def change_from_record(record: dict) -> EditCompleted:
 def completed_change(path, before, after, *, existed=True, call_id="", omitted=""):
     """Build display evidence while raw snapshots are still local to execution."""
     operation = "edited" if existed else "created"
-    if sensitive_path(path):
-        return EditCompleted(call_id, "[sensitive path]", operation, omitted="Sensitive file")
     path = plain(edit_text(path), limit=None)
     if omitted or before is None:
         return EditCompleted(
@@ -139,7 +115,7 @@ def completed_change(path, before, after, *, existed=True, call_id="", omitted="
         return EditCompleted(call_id, path, operation, omitted="File exceeds preview line limit")
     if before == after:
         return EditCompleted(call_id, path, "unchanged" if existed else "created")
-    # Count actual changed source lines, even where redaction hides a change.
+    # Count actual changed source lines, even where sanitizing hides a change.
     raw = list(difflib.unified_diff(source_lines(before), source_lines(after), n=3))
     added = sum(line.startswith("+") for line in raw[2:])
     removed = sum(line.startswith("-") for line in raw[2:])
@@ -158,5 +134,5 @@ def completed_change(path, before, after, *, existed=True, call_id="", omitted="
     truncated = len(lines) > MAX_PATCH_LINES or len(patch) > MAX_PATCH
     patch = patch[:MAX_PATCH]
     if not patch:
-        omitted = "Changes hidden by redaction or newline normalization"
+        omitted = "Changes hidden by control-character or newline normalization"
     return EditCompleted(call_id, path, operation, patch, added, removed, truncated, omitted)

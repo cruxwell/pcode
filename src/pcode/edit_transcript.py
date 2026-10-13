@@ -74,7 +74,7 @@ MARKDOWN_SUFFIXES = (".md", ".markdown")
 
 
 def created_markdown(change: EditCompleted) -> str | None:
-    """A new Markdown file's redacted source, to show rendered rather than as a diff.
+    """A new Markdown file's sanitized source, to show rendered rather than as a diff.
 
     Every line of a created file is an addition, so the `+` column says
     nothing and the raw source buries the document. The patch is the only

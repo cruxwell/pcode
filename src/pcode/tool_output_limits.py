@@ -66,8 +66,7 @@ class CodingToolOutputLimits(ToolOutputLimits):
         if reduced == output:
             return result
         value = reduced.return_value if isinstance(reduced, ToolReturn) else reduced
-        # The marker also tells display projection that clipping lost redaction
-        # context, including for delegated calls without CommandFinishedEvent.
+        # The marker tells the reader the body was reduced, not cut by the command.
         value = f"{REDUCED_SHELL_OUTPUT}\n{value}\n{envelope}"
         return replace(reduced, return_value=value) if isinstance(reduced, ToolReturn) else value
 

@@ -157,7 +157,7 @@ session still work.
 
 Spills live in `$XDG_STATE_HOME/pcode/tool-results` (default
 `~/.local/state/pcode/tool-results`), an owner-only directory shared by all
-workspaces. They hold **raw tool output**, not the redacted version the terminal
+workspaces. They hold **raw tool output**, not the sanitized version the terminal
 shows, and are written even with `--no-save`. This is plain local storage, not
 encrypted or isolated. `truncate` or `off` stops new spill files but does not
 delete existing spills, sessions, or shell logs.

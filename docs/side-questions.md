@@ -34,10 +34,10 @@ streams it.
 - **Ctrl+R:** type a [follow-up](#following-up) to the selected answer.
 - **Ctrl+S / Ctrl+T:** [bring the thread into the conversation](#keeping-a-thread),
   as a summary or merged into the tree.
-- **Ctrl+Y:** choose an answer from the selected thread to copy as markdown,
-  secrets redacted. Answers appear newest first, with the newest selected; type
-  to search questions or answer text, then use ↑/↓ and Enter to choose. With only
-  one answer, skip the answer picker. Copying also works mid-stream, taking what
+- **Ctrl+Y:** choose an answer from the selected thread to copy as markdown.
+  Answers appear newest first, with the newest selected; type to search
+  questions or answer text, then use ↑/↓ and Enter to choose. With only one
+  answer, skip the answer picker. Copying also works mid-stream, taking what
   has arrived so far. As with `/copy`, an answer holding quotes or code blocks
   moves to a second screen in the same popup to copy one of them or the whole
   answer. Escape from that screen returns to the answer list, keeping your search

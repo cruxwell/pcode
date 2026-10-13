@@ -108,13 +108,6 @@ def test_an_empty_review_shows_its_notice():
     asyncio.run(run())
 
 
-def test_secrets_are_redacted_before_display():
-    with create_pipe_input() as pipe:
-        ui = browser([change("app.py", patch='+token = "synthetic-secret"')], pipe)
-        assert "synthetic-secret" not in ui.diff.text
-        assert "[redacted]" in ui.diff.text
-
-
 def test_lexer_colors_match_the_scrollback_diff_theme():
     document = Document("@@ -1 +1 @@\n-old\n+new\n context")
     line = DiffLexer("monokai").lex_document(document)
@@ -284,16 +277,6 @@ def test_diff_search_filters_changes_and_jumps_between_matching_rows():
         # Switching scope drops the query typed for the other pane.
         ui.search("paths")
         assert ui.query.text == "" and len(ui.visible) == 2
-
-
-def test_diff_search_matches_the_redacted_text():
-    with create_pipe_input() as pipe:
-        ui = browser([change("app.py", patch='+token = "synthetic-secret"')], pipe)
-        ui.search("diffs")
-        ui.query.text = "synthetic-secret"
-        assert ui.visible == []
-        ui.query.text = "redacted"
-        assert len(ui.visible) == 1 and ui.diff_rows()
 
 
 def test_notes_sit_under_their_line_and_become_a_prompt():

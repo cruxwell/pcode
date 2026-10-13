@@ -129,29 +129,18 @@ def test_renames_deletions_type_and_mode_changes_line_up_with_their_patches(repo
     assert changes["ünï.py"].operation == "created" and "+u" in changes["ünï.py"].patch
 
 
-def test_secrets_stay_out_of_the_view_and_the_object_store(repo, linked):
+def test_secret_looking_files_are_diffed_like_any_other(repo, linked):
     path = linked.path
     commit(path, "config.env", "A=1\n")
     (path / "config.env").write_text("A=2\n")
-    (path / ".env.local").write_text("TOKEN=synthetic-untracked\n")
-    (path / "app.py").write_text('token = "synthetic-secret"\n')
+    (path / ".env.local").write_text("B=3\n")
+    (path / "app.py").write_text('token = "sk-0123456789ab"\n')
 
     changes = by_path(load_review(path, []))
 
-    unread = changes[".env.local"]
-    assert (unread.operation, unread.omitted, unread.patch) == (
-        "created",
-        "Sensitive file; not read",
-        "",
-    )
-    tracked = changes["config.env"]
-    assert tracked.omitted == "Sensitive file" and tracked.patch == ""
-    assert (tracked.operation, tracked.added, tracked.removed) == ("created", 1, 0)
-    assert "synthetic-secret" not in changes["app.py"].patch
-    assert "[redacted]" in changes["app.py"].patch
-    blob = git(path, "hash-object", ".env.local")  # computes the id without writing it
-    missing = subprocess.run(["git", "-C", str(path), "cat-file", "-e", blob], capture_output=True)
-    assert missing.returncode != 0
+    assert changes[".env.local"].operation == "created" and "+B=3" in changes[".env.local"].patch
+    assert "+A=2" in changes["config.env"].patch
+    assert '+token = "sk-0123456789ab"' in changes["app.py"].patch
 
 
 def test_large_diffs_are_clipped_or_only_counted(repo, linked, monkeypatch):
@@ -372,7 +361,7 @@ def test_only_newlines_split_patch_lines(repo):
     (repo / "a.py").write_text(source + "        return x + 1\n        y = '\u2028+ 2'\n")
     (repo / "crlf.txt").write_bytes(b"one\r\nthree\r\n")
 
-    tree, _ = git_diff._snapshot(repo)
+    tree = git_diff._snapshot(repo)
     changes = {change.path: change for change in git_diff._tree_diff(repo, "HEAD", tree, None)}
 
     shown = patch_text(changes["a.py"].patch, dedent=True).split("\n")

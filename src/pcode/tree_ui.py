@@ -217,7 +217,7 @@ class TreeBrowser:
     def copy(self, output=None) -> None:
         """Copy the selected row's prompt or response, as the pane shows it.
 
-        The text is the redacted `literal` form rendered above, not the raw
+        The text is the sanitized `literal` form rendered above, not the raw
         record: what is on screen is what leaves the popup. A response holding
         quotes or code blocks opens a picker to copy just one of them.
         """

@@ -61,15 +61,13 @@ def test_mutations_capture_actual_contents_and_failed_edits_emit_nothing(tmp_pat
     asyncio.run(exercise())
 
 
-def test_binary_large_sensitive_and_missing_newline():
+def test_binary_large_named_path_and_missing_newline():
     assert completed_change("image", "\0", "text").omitted == "Binary content"
     assert completed_change("large", "x" * (MAX_SOURCE + 1), "small").omitted
-    change = completed_change(".envrc", "SECRET=old", "SECRET=new")
-    assert change.path == "[sensitive path]" and not change.patch
+    # A secret-looking name is shown and diffed like any other file.
+    change = completed_change("token_accounting.py", "old\n", "new\n")
+    assert change.path == "token_accounting.py" and (change.added, change.removed) == (1, 1)
     assert r"\ No newline at end of file" in completed_change("x", "old", "new\n").patch
-    change = completed_change("x", 'token = "old\nsecret"\n', 'token = "new\nsecret"\n')
-    assert "old" not in change.patch and "new" not in change.patch
-    assert "secret" not in change.patch
 
 
 def test_completed_diffs_retained_while_hidden_and_reprojected():
@@ -190,21 +188,6 @@ def test_write_only_destination_still_writes_without_a_diff(tmp_path):
     assert path.read_text() == "new\n"
 
 
-def test_sensitive_symlink_target_is_not_captured(tmp_path):
-    target = tmp_path / ".envrc"
-    target.write_text("synthetic confidential contents\n")
-    (tmp_path / "alias.py").symlink_to(target)
-
-    async def exercise():
-        ctx = Context(tmp_path)
-        toolset = DisplayFileSystem().get_toolset()
-        await toolset._write_file_tool(ctx, "alias.py", "new synthetic contents\n")
-        assert ctx.changes[-1].path == "[sensitive path]"
-        assert not ctx.changes[-1].patch
-
-    asyncio.run(exercise())
-
-
 def test_overwrite_non_utf8_content_and_missing_parent(tmp_path):
     path = tmp_path / "binary"
     path.write_bytes(b"\xff\xfe")
@@ -247,10 +230,12 @@ def test_parallel_writes_capture_their_own_operation(tmp_path):
     asyncio.run(exercise())
 
 
-def test_unquoted_credentials_are_redacted_before_persistence():
-    change = completed_change("example.ini", "", "token = synthetic-value\npasswd = other-value\n")
-    assert "synthetic-value" not in change.patch and "other-value" not in change.patch
-    assert "[redacted]" in change.patch
+def test_edits_are_shown_as_written_even_where_they_look_like_credentials():
+    code = 'input_token: int = 0\npassword = form.data["pw"]\n'
+    change = completed_change("example.py", "", code + "api_key = sk-0123456789ab\n")
+    assert "+api_key = sk-0123456789ab" in change.patch
+    assert "+input_token: int = 0" in change.patch
+    assert '+password = form.data["pw"]' in change.patch
 
 
 def test_external_mutations_keep_absolute_evidence_paths(tmp_path):
@@ -278,23 +263,6 @@ def test_external_mutations_keep_absolute_evidence_paths(tmp_path):
         assert ctx.changes[-1].path == str(target)
         assert "-new" in ctx.changes[-1].patch and "+last" in ctx.changes[-1].patch
         assert target.read_text() == "last\n"
-
-    asyncio.run(exercise())
-
-
-def test_external_alias_does_not_capture_sensitive_contents(tmp_path):
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    target = tmp_path / ".envrc"
-    target.write_text("synthetic confidential contents\n")
-    (workspace / "alias.py").symlink_to(target)
-
-    async def exercise():
-        ctx = Context(workspace)
-        toolset = DisplayFileSystem().get_toolset()
-        await toolset._write_file_tool(ctx, "alias.py", "new synthetic contents\n")
-        assert ctx.changes[-1].path == "[sensitive path]"
-        assert not ctx.changes[-1].patch
 
     asyncio.run(exercise())
 

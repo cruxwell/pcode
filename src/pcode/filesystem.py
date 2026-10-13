@@ -17,7 +17,7 @@ from pydantic_ai_harness.filesystem._toolset import (
     _is_binary,
 )
 
-from pcode.edits import MAX_SOURCE, completed_change, sensitive_path
+from pcode.edits import MAX_SOURCE, completed_change
 from pcode.runtime import EditCompleted
 from pcode.workspace_filesystem import WorkspaceFileSystem
 
@@ -53,32 +53,25 @@ class DisplayFileSystemToolset(FileSystemToolset):
         await ctx.emit(FileChangeEvent(change=change))
 
     @staticmethod
-    def _display_path(scope, path: str, resolved: str) -> str:
-        """Workspace-relative inside the workspace, absolute outside it; never a sensitive name."""
-        if sensitive_path(path):
-            return path
+    def _display_path(scope, resolved: str) -> str:
+        """Workspace-relative inside the workspace, absolute outside it."""
         relative = posixpath.relpath(resolved, scope.cwd)
         return resolved if relative == ".." or relative.startswith("../") else relative
 
     async def _request(self, scope, ctx, change, *, path, resolved):
         snapshot = _snapshot.get()
         if ctx is not None and snapshot is not None:
-            await self._take(snapshot, scope, path, resolved)
+            await self._take(snapshot, scope, resolved)
         return await super()._request(scope, ctx, change, path=path, resolved=resolved)
 
-    async def _take(self, snapshot: _Snapshot, scope, path: str, resolved: str) -> None:
+    async def _take(self, snapshot: _Snapshot, scope, resolved: str) -> None:
         snapshot.taken = True
-        # Harness writes through the path as written; name the file it reaches,
-        # so an alias to a sensitive file is hidden as that file would be.
+        # Harness writes through the path as written; name the file it reaches.
         try:
             real = await scope.workspace.realpath(resolved)
         except OSError:
             real = resolved
-        snapshot.display_path = (
-            path if sensitive_path(path) else self._display_path(scope, path, real)
-        )
-        if sensitive_path(snapshot.display_path):
-            return
+        snapshot.display_path = self._display_path(scope, real)
         try:
             raw = await scope.workspace.read_bytes(real)
         except FileNotFoundError:

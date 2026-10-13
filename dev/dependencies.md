@@ -518,10 +518,8 @@ slicing. `indented_json` makes structured returns pageable but does not split lo
 string fields. Verify this behavior against the installed source on upgrades.
 
 `CodingToolOutputLimits` reduces only the persistent shell's body, leaving its
-PID/log/status footer intact even for head truncation and small budgets. It marks
-changed bodies so `shell.result_projection` omits previews whose clipping removed
-redaction context. Length-based detection alone stops working after reduction,
-especially for delegated calls that have no `CommandFinishedEvent` in the parent.
+PID/log/status footer intact even for head truncation and small budgets, and
+marks changed bodies with `REDUCED_SHELL_OUTPUT`.
 Keep the real-shell parent/worker tests, long-line recovery, serialized-history
 readback, and spill-failure fallback tests in `tests/test_tool_output_limits.py`.
 
@@ -833,7 +831,7 @@ Native model history remains separate from this readable presentation history.
 
 `TerminalOutput.thinking_delta` commits complete plain-text lines through
 `Transcript.thinking`, flushing the unfinished line on block/turn termination.
-Thinking is control-sanitized and display-redacted like command text, and uses the
+Thinking is control-sanitized like command text, and uses the
 named Rich `pcode.thinking` style (muted + dim; terminal-color mode uses dim default).
 Define compound styles in the theme: a string such as `pcode.muted dim` is not a
 valid composite of a theme alias and an attribute in Rich's style parser.
@@ -992,8 +990,8 @@ paths are unconfined while relative ones resolve from the workspace and walked
 paths come back relative to it; read-only patterns get a `**/` prefix to match at
 any depth. `DisplayFileSystemToolset` takes the before snapshot for edit
 previews in `_request`, which Harness calls under its per-file lock just before
-writing, and reads through the real path so an alias to a sensitive file is
-hidden like the file.
+writing, and reads through the real path so an alias is reported as the file
+it reaches.
 
 The port leans on private upstream names, which the `<0.53` pin keeps stable
 but an upgrade must recheck: `FileSystemToolset._request`, `_write_file`,
@@ -1095,21 +1093,19 @@ cancelling: `detach` for a typed follow-up (abandon the wait, keep the command),
 resets it to `detach` after every turn. A job the model backgrounded is never
 caught by either, because nothing was waiting on it.
 
-An already-truncated result can begin inside a secret whose opening marker was
-dropped. `result_projection` conservatively omits that raw tail from UI/inspection
-payloads, keeping the job envelope; it does not reread the log. `shell.split_envelope`
-is the single parser for that boundary, shared with `CodingToolOutputLimits` so
-reduction can never spill the handles a running job is reached through. Apply it
-to delegated shell results too. The model result and raw log are not redacted by
-this display adapter. `--no-save` does not disable job logs.
+An already-truncated result is shown as it is; nothing on screen is
+secret-redacted, only control-sanitized. `shell.split_envelope` is the single parser for the boundary
+between output and the job envelope, shared with `CodingToolOutputLimits` so
+reduction can never spill the handles a running job is reached through. The model
+result and raw log are never altered. `--no-save` does not disable job logs.
 
 A live preview and the settled block it becomes are framed alike: `pcode.block`
 owns the rule character, the two-space body indent and the heading text, Rich
 draws it in scrollback (`CommandTranscript`, `EditTranscript`) and prompt_toolkit
 windows draw it in the panel. Change the framing there, not in one surface.
 
-Wait for complete lines, sanitize before clipping, and redact unfinished quoted
-credentials and private-key blocks before displaying a preview. `CommandOutput`
+Wait for complete lines, and sanitize before clipping, so a credential split
+across chunks is masked whole before a preview shows it. `CommandOutput`
 bypasses session/tree journals. Remove per-call previews when tool results arrive,
 and clear them on cancellation/failure/reset. Preserve `tests/test_shell_streaming.py`,
 `tests/test_jobs.py`, and the real-tmux command-height tests; no-CPR PTYs cannot
@@ -1170,8 +1166,8 @@ install with the `PATH` npm and the proxy's own install, found from `/health`'s
 ### Completed file diffs (verified Harness 0.52.0)
 
 `FileWrittenEvent` still has no before/after contents. `FileEditedEvent` carries
-a bounded diff, but it is already truncated and not secret-redacted; it cannot
-replace pcode's full-source redaction and precise counts. Reading the file when
+a bounded diff, but it is already truncated; it cannot replace pcode's
+full-source diff and precise counts. Reading the file when
 either event reaches the UI cannot recover the previous version.
 
 `DisplayFileSystemToolset` leaves Harness's `_write_file` and `_edit_file`
@@ -1191,8 +1187,8 @@ Pydantic AI exposes tool arguments through `ToolCallPartDelta.args_delta`.
 executing anything, using
 `pydantic_core.from_json(..., allow_partial="trailing-strings")` for incomplete
 string values. A separate parse with `allow_partial=True` requires a complete
-path before exposing content; resolve it against the filesystem root to exclude
-sensitive symlink targets too. Preview events bypass the session journal;
+path before exposing content; resolve it against the workspace root to exclude
+symlinks that lead outside it. Preview events bypass the session journal;
 completed change events replay through the same recorded transcript method even
 when hidden. Keep `tests/test_edits_tmux.py`: no-CPR PTYs don't verify the shared
 preview/editor height budget or redraw behavior in a real terminal.

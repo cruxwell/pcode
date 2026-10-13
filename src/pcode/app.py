@@ -554,15 +554,15 @@ class PreviewApp:
         if self.runtime.session:
             self.replay()
             return
-        from pcode.diagnostics import redact
+        from pcode.diagnostics import strip_controls
 
         tree = self.runtime.tree
         with self.transcript.restore():
             for node_id in tree.path(tree.active):
                 node = tree.nodes[node_id]
-                self.transcript.user(redact(node.prompt))
+                self.transcript.user(strip_controls(node.prompt))
                 if node.response:
-                    self.transcript.events((Message(redact(node.response)),))
+                    self.transcript.events((Message(strip_controls(node.response)),))
         self.activity.plan = tree.nodes[tree.active].plan if tree.active else []
 
     def aside_changed(self, aside) -> None:
@@ -1884,7 +1884,7 @@ class PreviewApp:
 
         `end` stops at that journal offset: a host sends the rest as it happened.
         """
-        from pcode.diagnostics import redact
+        from pcode.diagnostics import strip_controls
 
         saved = saved or self.runtime.session
         self.activity.plan = saved.latest_plan()
@@ -1898,9 +1898,9 @@ class PreviewApp:
             for record in saved.transcript_records(end):
                 kind = record["kind"]
                 if kind in ("turn_started", "steering"):
-                    self.transcript.user(redact(record["prompt"]))
+                    self.transcript.user(strip_controls(record["prompt"]))
                 elif kind in ("Thinking", "thinking_partial"):
-                    self.transcript.thinking(redact(record["text"]).rstrip("\n") + "\n\n")
+                    self.transcript.thinking(strip_controls(record["text"]).rstrip("\n") + "\n\n")
                 elif kind == "CacheBust":
                     continue  # Kept in the journal; live runs show it in the footer.
                 elif kind == "EditCompleted":
@@ -1912,21 +1912,21 @@ class PreviewApp:
                     self.transcript.tool_result(
                         ToolSummary(
                             record["name"],
-                            redact(record["detail"]),
+                            strip_controls(record["detail"]),
                             record.get("failed", False),
                             record.get("call_id", ""),
                             record.get("elapsed_seconds"),
-                            redact(record.get("error", "")),
-                            redact(record.get("command", "")),
-                            result=redact(result) if isinstance(result, str) else None,
+                            strip_controls(record.get("error", "")),
+                            strip_controls(record.get("command", "")),
+                            result=strip_controls(result) if isinstance(result, str) else None,
                             outcome=record.get("outcome", ""),
                             parent_call_id=record.get("parent_call_id", ""),
-                            purpose=redact(record.get("purpose", "")),
+                            purpose=strip_controls(record.get("purpose", "")),
                             execution=record.get("execution", ""),
                         )
                     )
                 elif kind in ("Message", "partial"):
-                    self.transcript.events((Message(redact(record["markdown"])),))
+                    self.transcript.events((Message(strip_controls(record["markdown"])),))
                     if kind == "partial":
                         self.transcript.warning("[Partial output from an interrupted run]")
 

@@ -15,7 +15,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_core import from_json
 
-from pcode.edits import MAX_SOURCE, edit_text, sensitive_path
+from pcode.edits import MAX_SOURCE, edit_text
 from pcode.runtime import EditPreview
 
 
@@ -88,15 +88,11 @@ class StreamingEditPreview:
             return clear + self._code_preview(index, partial, complete)
         path = complete.get("path")
         # Never expose content until the complete path is known and checked.
-        permitted = isinstance(path, str) and not sensitive_path(path)
+        permitted = isinstance(path, str)
         if permitted:
             try:
                 resolved = (self.root / path).resolve()
-                permitted = (
-                    not Path(path).is_absolute()
-                    and resolved.is_relative_to(self.root)
-                    and not sensitive_path(str(resolved.relative_to(self.root)))
-                )
+                permitted = not Path(path).is_absolute() and resolved.is_relative_to(self.root)
             except OSError, ValueError, RuntimeError:
                 permitted = False
         if not permitted:

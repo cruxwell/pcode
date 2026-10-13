@@ -142,7 +142,7 @@ def test_retry_is_not_reported_as_retrying_and_shows_error_body():
 def test_targets_are_relative_bounded_and_show_shell_arguments(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert target("read_file", {"path": str(tmp_path / "a.py")}) == "a.py"
-    assert target("read_file", {"path": ".env"}) == "[sensitive path]"
+    assert target("read_file", {"path": ".env"}) == ".env"
     command = 'MODE=test python -c "print(123)" | head -n 1'
     assert target("run_command", {"command": command}) == command
     assert target("start_command", {"command": command}) == command
@@ -314,10 +314,10 @@ def test_search_targets_include_patterns(name, args, expected):
     assert target(name, args) == expected
 
 
-def test_a_job_tool_is_about_the_command_its_job_runs_with_credentials_redacted():
+def test_a_job_tool_is_about_the_command_its_job_runs():
     jobs = {"j1": SimpleNamespace(command="deploy --token hunter2", purpose="  shipping\n it ")}
     assert subject("wait_for_job", {"job_id": "j1"}, jobs) == (
-        "deploy --token [redacted]",
+        "deploy --token hunter2",
         "shipping it",
     )
     assert subject("stop_job", {"job_id": "j2"}, jobs) == ("", "")
@@ -328,19 +328,6 @@ def test_a_job_tool_is_about_the_command_its_job_runs_with_credentials_redacted(
         "look",
     )
     assert subject("read_file", {"path": "a.py"}, jobs) == ("", "")
-
-
-def test_command_credential_options_redacted_without_hiding_ordinary_arguments(monkeypatch):
-    # Only synthetic credentials are used here; do not inspect the real environment.
-    monkeypatch.setenv("EXAMPLE_API_KEY", "synthetic-display-fixture")
-    command = 'client --token "dummy credential" --verbose --limit 20'
-    assert target("run_command", {"command": command}) == (
-        "client --token [redacted] --verbose --limit 20"
-    )
-    assert target("run_command", {"command": "client --api-key=synthetic-display-fixture -v"}) == (
-        "client --api-key=[redacted] -v"
-    )
-    assert target("search_files", {"pattern": "synthetic-display-fixture"}) == '"[redacted]" in .'
 
 
 def test_long_command_is_compact_without_numbers_or_details_hint():
@@ -466,12 +453,10 @@ def test_failed_tool_summary_line_is_marked_only_by_its_symbol(show):
     assert codes.findall(failure) == codes.findall(success)
 
 
-def test_command_text_redacts_before_preserving_lines():
+def test_command_text_preserves_lines_without_controls():
     from pcode.tool_display import command_text
 
-    assert command_text('client --token "dummy credential"\necho done') == (
-        "client --token [redacted]\necho done"
-    )
+    assert command_text("client\x1b[31m --flag\x07\necho\tdone") == "client --flag\necho    done"
 
 
 def test_command_and_query_controls_are_not_sent_to_terminal():
@@ -676,11 +661,10 @@ def test_tool_failure_shows_workspace_boundary_in_transcript(outcome):
     assert "details withheld" not in stream.getvalue()
 
 
-def test_tool_failure_preserves_feedback_but_redacts_credentials(monkeypatch):
-    monkeypatch.setenv("TEST_API_KEY", "synthetic-environment-credential")
+def test_tool_failure_preserves_feedback_without_controls():
     message = (
         "\x1b[31mAccess rejected\x1b[0m for /tmp/repo: "
-        "synthetic-environment-credential; password='two word secret'; "
+        "synthetic-environment-credential; key=sk-0123456789ab; "
         "Bearer synthetic-bearer-value\nTry a workspace-relative path."
     )
     detail, failed = result_detail("read_file", {}, message, "retry")
@@ -688,8 +672,6 @@ def test_tool_failure_preserves_feedback_but_redacts_credentials(monkeypatch):
     assert "Access rejected" in detail
     assert "/tmp/repo" in detail
     assert "Try a workspace-relative path." in detail
-    for secret in ("synthetic-environment-credential", "two word secret", "synthetic-bearer-value"):
-        assert secret not in detail
     assert "\x1b" not in detail
 
 

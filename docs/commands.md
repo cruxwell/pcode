@@ -798,12 +798,9 @@ agent is still writing; the view, your place, and your notes are kept.
 - Escape or Ctrl+C closes the popup and restores the editor draft, with any
   notes added to it.
 
-Untracked files are included without touching your staging area. Untracked files
-that look sensitive (`.env`, keys, credentials) are listed but never read, and
-tracked ones show only their line counts. Secrets in other diffs are redacted as
-in scrollback. A file's diff is clipped at 2,000 lines, and a file over 1 MB
-shows only its counts. When git can't produce the review (no commits yet, a
-detached mainline), `/diffs` says why instead of opening.
+Untracked files are included without touching your staging area. A file's diff
+is clipped at 2,000 lines, and a file over 1 MB shows only its counts. When git can't produce the review
+(no commits yet, a detached mainline), `/diffs` says why instead of opening.
 
 ## Tool-call inspector
 
@@ -858,7 +855,7 @@ Provider-run web searches (Anthropic's native `web_search`, used when the
 text arrives encrypted for the provider, so the inspector can't show it. Local
 searches (Exa or DuckDuckGo) and `get_page` return plain text and show in full.
 
-What the inspector shows is a redacted copy saved in the session's
+What the inspector shows is a copy saved in the session's
 `transcript.jsonl`, not an execution log. It survives resume and later failed
 requests. Limits:
 
@@ -869,7 +866,6 @@ requests. Limits:
 - `/new` resets the inspector.
 - Calls from older sessions that didn't capture arguments or results show a
   missing-details label.
-- Redaction is best-effort, not a guarantee that all sensitive content is removed.
 
 ## Scrollback and history
 

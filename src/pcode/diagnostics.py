@@ -44,7 +44,17 @@ _ASSIGNMENT = re.compile(
 )
 
 
+def strip_controls(text: str) -> str:
+    """Drop control characters other than newline and tab."""
+    return re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
+
+
 def redact(text: str) -> str:
+    """Best-effort credential removal for error reports and text sent off the machine.
+
+    Not for the screen: the model has already seen what pcode displays, and
+    keyword matching rewrites ordinary code.
+    """
     for name, value in os.environ.items():
         if len(value) >= 8 and re.search(r"TOKEN|SECRET|PASSWORD|API_KEY|ACCESS_KEY", name):
             text = text.replace(value, "[redacted]")
@@ -52,7 +62,7 @@ def redact(text: str) -> str:
     text = re.sub(r"(?i)(https?://)[^/\s@]+@", r"\1[redacted]@", text)
     text = _TOKEN.sub("[redacted]", text)
     text = _ASSIGNMENT.sub(r"\1[redacted]", text)
-    return re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
+    return strip_controls(text)
 
 
 # Enough for a deep cause chain through the agent graph, small enough that a

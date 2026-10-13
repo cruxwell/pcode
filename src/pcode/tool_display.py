@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from rich.text import Text
 
 from pcode.code_mode import SANDBOXED_TOOLS
-from pcode.diagnostics import redact
+from pcode.diagnostics import strip_controls
 
 if TYPE_CHECKING:
     from pcode.jobs import JobRegistry
@@ -45,9 +45,6 @@ LABELS = {
     "read_session": "Read session",
     "inventory_agent_context": "Context",
 }
-_SENSITIVE = re.compile(
-    r"(?i)(secret|token|password|credential|api.?key|private.?key|\.env|kubeconfig|\.tfvars)"
-)
 
 
 def plain(value: str, limit: int | None = 90) -> str:
@@ -60,26 +57,13 @@ def label(name: str) -> str:
     return LABELS.get(name, plain(name))
 
 
-_CREDENTIAL_OPTION = re.compile(
-    r"(?i)(--?(?:password|passwd|token|access[-_]token|refresh[-_]token|"
-    r"api[-_]key|secret|client[-_]secret|authorization)(?:=|\s+))"
-    r"(\"[^\"]*\"|'[^']*'|[^\s;|&]+)"
-)
-
-
-def argument(value: str, *, command: bool = False) -> str:
-    if command:
-        value = _CREDENTIAL_OPTION.sub(r"\1[redacted]", value)
-    # Redact before formatting, so neither wrapping nor sanitization splits credentials.
-    return plain(redact(value).replace("\n", r"\n").replace("\t", r"\t"), limit=None)
+def argument(value: str) -> str:
+    return plain(strip_controls(value).replace("\n", r"\n").replace("\t", r"\t"), limit=None)
 
 
 def command_text(value: str) -> str:
-    """Redact first, then preserve layout without allowing terminal controls."""
-    value = _ANSI.sub("", value)
-    value = _PRIVATE_KEY.sub("[private key redacted]", value)
-    value = _QUOTED_CREDENTIAL.sub(r"\1\2[redacted]\2", value)
-    value = redact(_CREDENTIAL_OPTION.sub(r"\1[redacted]", value))
+    """Preserve layout without allowing terminal controls."""
+    value = strip_controls(_ANSI.sub("", value))
     return "\n".join(plain(line.expandtabs(4), limit=None) for line in value.split("\n"))
 
 
@@ -408,14 +392,13 @@ def target(name: str, args: dict, source: str = "") -> str:
         value = args.get("path", ".")
         if not isinstance(value, str):
             return "path unavailable"
-        sensitive = bool(_SENSITIVE.search(value))
         path = Path(value)
         if path.is_absolute():
             try:
                 value = str(path.relative_to(Path.cwd()))
             except ValueError:
                 pass
-        where = "[sensitive path]" if sensitive else plain(value)
+        where = plain(value)
         if name in {"search_files", "find_files", "list_files", "grep"} and isinstance(
             args.get("pattern"), str
         ):
@@ -444,16 +427,6 @@ def failure_reason(content: object) -> str:
 
 
 _ANSI = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]")
-_PRIVATE_KEY = re.compile(
-    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)",
-    re.DOTALL,
-)
-
-_QUOTED_CREDENTIAL = re.compile(
-    r"(?i)((?:password|passwd|secret|token|api[_-]?key|authorization)[\"']?\s*[:=]\s*)"
-    r"([\"'])(.*?)(?<!\\)\2",
-    re.DOTALL,
-)
 
 
 def command_error(content: object) -> str:
@@ -475,11 +448,8 @@ def command_error(content: object) -> str:
         text = stderr[1]
     else:
         text = re.sub(r"(?:^|\n)\[(?:stdout|stderr)\]\n?", "\n", text)
-    # Remove escape sequences before redaction, then redact before clipping to avoid
-    # leaking pieces of a credential across formatting or excerpt boundaries.
-    text = _ANSI.sub("", text)
-    text = _PRIVATE_KEY.sub("[private key redacted]", text)
-    text = redact(_CREDENTIAL_OPTION.sub(r"\1[redacted]", text))
+    # Remove escape sequences whole, before `plain` turns their introducer into a space.
+    text = strip_controls(_ANSI.sub("", text))
     lines = [plain(line.expandtabs(4), limit=None) for line in text.splitlines()]
     while lines and not lines[0].strip():
         lines.pop(0)

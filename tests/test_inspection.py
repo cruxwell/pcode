@@ -98,13 +98,11 @@ def test_run_scoping_retries_and_unfinished_states():
     assert archive.calls[-1].state == "unknown"
 
 
-def test_payload_bounds_redaction_and_memory_eviction(monkeypatch):
+def test_payload_bounds_sanitizing_and_memory_eviction(monkeypatch):
     import pcode.inspection as inspection
 
-    # Synthetic fixtures, not real credentials.
-    text = capture({"password": "synthetic multi word value", "nested": {"api_key": "example"}})
-    assert "synthetic" not in text and "example" not in text
-    assert "[redacted]" in text
+    text = capture({"max_tokens": 5, "nested": {"api_key": "example"}})
+    assert '"max_tokens": 5' in text and '"api_key": "example"' in text
     assert "\x1b" not in capture("before\x1b[31mafter\x9b\u202e")
     assert "\x9b" not in capture("\x9b") and "\u202e" not in capture("\u202e")
     assert "truncated" in capture("x" * (PAYLOAD_LIMIT + 1))
@@ -342,26 +340,6 @@ def test_unsaved_capture_survives_failure_and_new_resets(tmp_path):
         assert not runtime.inspections.calls
 
     asyncio.run(run())
-
-
-def test_string_payload_secrets_are_redacted_before_persistence(tmp_path):
-    # Deliberately non-key fixture text; no credential files are involved.
-    content = (
-        'password="synthetic multi word phrase"\n'
-        "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----\n"
-        "plain output remains"
-    )
-    projected = capture(content)
-    assert "synthetic" not in projected and "multi word" not in projected
-    assert "not-a-real-key" not in projected
-    assert "plain output remains" in projected
-    saved = SavedSession.create("test", tmp_path, tmp_path / "sessions")
-    try:
-        saved.event(ToolSummary("run_command", "done", call_id="one", result=projected))
-        restored = ToolArchive.load(saved.directory / "transcript.jsonl")
-        assert restored.calls[0].result.read() == projected
-    finally:
-        saved.close()
 
 
 def test_index_skips_malformed_records_and_incrementally_reads_appends(tmp_path):

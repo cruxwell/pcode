@@ -7,7 +7,6 @@ File changes are held in memory either way: each patch is already capped when ma
 
 import json
 import math
-import re
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -21,28 +20,13 @@ MEMORY_LIMIT = 8 * 1024 * 1024  # UTF-8 bytes of unsaved payload text
 MISSING = "Details were not captured for this call (older session or preview)."
 
 
-def _redact_fields(value: object) -> object:
-    if isinstance(value, dict):
-        return {
-            key: "[redacted]"
-            if re.search(
-                r"(?i)password|passwd|secret|token|authorization|api.?key|private.?key", str(key)
-            )
-            else _redact_fields(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_redact_fields(item) for item in value]
-    return value
-
-
 def capture(value: object) -> str:
-    """Render a bounded, redacted text projection, not arbitrary object reprs."""
+    """Render a bounded text projection, not arbitrary object reprs."""
     text = (
         value
         if isinstance(value, str)
         else json.dumps(
-            _redact_fields(value),
+            value,
             ensure_ascii=False,
             indent=2,
             default=lambda obj: f"<{type(obj).__name__} omitted>",
