@@ -50,7 +50,7 @@ Explicit commands remain available with tab completion: `/config list` prints
 JSON, and `/config set theme light`, `/config get autocompact`,
 `/config unset effort`, and `/config diff` work without opening the browser.
 **Most config edits affect the next launch, not the running conversation.** To change
-an active setting and save its default immediately, use `/theme`, `/effort`,
+an active setting and save its default immediately, use `/theme light|dark|auto`, `/effort`,
 `/model`, or `/autocompact` instead. The layout settings `attach_tasks`,
 `tasks_max_height`, `tasks_min_rows`, `tasks_min_columns`, `task_style`, `tool_glyphs`, `tool_max_lines` and `tool_linger_seconds` apply immediately through `/config`. CLI overrides such as
 `--theme` and `--model` do not rewrite global defaults, and resumed sessions retain

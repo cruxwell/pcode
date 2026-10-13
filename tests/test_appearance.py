@@ -39,10 +39,11 @@ def test_desktop_change_queries_the_terminal_and_reports_toggle(monkeypatch):
     finally:
         os.close(master)
         os.close(slave)
-    assert written.startswith(appearance.ENABLE_REPORTS)
+    assert written.startswith(appearance.ENABLE_REPORTS + appearance.QUERY_BACKGROUND)
     assert written.endswith(appearance.DISABLE_REPORTS)
-    # One flip (an unreadable poll in between is not a flip), so one query.
-    assert written.count(appearance.QUERY_BACKGROUND) == 1
+    # One at startup, then one flip (an unreadable poll in between is not a
+    # flip), so one more query.
+    assert written.count(appearance.QUERY_BACKGROUND) == 2
 
 
 def test_desktop_is_only_polled_for_auto_and_a_missed_flip_still_counts(monkeypatch):
@@ -61,6 +62,7 @@ def test_desktop_is_only_polled_for_auto_and_a_missed_flip_still_counts(monkeypa
         watch = appearance.AppearanceWatch(slave, reader=reader, active=lambda: state["auto"])
         task = asyncio.create_task(watch.run())
         await asyncio.sleep(0.1)
+        assert _drain(master).count(appearance.QUERY_BACKGROUND) == 1  # Startup.
         reads = state["reads"]
         state["desktop"] = "light"  # Flipped while the theme was pinned.
         await asyncio.sleep(0.1)
@@ -87,7 +89,10 @@ def test_paused_hands_the_terminal_over_without_reports(monkeypatch):
         with watch.paused():
             assert _drain(master) == appearance.DISABLE_REPORTS
             assert watch.suspended
-        assert _drain(master) == appearance.ENABLE_REPORTS
+            watch.refresh()  # Nothing reaches the other program.
+            assert _drain(master) == b""
+        # A switch during the handoff went unseen, so ask on the way back.
+        assert _drain(master) == appearance.ENABLE_REPORTS + appearance.QUERY_BACKGROUND
         assert watch.enabled and not watch.suspended
     finally:
         os.close(master)
@@ -115,6 +120,16 @@ def test_macos_reader_reads_a_value(monkeypatch):
     monkeypatch.delenv("SSH_TTY", raising=False)
     reader = appearance.desktop_reader()
     assert reader is not None and reader() in ("dark", "light")
+
+
+def test_theme_auto_asks_the_terminal_again():
+    app = PreviewApp(theme="dark", console=Console(file=StringIO()))
+    asked = []
+    app._appearance = type("Watch", (), {"refresh": lambda self: asked.append(1)})()
+    app.handle("/theme light")
+    assert asked == []
+    app.handle("/theme auto")
+    assert asked == [1]
 
 
 def test_reported_appearance_repaints_auto_only():

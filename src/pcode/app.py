@@ -1227,14 +1227,24 @@ class PreviewApp:
         self.transcript.syntax_gallery()
 
     def theme(self, argument: str) -> None:
-        self.transcript.theme = argument or (
-            "light" if self.transcript.resolved_theme == "dark" else "dark"
-        )
-        self.persist_defaults(theme=self.transcript.theme)
-        selected = self.transcript.theme
-        if selected == "auto":
-            selected += f" ({self.transcript.resolved_theme})"
-        self.transcript.flash(f"Theme: {selected}.")
+        """Pick and save a palette; bare `/theme` flips it for this session only.
+
+        Saving the flip would pin every later session to it, and with it turn
+        off following the terminal's light/dark switches.
+        """
+        theme = argument or ("light" if self.transcript.resolved_theme == "dark" else "dark")
+        self.transcript.theme = theme
+        if not argument:
+            message = f"{theme} for this session; /theme {theme} saves it"
+        else:
+            self.persist_defaults(theme=theme)
+            message = theme
+        if theme == "auto":
+            message += f" ({self.transcript.resolved_theme})"
+            if self._appearance is not None:
+                # The detected value may be stale; the answer repaints if it differs.
+                self._appearance.refresh()
+        self.transcript.flash(f"Theme: {message}.")
         self.transcript.regenerate()
 
     def follow_appearance(self, detected: str) -> None:

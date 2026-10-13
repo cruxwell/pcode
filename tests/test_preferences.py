@@ -126,12 +126,17 @@ def test_theme_persists_and_restores_completion_palette(theme):
     assert load_preferences()["theme"] == theme
 
 
-def test_theme_toggle_persists_and_invalid_selection_does_not_change_default():
+def test_theme_toggle_is_session_only_and_invalid_selection_does_not_change_default():
+    save_preferences(theme="auto")
     app = PreviewApp(theme="dark", console=Console(file=StringIO()))
     app.handle("/theme")
-    assert load_preferences()["theme"] == "light"
+    assert app.transcript.theme == "light"
+    # A quick flip must not pin later sessions and stop them following the terminal.
+    assert load_preferences()["theme"] == "auto"
+    assert "light for this session; /theme light saves it" in app.transcript.console.file.getvalue()
     app.handle("/theme invalid")
-    assert load_preferences()["theme"] == "light"
+    assert app.transcript.theme == "light"
+    assert load_preferences()["theme"] == "auto"
 
 
 @pytest.mark.parametrize("arguments, expected", [([], "light"), (["--theme", "dark"], "dark")])

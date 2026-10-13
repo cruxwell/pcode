@@ -144,10 +144,12 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
 - `/skill:NAME [text]`: run a discovered skill; see
   [Skills as slash commands](workspace.md#skills-as-slash-commands).
 - `/theme light`, `/theme dark`, `/theme auto`: change the input and future output
-  palette; bare `/theme` toggles. Auto (the built-in default) detects the terminal
-  background at startup, falling back to `COLORFGBG`, then dark (including for
-  redirected output). A saved theme takes precedence. Auto also follows the terminal
-  when it switches between light and dark while pcode runs: immediately in terminals
+  palette and save it as the default; bare `/theme` toggles for this session only.
+  Auto (the built-in default) detects the terminal background at startup, falling
+  back to `COLORFGBG`, then dark (including for redirected output), and asks the
+  terminal again once the editor is up and on `/theme auto`. A saved theme takes
+  precedence. Auto also follows the terminal when it switches between light and
+  dark while pcode runs: immediately in terminals
   that announce the change (Ghostty, kitty, iTerm2 3.6.6+, foot, GNOME Terminal and
   other VTE 0.82+ terminals, Contour, and tmux 3.6+ passing it on), and within a couple of
   seconds of the system appearance changing on macOS or GNOME, for any terminal that

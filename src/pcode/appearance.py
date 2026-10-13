@@ -144,6 +144,13 @@ class AppearanceWatch:
             self.suspended = False
             if enabled:
                 self.enabled = _write_all(self.fd, ENABLE_REPORTS)
+                # A switch while the other program had the terminal went unseen.
+                self.refresh()
+
+    def refresh(self) -> None:
+        """Ask for the background now; the answer arrives as input like any other."""
+        if self.enabled and not self.suspended:
+            _write_all(self.fd, QUERY_BACKGROUND)
 
     async def query(self) -> None:
         for delay in QUERY_DELAYS:
@@ -155,6 +162,9 @@ class AppearanceWatch:
         if self.fd is None or not _isatty(self.fd) or os.environ.get("TERM") == "dumb":
             return
         self.enabled = _write_all(self.fd, ENABLE_REPORTS)
+        # The startup probe is skipped when input is already waiting, leaving a
+        # guess from COLORFGBG that only a later switch would otherwise correct.
+        self.refresh()
         reader = self.reader if self.reader is not None else desktop_reader()
         pending = None
         try:
