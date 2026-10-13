@@ -1,8 +1,8 @@
 class Pcode < Formula
   desc "Terminal-native AI coding agent built for long-running and parallel work"
   homepage "https://github.com/cruxwell/pcode"
-  url "https://github.com/cruxwell/pcode/releases/download/v0.1.6/pcode-0.1.6-src.tar.gz"
-  sha256 "6827ed6ef7cfa2a22d52a073e3d2807394a11b56cce7b2cdb8adfedddf326639"
+  url "https://github.com/cruxwell/pcode/releases/download/v0.1.7/pcode-0.1.7-src.tar.gz"
+  sha256 "50dd607dbe67118e964c7e03a6005cac89412ca56c8eab0d4fdd49cf1b9cff47"
   head "https://github.com/cruxwell/pcode.git", branch: "master"
 
   # Prebuilt extension modules (jiter's, for one) carry @rpath dylib IDs with no
