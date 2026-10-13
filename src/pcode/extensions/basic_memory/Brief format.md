@@ -52,6 +52,8 @@ A **brief** explains one project as it is now: what it is, where it's at, how it
 | `plans` | links to open plans | | |
 | `sources` | session IDs, plus code paths or commit ranges | same | |
 
+Properties are YAML, and one bad value breaks the whole block: Obsidian then shows it as raw red text instead of properties. Wrap every free-text value (`scope`, `tldr`, `next` and each `sources` item) in single quotes, doubling any `'` inside: `tldr: 'Checks the org''s code: once per ticket'`. Unquoted, a `: ` anywhere or a leading `` ` ``, `#`, `*`, `[`, `{`, `&`, `!`, `|`, `>`, `%` or `@` breaks it.
+
 ## Sections
 
 | Section | Answers | Budget |
