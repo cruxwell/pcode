@@ -196,19 +196,21 @@ function insertCallout(editor: Editor, callout: string) {
 	editor.setCursor(cursor);
 }
 
+// Field names here must not shadow Obsidian's own: Modal has a `selection`
+// property, and reusing it broke the dialog before it drew its text field.
 class QuestionModal extends Modal {
 	constructor(
 		app: App,
-		private selection: string,
-		private onSubmit: (question: string) => void,
+		private quoted: string,
+		private submitQuestion: (question: string) => void,
 	) {
 		super(app);
 	}
 
 	onOpen() {
 		this.titleEl.setText("Ask pcode");
-		if (this.selection.trim()) {
-			this.contentEl.createEl("blockquote", { cls: "pcode-quote", text: this.selection.trim().slice(0, 600) });
+		if (this.quoted.trim()) {
+			this.contentEl.createEl("blockquote", { cls: "pcode-quote", text: this.quoted.trim().slice(0, 600) });
 		}
 		const input = this.contentEl.createEl("textarea", {
 			cls: "pcode-question",
@@ -218,7 +220,7 @@ class QuestionModal extends Modal {
 			const question = input.value.trim();
 			if (!question) return;
 			this.close();
-			this.onSubmit(question);
+			this.submitQuestion(question);
 		};
 		input.addEventListener("keydown", (event) => {
 			if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -238,8 +240,8 @@ class QuestionModal extends Modal {
 class HostModal extends SuggestModal<Host> {
 	constructor(
 		app: App,
-		private hosts: Host[],
-		private onChoose: (host: Host) => void,
+		private choices: Host[],
+		private pick: (host: Host) => void,
 	) {
 		super(app);
 		this.setPlaceholder("Choose the pcode session for this note");
@@ -247,7 +249,7 @@ class HostModal extends SuggestModal<Host> {
 
 	getSuggestions(query: string): Host[] {
 		const wanted = query.toLowerCase();
-		return this.hosts.filter((host) =>
+		return this.choices.filter((host) =>
 			[host.id, host.session_id, host.title, host.workspace].some((field) => (field ?? "").toLowerCase().includes(wanted)),
 		);
 	}
@@ -258,7 +260,7 @@ class HostModal extends SuggestModal<Host> {
 	}
 
 	onChooseSuggestion(host: Host) {
-		this.onChoose(host);
+		this.pick(host);
 	}
 }
 
