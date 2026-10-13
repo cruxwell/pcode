@@ -61,6 +61,7 @@ def prompt_key_bindings(
             ("Shift+Enter", "Newline"),
             ("Ctrl+J", "Newline"),
             ("Tab", "Complete"),
+            *([] if shortcuts.leader else [("Ctrl+L", "Accept completion / suggestion")]),
             ("↑ / ↓", "Move / history"),
             ("Ctrl+C", "Interrupt" if activity.busy else "Clear input"),
             *([] if activity.busy else [("Ctrl+D", "Exit (empty prompt)")]),
@@ -88,6 +89,10 @@ def _add_shortcuts(shortcuts: PrefixKeys, activity, transcript, callbacks: Promp
 
     @shortcuts.add("l", "Select model", filter=on_model is not None)
     def choose_model(event: KeyPressEvent) -> None:
+        # The Ctrl+L chord (not a leader's plain `l`) first takes whatever the
+        # editor is offering, as Tab and → do; it picks a model otherwise.
+        if event.key_sequence[-1].key == Keys.ControlL and _accept_offer(event.current_buffer):
+            return
         on_model()
 
     effort = "Thinking effort up / down"
@@ -167,6 +172,26 @@ def _add_shortcuts(shortcuts: PrefixKeys, activity, transcript, callbacks: Promp
         copied, truncated = copy_to_clipboard(text, event.app.output)
         limit = " (truncated)" if truncated else ""
         transcript.flash(f"Copied prompt{limit}" if copied else "Could not copy prompt")
+
+
+def _accept_offer(buffer: Buffer) -> bool:
+    """Take the completion menu's selection (or first entry), else the ghost text.
+
+    False when the editor offers neither.
+    """
+    state = buffer.complete_state
+    if state is not None and state.completions:
+        if state.current_completion is None:
+            buffer.apply_completion(state.completions[0])
+        else:
+            # Moving through the menu already inserted it; just close the menu.
+            buffer.complete_state = None
+        return True
+    suggestion = buffer.suggestion
+    if suggestion is not None and suggestion.text and buffer.document.is_cursor_at_the_end:
+        buffer.insert_text(suggestion.text)
+        return True
+    return False
 
 
 def _down_would_idle() -> bool:
