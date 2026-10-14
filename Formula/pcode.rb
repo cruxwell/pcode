@@ -12,7 +12,7 @@ class Pcode < Formula
 
   depends_on "uv" => :build
   depends_on "git-delta"
-  depends_on "python@3.14"
+  depends_on "python@3.15"
   depends_on "shfmt"
 
   # The sandbox extension's shell sandbox on Linux (macOS ships sandbox-exec).
@@ -32,7 +32,7 @@ class Pcode < Formula
     ENV["UV_PROJECT_ENVIRONMENT"] = libexec/".venv"
     ENV["UV_LINK_MODE"] = "copy"
     system "uv", "sync", "--directory", libexec, "--locked", "--no-dev", "--extra", "claude",
-                 "--no-editable", "--no-cache", "--python", formula_opt_bin("python@3.14")/"python3.14"
+                 "--no-editable", "--no-cache", "--python", formula_opt_bin("python@3.15")/"python3.15"
     bin.install_symlink libexec/".venv/bin/pcode"
     generate_completions_from_executable(bin/"pcode", "--completions")
   end
