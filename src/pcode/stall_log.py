@@ -170,6 +170,10 @@ class StallWatch:
 
     def _watch(self) -> None:
         stalled = None  # When the beat being sampled fell due (or the resume, if later).
+        # The clock reading behind the latest sample: a stop can land in the rest
+        # of that poll, after the resume marker was read, and is then noticed
+        # only on the next poll, whose start is already past it.
+        sampled = None
         samples: Counter[tuple[str, ...]] = Counter()
         context: dict = {}
         settled = None  # The late beat last accounted for.
@@ -194,7 +198,7 @@ class StallWatch:
                 # blame that callback for the pause. A stall already under way
                 # is written as far as it got.
                 if samples:
-                    self._write(waited[0] - stalled, samples, context, mark, ended=waited[0])
+                    self._write(sampled - stalled, samples, context, mark, ended=sampled)
                 # The handler's reading is the resume itself; `now` can be well
                 # after it when the resumed loop holds the GIL.
                 resumed = max(resumed, continued) if signalled else now
@@ -222,6 +226,7 @@ class StallWatch:
                         stack.append(_where(frame))
                         frame = frame.f_back
                     samples[tuple(stack)] += 1
+                    sampled = now
             # Hold the mark while overdue: the first poll after a GIL-held stall
             # can run before the heartbeat does, with the loop already idle.
             if stalled is None and not overdue:
@@ -233,7 +238,7 @@ class StallWatch:
             suspended = self._continued != seen or _suspended(
                 waited, (now, time.process_time()), self.threshold
             )
-            ended = waited[0] if suspended else now
+            ended = sampled if suspended else now
             self._write(ended - stalled, samples, context, mark, ended=ended)
 
     def _context(self) -> dict:

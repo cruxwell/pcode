@@ -262,6 +262,44 @@ def test_a_resume_the_watcher_wakes_late_for_is_still_a_suspension(scripted_watc
     assert [before["stall_ms"], after["stall_ms"]] == [300, 1000]
 
 
+def test_a_stop_landing_while_the_watcher_samples_is_not_part_of_the_stall(scripted_watch):
+    """The stop can land mid-poll, after the watcher read the clock and the resume
+    marker: it only sees the SIGCONT on its next poll, whose start is already past
+    the stop, so the stall must end at the last sample taken before it."""
+    driver = scripted_watch
+    watch = driver.watch
+    watch._due = driver.wall
+    stop_while_sampling = False
+
+    def current_frames():
+        nonlocal stop_while_sampling
+        if stop_while_sampling:
+            stop_while_sampling = False
+            driver.advance(0.6)  # Stopped: no CPU at all.
+            watch._sigcont(signal.SIGCONT, None)
+        return {123: driver.frame}
+
+    driver.monkeypatch.setattr(stall_log, "sys", SimpleNamespace(_current_frames=current_frames))
+
+    def spinning_poll():
+        driver.advance(0.02, cpu=0.02)
+
+    def poll_then_stop():
+        nonlocal stop_while_sampling
+        spinning_poll()
+        stop_while_sampling = True
+
+    def heartbeat():
+        watch._late = (watch._due, driver.wall - watch._due)
+        watch._due = driver.wall + stall_log.BEAT
+        driver.advance(0.02)
+
+    before, after = driver.run(
+        *([spinning_poll] * 15), poll_then_stop, *([spinning_poll] * 40), heartbeat
+    )
+    assert [before["stall_ms"], after["stall_ms"]] == [320, 800]
+
+
 def test_sigcont_handler_chains_to_the_previous_one_until_stopped(tmp_path):
     original = signal.getsignal(signal.SIGCONT)
     seen = []
