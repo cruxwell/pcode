@@ -2869,43 +2869,27 @@ class PromptLayout:
         # Corners, stub, a space either side, and at least one rule cell.
         return fit_fragments(self.session_label(), self.size().columns - TITLE_CHROME - 1)
 
-    def frame_shaded(self) -> bool:
-        """Whether the boxes are drawn as shades rather than lines (`frame_style`)."""
-        return (
-            self.activity.frame_style == "shaded"
-            and self.transcript is not None
-            and self.transcript.frame_shades() is not None
-        )
-
     def editor_frame(self) -> Frame:
         session = self.session
         editor_frame = Frame(
             self.editor, title=self.idle_title, height=self.frame_height, style="class:shaded"
         )
-
         # Replace only the bottom border: the badge must not add a row or alter CPR sizing.
-        def closing_row() -> VSplit:
-            return VSplit(
-                [
-                    Window(char="└", width=1, style="class:frame.border"),
-                    Window(char="─", style="class:frame.border"),
-                    ConditionalContainer(
-                        Label(
-                            lambda: editor_mode_badge(session.app),
-                            dont_extend_width=True,
-                        ),
-                        filter=Condition(lambda: session.app.editing_mode == EditingMode.VI),
+        editor_frame.container.children[-1] = VSplit(
+            [
+                Window(char="└", width=1, style="class:frame.border"),
+                Window(char="─", style="class:frame.border"),
+                ConditionalContainer(
+                    Label(
+                        lambda: editor_mode_badge(session.app),
+                        dont_extend_width=True,
                     ),
-                    Window(FormattedTextControl("─┘"), width=2, style="class:frame.border"),
-                ],
-                height=1,
-            )
-
-        # Shaded, the closing row moves up under the header: a blank row there
-        # sets the text off the darker title bar, and the prompt sits on the
-        # box's last row, right above the toolbar. Same rows, so no height moves.
-        shaded = Condition(self.frame_shaded)
-        editor_frame.container.children[-1] = ConditionalContainer(closing_row(), filter=~shaded)
+                    filter=Condition(lambda: session.app.editing_mode == EditingMode.VI),
+                ),
+                Window(FormattedTextControl("─┘"), width=2, style="class:frame.border"),
+            ],
+            height=1,
+        )
         # The top border carries the running status, else the attached tasks'
         # heading. Attached tasks sit under it, and a divider separates them
         # from the text; frame_height counts both.
@@ -2921,7 +2905,6 @@ class PromptLayout:
                     HSplit([plain_top], style="class:frame.header"),
                     filter=~attached & ~status,
                 ),
-                ConditionalContainer(closing_row(), filter=shaded),
                 ConditionalContainer(
                     HSplit(
                         [
