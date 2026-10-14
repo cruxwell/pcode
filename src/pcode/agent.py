@@ -47,7 +47,6 @@ from pcode.llm_proxy import ProxiedCodexProvider
 from pcode.mcp import configured_servers
 from pcode.mcp_notice import MCPServers
 from pcode.meridian import MeridianSessionIdentity
-from pcode.meridian_reminders import MeridianLimitWarnings
 from pcode.output_limits import ModelOutputLimits
 from pcode.planning import IdentifiedPlanning
 from pcode.preferences import SETTINGS, load_preferences, subagent_models
@@ -375,8 +374,6 @@ def create_coder(
         # bypass it (see `JobShell`), so it needs none of the host's environment.
         LocalWorkspace(workspace),
         *capabilities,
-        # Coder dropped its near-limit warning in Harness 0.56; pcode keeps it.
-        MeridianLimitWarnings(max_context_fraction=0.9),
         # Isolated workers build their own coder, so each CLI runs in its checkout.
         ClaudeWorkspace(workspace),
         IdentifiedPlanning(),

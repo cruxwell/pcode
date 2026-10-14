@@ -212,7 +212,7 @@ writes it to the cache again.
 - Anthropic server tools are not available. Claude Code's own WebSearch and
   WebFetch take the place of web search and fetch (see
   [web search](tools.md#web-search)); there is no code execution.
-- Text pcode adds beside tool results (steering, plan reminders, limit warnings)
+- Text pcode adds beside tool results (steering, plan reminders)
   reaches the model as a message the user sent while it was working.
 - Thinking is shown in summarized form.
 

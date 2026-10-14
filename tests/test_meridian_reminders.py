@@ -14,18 +14,15 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai_harness.planning import InMemoryPlanStore, PlanItem
 
 from pcode.cache_settings import ANTHROPIC_CACHE_SETTINGS
-from pcode.meridian_reminders import MeridianLimitWarnings
 from pcode.planning import IdentifiedPlanning
 
 
 @pytest.mark.parametrize("provider_name", ["meridian", "anthropic"])
-@pytest.mark.parametrize("plan,warning", [(True, False), (False, True), (True, True)])
-def test_wire_prefix_tools_plan_changes_and_saved_resume(plan, warning, provider_name):
+def test_wire_prefix_tools_plan_changes_and_saved_resume(provider_name):
     async def run():
         bodies = []
         store = InMemoryPlanStore()
-        if plan:
-            await store.set_items([PlanItem(id="first", content="First task")])
+        await store.set_items([PlanItem(id="first", content="First task")])
 
         def handle(request):
             body = json.loads(request.content)
@@ -63,12 +60,9 @@ def test_wire_prefix_tools_plan_changes_and_saved_resume(plan, warning, provider
             )
 
             def make_agent():
-                caps = [IdentifiedPlanning(store=store)]
-                if warning:
-                    caps.insert(0, MeridianLimitWarnings(max_context_tokens=1))
                 return Agent(
                     model,
-                    capabilities=caps,
+                    capabilities=[IdentifiedPlanning(store=store)],
                     model_settings=ANTHROPIC_CACHE_SETTINGS
                     if provider_name == "anthropic"
                     else None,
@@ -81,9 +75,9 @@ def test_wire_prefix_tools_plan_changes_and_saved_resume(plan, warning, provider
             async def probe() -> str:
                 nonlocal calls
                 calls += 1
-                if plan and calls == 1:
+                if calls == 1:
                     await store.set_items([PlanItem(id="second", content="Changed task")])
-                if plan and calls == 2:
+                if calls == 2:
                     await store.set_items([])
                 return "result"
 
@@ -100,110 +94,11 @@ def test_wire_prefix_tools_plan_changes_and_saved_resume(plan, warning, provider
 
         assert len(bodies) == 5
         assert "<plan-reminder>" not in json.dumps(bodies)
-        if provider_name == "anthropic" and warning:
-            # Limit-warning behavior is unchanged in this planning-only fix;
-            # direct Anthropic still uses upstream ephemeral limit warnings.
-            assert bodies[1]["messages"][: len(bodies[0]["messages"])] != bodies[0]["messages"]
-            return
         if provider_name == "anthropic":
             assert all(
                 body["cache_control"] == {"type": "ephemeral", "ttl": "5m"} for body in bodies
             )
         for before, after in zip(bodies, bodies[1:]):
             assert after["messages"][: len(before["messages"])] == before["messages"]
-        text = json.dumps(bodies[-1]["messages"])
-        if warning:
-            assert "[WarnNearLimits]" in text
 
     asyncio.run(run())
-
-
-def test_warning_deduplicates_deciles_and_preserves_old_messages():
-    from types import SimpleNamespace
-
-    from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart
-    from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
-    from pydantic_ai.usage import RunUsage
-
-    async def run():
-        capability = MeridianLimitWarnings(max_iterations=100)
-        context = ModelRequestContext(
-            model=SimpleNamespace(system="meridian"),
-            messages=[ModelRequest(parts=[UserPromptPart(content="start")])],
-            model_settings=None,
-            model_request_parameters=ModelRequestParameters(),
-        )
-        ctx = SimpleNamespace(
-            usage=RunUsage(requests=70), messages=[], run_id=None, conversation_id=None
-        )
-        await capability.before_model_request(ctx, context)
-        initial = ModelMessagesTypeAdapter.dump_json(context.messages)
-        await capability.before_model_request(ctx, context)
-        assert ModelMessagesTypeAdapter.dump_json(context.messages) == initial
-        ctx.usage.requests = 71
-        await capability.before_model_request(ctx, context)
-        assert ModelMessagesTypeAdapter.dump_json(context.messages) == initial
-        ctx.usage.requests = 80
-        await capability.before_model_request(ctx, context)
-        assert len(context.messages) == 3
-        assert ModelMessagesTypeAdapter.dump_json(context.messages[:2]) == initial
-        # Each reminder joins the run's history too, not only the request.
-        assert ctx.messages == context.messages[1:]
-        # A suspended provider response must not get another user message.
-        context.messages.append(ModelResponse(parts=[], state="suspended"))
-        ctx.usage.requests = 99
-        await capability.before_model_request(ctx, context)
-        assert isinstance(context.messages[-1], ModelResponse)
-
-    asyncio.run(run())
-
-
-def test_context_warning_uses_pcode_window_not_harness_fallback(monkeypatch):
-    """A 1M Meridian session at ~162k was told 90% of 180k (0.9 of Harness's 200k)."""
-    import time
-    from types import SimpleNamespace
-
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-    from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
-    from pydantic_ai.usage import RunUsage
-
-    from pcode import model_metadata
-    from pcode.meridian import meridian_model
-
-    monkeypatch.setenv("PCODE_MERIDIAN_ENDPOINT", "http://localhost:1/v1")
-    model = meridian_model("meridian:claude-opus-5-5")
-
-    def warning(limits):
-        model_metadata.catalog.state(model).limits = limits
-        context = ModelRequestContext(
-            model=model,
-            # ~162k tokens by Harness's four-characters-per-token estimate.
-            messages=[ModelRequest(parts=[UserPromptPart(content="word " * 130_000)])],
-            model_settings=None,
-            model_request_parameters=ModelRequestParameters(),
-        )
-        capability = MeridianLimitWarnings(max_context_fraction=0.9)
-        ctx = SimpleNamespace(usage=RunUsage(), messages=[], run_id=None, conversation_id=None)
-        asyncio.run(capability.before_model_request(ctx, context))
-        return context.messages[-1].parts[0].content if len(context.messages) > 1 else None
-
-    meridian = model_metadata.ModelLimits(
-        context=1_000_000, source="meridian", fetched_at=time.time()
-    )
-    assert warning(meridian) is None
-    # Without pcode metadata, Harness's own fallback still applies.
-    assert "/180000 tokens used" in warning(None)
-    # An explicit working window is honored too, as in the footer and compaction.
-    monkeypatch.setenv("PCODE_CONTEXT_WINDOW", "150000")
-    assert "/135000 tokens used" in warning(None)
-
-
-def test_coder_installs_meridian_aware_warning(tmp_path):
-    from pydantic_ai_harness.compaction import WarnNearLimits
-
-    from pcode.agent import create_coder
-
-    warnings = [c for c in create_coder(tmp_path).capabilities if isinstance(c, WarnNearLimits)]
-    assert len(warnings) == 1
-    assert isinstance(warnings[0], MeridianLimitWarnings)
-    assert warnings[0].max_context_fraction == 0.9

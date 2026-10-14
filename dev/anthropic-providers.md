@@ -115,7 +115,7 @@ pcode now moves to a new Meridian session after compacting to avoid this;
 A diverged request is a one-time cost rather than a broken cache, since the
 replayed session caches normally afterwards. For a 100k-token history the replay
 writes those tokens at 1.25 times the input price instead of reading them at 0.1
-times. This is why pcode keeps plan reminders and limit warnings append-only on
+times. This is why pcode keeps plan and MCP reminders append-only on
 Meridian (see [dependencies](dependencies.md#anthropic-prompt-caching)).
 
 ## Measurements
