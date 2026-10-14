@@ -17,12 +17,27 @@ _BACKGROUND = re.compile(
 )
 
 
+# The last background the terminal reported, as `#rrggbb`; None until one does.
+# Shaded frames mix their surfaces from it, so they suit any theme.
+_background: str | None = None
+
+
+def terminal_background() -> str | None:
+    """The terminal's reported background as `#rrggbb`, or None if never reported."""
+    return _background
+
+
 def background_theme(response: bytes) -> str | None:
-    """Classify an OSC 11 RGB response (components may use 1–4 hex digits)."""
+    """Classify an OSC 11 RGB response (components may use 1–4 hex digits).
+
+    Also records the color for `terminal_background`.
+    """
+    global _background
     match = _BACKGROUND.search(response)
     if match is None:
         return None
     rgb = [int(value, 16) / (16 ** len(value) - 1) for value in match.groups()]
+    _background = "#" + "".join(f"{round(value * 255):02x}" for value in rgb)
     # Perceived brightness, rather than the unweighted RGB average.
     brightness = sum(value * weight for value, weight in zip(rgb, (0.299, 0.587, 0.114)))
     return "light" if brightness >= 0.5 else "dark"

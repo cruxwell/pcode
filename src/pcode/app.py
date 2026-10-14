@@ -155,6 +155,7 @@ class PreviewApp:
             attach_tasks=load_preferences().get("attach_tasks", SETTINGS["attach_tasks"].default)
             == "on",
             task_style=load_preferences().get("task_style", SETTINGS["task_style"].default),
+            frame_style=load_preferences().get("frame_style", SETTINGS["frame_style"].default),
             tool_glyphs=load_preferences().get("tool_glyphs", SETTINGS["tool_glyphs"].default),
             tool_max_rows=tool_rows_preference(),
             tool_linger_seconds=preference_count("tool_linger_seconds"),
@@ -769,6 +770,7 @@ class PreviewApp:
         self.activity.tasks_min_rows = preference_count("tasks_min_rows")
         self.activity.tasks_min_columns = preference_count("tasks_min_columns")
         self.activity.task_style = preferences.get("task_style", SETTINGS["task_style"].default)
+        self.activity.frame_style = preferences.get("frame_style", SETTINGS["frame_style"].default)
         self.activity.tool_glyphs = preferences.get("tool_glyphs", SETTINGS["tool_glyphs"].default)
         self.activity.tool_max_rows = tool_rows_preference()
         self.activity.tool_linger_seconds = preference_count("tool_linger_seconds")
@@ -2342,7 +2344,9 @@ class PreviewApp:
         self.output = output
         self.prompt_session = session
         session.app.style = DynamicStyle(
-            lambda: self.transcript.prompt_style(self.activity.task_style)
+            lambda: self.transcript.prompt_style(
+                self.activity.task_style, self.activity.frame_style
+            )
         )
         try:
             terminal = session.app.output.fileno()

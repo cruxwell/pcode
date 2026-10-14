@@ -145,10 +145,13 @@ def last_progress(log: Path) -> tuple[int, int | None] | None:
 
 
 class Pane:
-    def __init__(self, env: dict, root: Path):
+    def __init__(self, env: dict, root: Path, background: str | None = None):
         self.server = "pcode-shots-" + uuid.uuid4().hex[:8]
         conf = root / "tmux.conf"
-        conf.write_text(TMUX_CONF)
+        # A detached server has no terminal to ask, so it answers pcode's
+        # background query (OSC 11) only from a pane style that names one.
+        style = f"set -g window-style bg={background}\n" if background else ""
+        conf.write_text(TMUX_CONF + style)
         self.base = ["tmux", "-L", self.server, "-f", str(conf)]
         self.env = env
         # Everything pcode writes, escape sequences tmux keeps to itself included.
@@ -317,7 +320,13 @@ def setup(iterm: bool) -> tuple[Look, dict]:
 
 
 @contextlib.contextmanager
-def session(command: list[str], root: Path, size: tuple[int, int], preferences: dict):
+def session(
+    command: list[str],
+    root: Path,
+    size: tuple[int, int],
+    preferences: dict,
+    background: str | None = None,
+):
     """Run `command` (a scene) in a fresh tmux server, inside a new demo repo
     under `root`; yield its `Pane` once pcode's prompt is up.
     """
@@ -347,7 +356,7 @@ def session(command: list[str], root: Path, size: tuple[int, int], preferences: 
         }
         env.pop("TMUX", None)
         env.pop("PROMPT_TOOLKIT_NO_CPR", None)
-        pane = Pane(env, root)
+        pane = Pane(env, root, background)
         try:
             pane("new-session", "-d", "-s", "shot", "-x", str(width), "-y", str(height),
                  "-c", str(repo), shlex.join(command))  # fmt: skip
@@ -397,7 +406,8 @@ def play(
         if tab not in tabs:
             raise SystemExit(f"--live {name} plays one tab: --tab {' or '.join(tabs)}")
         root, steps, command = DEMO_ROOT / tab, tabs[tab].steps, [*command, tab]
-    with session(command, root, (width, height), preferences) as pane:
+    background = look.theme.background_color.hex if look.theme else None
+    with session(command, root, (width, height), preferences, background) as pane:
         if not live:
             return play_steps(pane, steps, out, width, text=text, look=look, live=False)
         failure = []

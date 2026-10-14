@@ -31,6 +31,7 @@ from prompt_toolkit.layout.containers import VerticalAlign
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.output import Output, create_output
+from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.renderer import Renderer
 from prompt_toolkit.styles import Style
 from prompt_toolkit.utils import get_cwidth
@@ -78,7 +79,7 @@ from pcode.shell_mode import SHELL_PREFIX
 from pcode.syntax_colors import derive_colors
 from pcode.task_prompt import TaskPrompt
 from pcode.terminal_text import safe_text
-from pcode.theme import detect_theme
+from pcode.theme import detect_theme, terminal_background
 from pcode.theme_gallery import SyntaxGallery
 from pcode.thinking_markdown import ThinkingMarkdown
 from pcode.tool_display import (
@@ -117,6 +118,53 @@ ICON_TASK_STYLES = {
     "plan.cancelled": "nodim nobold fg:default strike",
     "plan.blocked": "nodim nobold fg:default",
 }
+
+
+def _mix(color: str, toward: str, amount: float) -> str:
+    """`color` moved `amount` (0 to 1) of the way to `toward`; both `#rrggbb`."""
+    start = [int(color[i : i + 2], 16) for i in (1, 3, 5)]
+    end = [int(toward[i : i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(
+        f"{round(a + (b - a) * amount):02x}" for a, b in zip(start, end, strict=True)
+    )
+
+
+@dataclass(frozen=True)
+class FrameShades:
+    """`frame_style shaded`: the editor and task boxes as surfaces, not outlines.
+
+    `body` fills the box and `header` its top row (the status or title bar).
+    Border glyphs keep their cells but take their surface's color, so the
+    geometry, and every height sum built on it, is the same in both styles.
+    """
+
+    body: str
+    header: str
+
+    def styles(self) -> dict[str, str]:
+        # Later rules win, and a rule naming more classes wins over fewer:
+        # the header's border cells match both border rules.
+        return {
+            "shaded": f"bg:{self.body}",
+            # nodim: the terminal palette mutes borders with dim, which would
+            # leave a faint line in the surface's own color.
+            "shaded frame.border": f"nodim fg:{self.body}",
+            "shaded frame.header": f"bg:{self.header}",
+            "shaded frame.header frame.border": f"nodim fg:{self.header}",
+        }
+
+
+@cache
+def frame_shades(background: str, theme: str) -> FrameShades:
+    """Shades lifted off `background` toward the theme's contrast.
+
+    Mixed from the terminal's actual background rather than fixed, so the box
+    reads as a gentle step up on any scheme. Light backgrounds need a smaller
+    step: the eye picks out darkening sooner than lightening.
+    """
+    if theme == "light":
+        return FrameShades(_mix(background, "#000000", 0.045), _mix(background, "#000000", 0.09))
+    return FrameShades(_mix(background, "#ffffff", 0.06), _mix(background, "#ffffff", 0.11))
 
 
 @dataclass(frozen=True)
@@ -169,7 +217,12 @@ class Palette:
         )
 
     @cache
-    def prompt_style(self, menu: "Palette | None" = None, task_style: str = "status") -> Style:
+    def prompt_style(
+        self,
+        menu: "Palette | None" = None,
+        task_style: str = "status",
+        shades: "FrameShades | None" = None,
+    ) -> Style:
         # Palette is immutable. Reuse the Style so DynamicStyle's identity-based
         # invalidation hash changes only with the palette, not on every redraw.
         # `menu` colors the completion popup, which follows the selected syntax
@@ -327,6 +380,7 @@ class Palette:
                 "reference": f"{self.task_heading} underline",
                 "auto-suggestion": self.muted,
                 **(ICON_TASK_STYLES if task_style == "icons" else {}),
+                **(shades.styles() if shades is not None else {}),
             }
         )
 
@@ -770,6 +824,9 @@ class Activity:
     # The `task_style` setting: `status` shades task text by status, `icons`
     # gives it one weight, colours only the icon, and pads rows off the frame.
     task_style: str = "status"
+    # The `frame_style` setting: `borders` draws box lines, `shaded` paints the
+    # boxes in shades of the terminal's background instead (see `frame_shades`).
+    frame_style: str = "borders"
     # The `tool_glyphs` setting: `auto`, `on` or `off` (see `tool_glyphs_on`).
     tool_glyphs: str = "auto"
     # The `tool_max_lines` setting: the most tool rows above the status row.
@@ -2151,6 +2208,20 @@ def _completes_while_typing() -> bool:
     )
 
 
+def terminal_color_depth() -> ColorDepth | None:
+    """True color when the terminal advertises it, else prompt_toolkit's choice.
+
+    prompt_toolkit only reads `PROMPT_TOOLKIT_COLOR_DEPTH` and otherwise
+    settles on 256 colors, rounding every palette hex to the nearest of them:
+    a shade a few percent off the background becomes a visible blotch.
+    """
+    if os.environ.get("PROMPT_TOOLKIT_COLOR_DEPTH"):
+        return None
+    if os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit"):
+        return ColorDepth.TRUE_COLOR
+    return None
+
+
 def _fit_editor(session: PromptSession) -> Window:
     """The session's editor window, sized to its content and without search."""
     # Retain PromptSession's editor/processors, but give its frame a content-sized
@@ -2619,7 +2690,11 @@ class PromptLayout:
                 ("class:frame.border", f" {'─' * max(0, columns - used - 2)}┐"),
             ]
 
-        return Window(FormattedTextControl(fragments, show_cursor=False), height=1)
+        return Window(
+            FormattedTextControl(fragments, show_cursor=False),
+            height=1,
+            style="class:frame.header",
+        )
 
     def plan_heading(self):
         """The task heading, without permanent shortcut instructions."""
@@ -2655,6 +2730,7 @@ class PromptLayout:
                 Window(char="┐", width=1, style="class:frame.border"),
             ],
             height=1,
+            style="class:frame.header",
         )
 
     def commands_block(self) -> ConditionalContainer:
@@ -2703,7 +2779,9 @@ class PromptLayout:
         thought = self.panel_rows(self.thought_rows)
         # Between the thought and the status row: why, what, then how it is going.
         tool = self.panel_rows(self.tool_rows)
-        plan_frame = Frame(self.plan_body(), height=lambda: len(self.plan_rows()) + 2)
+        plan_frame = Frame(
+            self.plan_body(), height=lambda: len(self.plan_rows()) + 2, style="class:shaded"
+        )
         plan_frame.container.children[0] = self.plan_heading_border()
         plan = ConditionalContainer(
             plan_frame,
@@ -2791,7 +2869,9 @@ class PromptLayout:
 
     def editor_frame(self) -> Frame:
         session = self.session
-        editor_frame = Frame(self.editor, title=self.idle_title, height=self.frame_height)
+        editor_frame = Frame(
+            self.editor, title=self.idle_title, height=self.frame_height, style="class:shaded"
+        )
         # Replace only the bottom border: the badge must not add a row or alter CPR sizing.
         editor_frame.container.children[-1] = VSplit(
             [
@@ -2819,7 +2899,10 @@ class PromptLayout:
             [
                 ConditionalContainer(self.status_border(), filter=status),
                 ConditionalContainer(self.plan_heading_border(), filter=attached & ~status),
-                ConditionalContainer(plain_top, filter=~attached & ~status),
+                ConditionalContainer(
+                    HSplit([plain_top], style="class:frame.header"),
+                    filter=~attached & ~status,
+                ),
                 ConditionalContainer(
                     HSplit(
                         [
@@ -2979,6 +3062,7 @@ def create_prompt(
         activity, transcript, callbacks, key_prefix, lambda: session.default_buffer
     )
 
+    kwargs.setdefault("color_depth", terminal_color_depth())
     output = kwargs.pop("output", None)
     if not isinstance(output, CursorSafeOutput):
         output = CursorSafeOutput(output if output is not None else create_output())
@@ -3407,9 +3491,26 @@ class Transcript:
         style = self.syntax_themes[self.resolved_theme]
         return syntax_palette(style, self.palette, self.palette.surface)
 
-    def prompt_style(self, task_style: str = "status") -> Style:
-        """The prompt_toolkit style for the current theme, syntax and task style."""
-        return self.chrome_palette.prompt_style(self.menu_palette, task_style)
+    def prompt_style(self, task_style: str = "status", frame_style: str = "borders") -> Style:
+        """The prompt_toolkit style for the current theme, syntax, task and frame style."""
+        shades = self.frame_shades() if frame_style == "shaded" else None
+        return self.chrome_palette.prompt_style(self.menu_palette, task_style, shades)
+
+    def frame_shades(self) -> FrameShades | None:
+        """Shades for `frame_style shaded`, or None to keep the borders.
+
+        From the background the terminal reported when that agrees with the
+        theme in use (an explicit `/theme light` on a dark terminal does not),
+        else from the palette's surface. `/syntax terminal` without a report
+        has nothing to mix from, so it falls back to borders.
+        """
+        theme = self.resolved_theme
+        background = terminal_background()
+        if background is None or self.detected_theme != theme:
+            background = self.palette.surface if not self.terminal_colors else None
+        if background is None:
+            return None
+        return frame_shades(background, theme)
 
     @property
     def rich_theme(self) -> Theme:
