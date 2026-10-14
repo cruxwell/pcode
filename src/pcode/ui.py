@@ -161,10 +161,17 @@ def frame_shades(background: str, theme: str) -> FrameShades:
     Mixed from the terminal's actual background rather than fixed, so the box
     reads as a gentle step up on any scheme. Light backgrounds need a smaller
     step: the eye picks out darkening sooner than lightening.
+
+    The header takes the body's shade. A band of its own shows how the
+    terminal sets text within a cell (high, over room for descenders and
+    line spacing), so its text looked off-centre; the status text's own
+    accent and weight set it apart instead.
     """
     if theme == "light":
-        return FrameShades(_mix(background, "#000000", 0.045), _mix(background, "#000000", 0.09))
-    return FrameShades(_mix(background, "#ffffff", 0.06), _mix(background, "#ffffff", 0.11))
+        body = _mix(background, "#000000", 0.045)
+    else:
+        body = _mix(background, "#ffffff", 0.06)
+    return FrameShades(body, body)
 
 
 @dataclass(frozen=True)

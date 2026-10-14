@@ -11,9 +11,11 @@ def test_background_report_is_kept_as_hex(monkeypatch):
 
 def test_shades_step_away_from_the_background():
     dark = frame_shades("#000000", "dark")
-    assert dark.body == "#0f0f0f" and dark.header == "#1c1c1c"
+    # The header shares the body's shade: a band of its own shows text sitting
+    # high in its cells.
+    assert dark.body == dark.header == "#0f0f0f"
     light = frame_shades("#ffffff", "light")
-    assert light.body < "#ffffff" and light.header < light.body
+    assert light.body == light.header < "#ffffff"
     styles = dark.styles()
     # Border glyphs vanish into their own surface rather than drawing a line.
     assert styles["shaded frame.border"] == f"nodim fg:{dark.body}"
