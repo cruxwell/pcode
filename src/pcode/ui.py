@@ -1077,12 +1077,13 @@ class Activity:
     def displayed_plan(self) -> list[dict]:
         return self.plan if self.plan_preview is None else self.plan_preview
 
-    def plan_rows(self, budget: int):
+    def plan_rows(self, budget: int, spinner: str = ACTIVE_TASK_ICON):
+        """`spinner` marks the step in progress while a turn runs."""
         if not self.tasks_shown:
             return []
         # Persisted task status describes unfinished work, not a live request.
         # Use the turn lifecycle rather than busy, which also includes queued input.
-        icon = ACTIVE_TASK_ICON if self.status_shown else "○"
+        icon = spinner if self.status_shown else "○"
         # A configured height is room the user asked the tasks to fill.
         max_tasks = TASK_ROWS if self.tasks_max_height is None else budget
         return task_panel_rows(self.displayed_plan, self.tools, budget, icon, max_tasks)
@@ -2310,7 +2311,8 @@ class PromptLayout:
                 # The editor box keeps one text row inside its two borders.
                 else max(1, cap - self.task_chrome() - 3)
             )
-        return self.activity.plan_rows(budget)
+        # The active step turns with the running commands' spinner.
+        return self.activity.plan_rows(budget, self.tool_spinner_frame())
 
     @_per_render
     def preview_layout(self):

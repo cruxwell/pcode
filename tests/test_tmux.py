@@ -251,6 +251,13 @@ def scrollback(pane):
 # The status row is indented one column so the spinner lines up with the task
 # rows inside the frame below it instead of hugging the terminal edge.
 SPINNER_ROW = BUSY_FRAMES
+# The step in progress turns with the running commands' `tool_spinner` (arc).
+TASK_FRAMES = tuple("◜◠◝◞◡◟")
+
+
+def active_task(text):
+    """Every way an in-progress task row can read on a given frame."""
+    return tuple(f"{frame}{text}" for frame in TASK_FRAMES)
 
 
 def _thought_span(lines):
@@ -884,13 +891,13 @@ def test_plan_panel_is_bounded_updates_and_clears(pane, release, split):
     capture(pane, "❯")
     pane("send-keys", "-t", "preview:0.0", "h", "Enter")
     screen = capture(pane, "Task 8", running=True)
-    assert "↺ Task 8" in screen
+    assert any(row in screen for row in active_task(" Task 8"))
     first_frame = next(line[3] for line in screen.splitlines() if line.startswith(SPINNER_ROW))
     deadline = time.monotonic() + TIMEOUT
     while time.monotonic() < deadline:
         # A raw capture can land between erasing the prompt and redrawing it.
         animated = capture(pane, "", running=True)
-        assert "↺ Task 8" in animated
+        assert any(row in animated for row in active_task(" Task 8"))
         if any(
             line.startswith(SPINNER_ROW) and line[3] != first_frame
             for line in animated.splitlines()
@@ -1027,7 +1034,7 @@ def test_detached_tasks_have_their_own_frame_and_nested_tools(pane):
     # runs sits on the tool row above, with the thoughts.
     assert TOOL_ROW in lines[task - 2]
     assert lines[task - 1].startswith("┌─ Tasks 0/1 ─")
-    assert lines[task].startswith("│↺")
+    assert lines[task].startswith(tuple("│" + row for row in active_task("")))
     assert lines[task + 1].startswith("└")
     status = lines[task + 2]
     assert status.startswith(SPINNER_ROW) and "Run shell" in status
@@ -1052,7 +1059,7 @@ def test_detached_tasks_have_their_own_frame_and_nested_tools(pane):
                 break
             assert time.monotonic() < deadline, screen
             time.sleep(0.05)
-        assert lines[task].startswith("│↺")
+        assert lines[task].startswith(tuple("│" + row for row in active_task("")))
         assert "keep draft" in screen
         assert input_rows(screen) == 1
     pane("send-keys", "-t", "preview:0.0", "C-c")  # Clears the draft.
@@ -1106,7 +1113,7 @@ def test_tasks_share_the_editor_box_by_default_and_config_applies_live(pane):
         heading, tasks, text_rows = attached_box(screen)
         # While the turn runs its status takes the heading's place.
         assert heading.startswith(SPINNER_ROW)
-        assert len(tasks) == 1 and tasks[0].startswith("│↺")
+        assert len(tasks) == 1 and tasks[0].startswith(tuple("│" + row for row in active_task("")))
         assert text_rows == 1
     pane("send-keys", "-t", "preview:0.0", "C-c")
     pane("send-keys", "-t", "preview:0.0", "C-c")
