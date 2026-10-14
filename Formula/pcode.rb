@@ -31,8 +31,11 @@ class Pcode < Formula
     ENV["UV_PYTHON_DOWNLOADS"] = "never"
     ENV["UV_PROJECT_ENVIRONMENT"] = libexec/".venv"
     ENV["UV_LINK_MODE"] = "copy"
+    # --compile-bytecode writes every .pyc now; otherwise the first launch
+    # compiles thousands of dependency modules and starts several seconds slow.
     system "uv", "sync", "--directory", libexec, "--locked", "--no-dev", "--extra", "claude",
-                 "--no-editable", "--no-cache", "--python", formula_opt_bin("python@3.15")/"python3.15"
+                 "--no-editable", "--no-cache", "--compile-bytecode",
+                 "--python", formula_opt_bin("python@3.15")/"python3.15"
     bin.install_symlink libexec/".venv/bin/pcode"
     generate_completions_from_executable(bin/"pcode", "--completions")
   end
