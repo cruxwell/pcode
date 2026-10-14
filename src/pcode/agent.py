@@ -9,6 +9,7 @@ from contextvars import ContextVar
 from copy import copy
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import (
@@ -18,9 +19,7 @@ from pydantic_ai.capabilities import (
     LocalWorkspace,
 )
 from pydantic_ai.models import Model
-from pydantic_ai.models.openai_codex import OpenAICodexModel
 from pydantic_ai.profiles.openai import OpenAIModelProfile
-from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 from pydantic_ai.toolsets import CombinedToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.coder import Coder
@@ -43,7 +42,6 @@ from pcode.filesystem import DisplayFileSystem
 from pcode.isolated_delegation import WorkspaceSubAgents
 from pcode.job_notices import JobNotices
 from pcode.jobs import isolated_registry
-from pcode.llm_proxy import ProxiedCodexProvider
 from pcode.mcp import configured_servers
 from pcode.mcp_notice import MCPServers
 from pcode.meridian import MeridianSessionIdentity
@@ -55,6 +53,9 @@ from pcode.shell_tools import JobShell
 from pcode.strict_tools import create_strict_tools
 from pcode.tool_output_limits import create_tool_output_limits
 from pcode.workspace import WorkspaceGuard
+
+if TYPE_CHECKING:
+    from pydantic_ai.models.openai_codex import OpenAICodexModel
 
 # Harness gives a child its own usage counter only when its `SubAgent` carries
 # `usage_limits`; without one the child shares the parent's counter and silently
@@ -443,7 +444,13 @@ def codex_model(model: str) -> OpenAICodexModel:
     Without a pcode store the provider reads the CLI file at construction time
     and keeps refreshed tokens in memory only.
     """
+    # Imported here, not at module level: `openai_codex` loads the whole OpenAI
+    # SDK (about 0.3 s), which a session on any other provider never uses.
+    from pydantic_ai.models.openai_codex import OpenAICodexModel
+    from pydantic_ai.providers.openai_codex import OpenAICodexProvider
+
     from pcode.codex_login import credential_source
+    from pcode.llm_proxy import ProxiedCodexProvider
 
     proxy = os.environ.get("PCODE_LLM_PROXY", "").strip()
     source = credential_source()
