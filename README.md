@@ -40,7 +40,7 @@ brew install cruxwell/pcode/pcode
 Or from [PyPI](https://pypi.org/project/pcode/) with [uv](https://docs.astral.sh/uv/):
 
 ```sh
-uv tool install --python 3.14 'pcode[claude]'
+uv tool install --python 3.15 'pcode[claude]'
 ```
 
 `brew install --HEAD` tracks `master` instead of the latest release.

@@ -4,7 +4,7 @@ import shutil
 import time
 
 import pytest
-from test_tmux import SPINNER_ROW, TIMEOUT, capture, input_rows, resize
+from test_tmux import SPINNER_ROW, TIMEOUT, active_task, capture, input_rows, resize
 from test_tmux import pane as pane
 
 pytestmark = pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
@@ -43,7 +43,9 @@ def test_compaction_keeps_editor_height_and_cancels_after_clearing_draft(pane):
     assert first.startswith(SPINNER_ROW)
     lines = screen.splitlines()
     # The badge rides the editor box's top border, over the tasks.
-    assert lines[lines.index(first) + 1].startswith("│↺ A task")
+    assert lines[lines.index(first) + 1].startswith(
+        tuple("│" + row for row in active_task(" A task"))
+    )
     deadline = time.monotonic() + TIMEOUT
     while prompt_row(screen) == first:
         assert time.monotonic() < deadline, "Compaction spinner did not animate"

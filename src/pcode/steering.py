@@ -7,8 +7,8 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 def run_request(ctx, request_context) -> ModelRequest:
     """The step's request as the run's history holds it, for parts that must persist.
 
-    The request being sent can end in a message only it carries (Harness's
-    near-limit warning appends one), and a before-hook's request is not written
+    The request being sent can end in a message only it carries (a capability
+    such as Harness's `WarnNearLimits` appends one), and a before-hook's request is not written
     back to history, so a part added to that message would be sent once and lost.
     The history's own request is in the request list too, so it is still sent.
     """

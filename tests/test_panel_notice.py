@@ -317,7 +317,9 @@ def test_main_status_rides_the_editor_box_and_jobs_only_appear_in_footer(command
             # rides the status instead.
             assert task == status_index + 1
             assert "Tasks 0/1 · " in status
-            assert lines[task].startswith("│↺ Example task")
+            # The step turns with the running commands' arc spinner.
+            assert lines[task][0] == "│" and lines[task][1] in "◜◠◝◞◡◟"
+            assert lines[task][2:].startswith(" Example task")
         else:
             assert task < status_index
             assert "Tasks" not in status
@@ -365,7 +367,7 @@ def test_status_border_fills_the_pane_exactly_at_any_width(columns):
 
 
 @pytest.mark.parametrize(
-    "task_style, row", [("status", "│↺ Example task"), ("icons", "│ ↺ Example task")]
+    "task_style, row", [("status", "│{} Example task"), ("icons", "│ {} Example task")]
 )
 def test_icon_task_style_sets_task_rows_off_the_frame(task_style, row):
     async def run():
@@ -395,4 +397,6 @@ def test_icon_task_style_sets_task_rows_off_the_frame(task_style, row):
 
     lines = asyncio.run(run())
     task = next(line for line in lines if "Example task" in line)
-    assert task.startswith(row) and task.endswith("│"), task
+    # The step in progress turns with the running commands' arc spinner.
+    frames = tuple(row.format(frame) for frame in "◜◠◝◞◡◟")
+    assert task.startswith(frames) and task.endswith("│"), task

@@ -3,7 +3,7 @@
 import shutil
 
 import pytest
-from test_tmux import SPINNER_ROW, capture, input_rows, resize
+from test_tmux import SPINNER_ROW, active_task, capture, input_rows, resize
 from test_tmux import pane as pane
 
 pytestmark = pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
@@ -86,7 +86,7 @@ def test_task_tree_guides_survive_resize_at_each_depth(pane):
         assert "Main task" in screen
         assert "│└── » Explorer" in screen
         assert "│    ├── ✓ Inspect" in screen
-        assert "│    ├── ↺ Work" in screen
+        assert any("│    ├── " + row in screen for row in active_task(" Work"))
         assert "│    └── ○ Validate" in screen
         assert "Search" not in screen
         assert "keep draft" in screen

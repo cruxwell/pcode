@@ -2,8 +2,8 @@
 
 ## Install
 
-pcode requires Python 3.14 or newer. The installers below use Python 3.14,
-which is the version tested in CI on Linux and macOS.
+pcode requires Python 3.14 or newer. The installers below use Python 3.15;
+CI tests both on Linux and macOS.
 
 With [Homebrew](https://brew.sh/):
 
@@ -32,7 +32,7 @@ pcode is on [PyPI](https://pypi.org/project/pcode/), so
 [uv](https://docs.astral.sh/uv/) can install it into its own environment:
 
 ```sh
-uv tool install --python 3.14 'pcode[claude]'    # `claude` adds Claude subscription support
+uv tool install --python 3.15 'pcode[claude]'    # `claude` adds Claude subscription support
 uv tool upgrade pcode
 uv tool uninstall pcode
 ```
@@ -141,12 +141,12 @@ With [uv](https://docs.astral.sh/uv/), from a checkout:
 
 ```sh
 uv run pcode -m openai-codex:gpt-5.6-luna      # this checkout only
-uv tool install --python 3.14 --editable '.[claude]'         # a bare `pcode` everywhere (or `make install`)
+uv tool install --python 3.15 --editable '.[claude]'         # a bare `pcode` everywhere (or `make install`)
 ```
 
 The `claude` extra adds [`claude:` models](providers.md#claude-code-provider)
 and bundles the Claude Code CLI (over 200 MB installed). Leave it out with
-`uv tool install --python 3.14 --editable .` or `make install EXTRAS=` if you don't need
+`uv tool install --python 3.15 --editable .` or `make install EXTRAS=` if you don't need
 them. Install `shfmt` yourself for formatted commands in `/tools`; without it,
 pcode uses a simpler built-in formatter. Likewise, install
 [delta](https://dandavison.github.io/delta/) for

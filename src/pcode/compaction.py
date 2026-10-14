@@ -14,9 +14,7 @@ from pydantic_ai.messages import (
     BinaryContent,
     FilePart,
     FileUrl,
-    ModelRequest,
     ModelResponse,
-    SystemPromptPart,
     ToolReturnPart,
     UploadedFile,
     UserPromptPart,
@@ -140,37 +138,6 @@ def context_estimate(messages, parameters=None) -> int:
     return estimate
 
 
-def newest_summary_only(messages) -> list:
-    """Drop every compaction summary but the newest, which supersedes the rest.
-
-    Harness keeps the first user request verbatim, and pydantic-ai merges the
-    summary request into it on the next run, so without this each compaction
-    re-keeps every earlier summary inside that "first user message". Harness
-    also anchors its update on the *last* summary part it finds, which in that
-    merged request is the oldest one. A new summary always opens the history,
-    so the first summary part in order is the newest. Reported upstream as
-    pydantic/pydantic-ai#9686; drop this once a Harness release fixes it.
-    """
-    seen = False
-    kept = []
-    for message in messages:
-        if not isinstance(message, ModelRequest):
-            kept.append(message)
-            continue
-        parts = []
-        for part in message.parts:
-            if isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX):
-                if seen:
-                    continue
-                seen = True
-            parts.append(part)
-        if len(parts) == len(message.parts):
-            kept.append(message)
-        elif parts:
-            kept.append(replace(message, parts=parts))
-    return kept
-
-
 def text_and_media(messages) -> tuple[int, int]:
     """The heuristic's token count of `messages` without media, and the media items held."""
     media = 0
@@ -230,9 +197,8 @@ async def summarize(messages, *, model, focus=None, usage=None, window=None, par
     # a compaction to ~244k whose next request was billed 67k.
     text, media = text_and_media(messages)
     density = max(1.0, (before - schemas - media * MEDIA_TOKENS) / text) if text else 1.0
-    source = newest_summary_only(messages)
-    cutoff = find_token_cutoff(source, keep)
-    oversized_tail = estimate_token_count(source[cutoff:]) > keep
+    cutoff = find_token_cutoff(messages, keep)
+    oversized_tail = estimate_token_count(messages[cutoff:]) > keep
 
     def summarizer(tool_return_max_chars: int) -> SummarizingCompaction:
         return SummarizingCompaction(
@@ -271,10 +237,11 @@ async def summarize(messages, *, model, focus=None, usage=None, window=None, par
             *(tightened(tool_chars, part_chars) for tool_chars, part_chars in TIGHTENED_ATTEMPTS),
         ]
     )
-    candidate = await compact_now(strategy, deepcopy(source), model=model, focus=focus, usage=usage)
-    if candidate == source:
+    candidate = await compact_now(
+        strategy, deepcopy(messages), model=model, focus=focus, usage=usage
+    )
+    if candidate == messages:
         return CompactionResult(messages, before, before, False)
-    candidate = newest_summary_only(candidate)
     if not is_provider_valid(candidate):
         raise CompactionError("Compaction produced invalid tool-call pairs; history unchanged.")
     # Harness returns text, not structured output: reject empty summaries explicitly.

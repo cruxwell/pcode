@@ -1,7 +1,6 @@
 """Bounded, sanitized evidence of completed file mutations, not workspace diffs."""
 
 import difflib
-import os
 import re
 
 from pcode.runtime import EditCompleted
@@ -72,7 +71,10 @@ def _dedent(lines: list[str], body: list[int]) -> None:
     indents = [c[: len(c) - len(c.lstrip())] for c in contents if c.strip()]
     if not indents:
         return
-    shared = os.path.commonprefix(indents)
+    # The prefix the lexicographic extremes share is shared by every indent.
+    # (`os.path.commonprefix` did this, but Python 3.15 deprecates it.)
+    low, high = min(indents), max(indents)
+    shared = low[: next((i for i, (a, b) in enumerate(zip(low, high)) if a != b), len(low))]
     if not shared:
         return
     for i, content in zip(body, contents, strict=True):
