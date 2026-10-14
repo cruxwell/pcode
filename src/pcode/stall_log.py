@@ -233,7 +233,7 @@ class StallWatch:
                 mark = (now, time.process_time(), self._gc_seconds)
         if samples:
             # Stopped mid-stall: the loop is late by at least this much, up to
-            # the last poll if the process was suspended since.
+            # the last sample if the process was suspended since.
             now = time.monotonic()
             suspended = self._continued != seen or _suspended(
                 waited, (now, time.process_time()), self.threshold

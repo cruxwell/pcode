@@ -449,7 +449,7 @@ asyncio.run(main())
     stalls = sorted(record["stall_ms"] for record in records(path))
     # Before the stop, then after it: neither spans the 600 ms spent stopped.
     # The first is measured from the next beat's due time to the watcher's last
-    # poll before the stop, both GIL-bound against the spin, so a loaded runner
+    # sample before the stop, both GIL-bound against the spin, so a loaded runner
     # reads well under the 500 ms spun (146 ms of a 300 ms spin was seen).
     # Including the stop would read over 1,100 ms.
     assert len(stalls) == 2, stalls
