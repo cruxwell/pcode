@@ -49,7 +49,7 @@ dependencies = [
 # (about 95 MB to download, 215 MB installed); the sdist would run whatever
 # `claude` is on PATH instead of the CLI version pcode was verified against.
 claude = [
-    "claude-agent-sdk>=0.2.164,<0.3",
+    "claude-agent-sdk>=0.2.167,<0.3",
 ]
 
 [project.urls]
