@@ -24,7 +24,7 @@ from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 from pydantic_ai.toolsets import CombinedToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.compaction import ClearToolResults, WarnNearLimits
+from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS, Shell
@@ -199,8 +199,6 @@ def _adapt(capability, workspace: Path, output_limits):
         # Replace Coder's 64k truncation, so it cannot cut data before spilling.
         case ToolOutputLimits():
             return output_limits
-        case WarnNearLimits():
-            return MeridianLimitWarnings(**_init_fields(capability))
         case Shell():
             return _job_shell(capability, workspace)
         case _:
@@ -377,6 +375,8 @@ def create_coder(
         # bypass it (see `JobShell`), so it needs none of the host's environment.
         LocalWorkspace(workspace),
         *capabilities,
+        # Coder dropped its near-limit warning in Harness 0.56; pcode keeps it.
+        MeridianLimitWarnings(max_context_fraction=0.9),
         # Isolated workers build their own coder, so each CLI runs in its checkout.
         ClaudeWorkspace(workspace),
         IdentifiedPlanning(),
