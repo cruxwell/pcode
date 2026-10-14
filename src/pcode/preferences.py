@@ -596,7 +596,6 @@ SETTINGS = {
         "on", ("on", "off"), description="Draw the task list inside the editor box"
     ),
     "frame_style": Setting(
-        # TEMPORARY: defaults to shaded to try it out; flip back to borders.
         "shaded",
         ("borders", "shaded"),
         description="Editor and task boxes: line borders, or background shades "
