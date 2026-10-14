@@ -2689,12 +2689,13 @@ class PromptLayout:
             if (self.plan_attached() or hidden) and activity.displayed_plan:
                 meta.insert(0, activity.panel_title())
             line = replace(self.status_line(), tally=" · ".join(part for part in meta if part))
-            status = line.fragments(self.spinner_frame(), columns - 6, rule=True)
+            lead = self.heading_lead()
+            status = line.fragments(self.spinner_frame(), columns - 3 - len(lead), rule=True)
             if not status:
                 return [("class:frame.border", "┌" + "─" * max(0, columns - 2) + "┐")]
-            used = 3 + sum(cell_len(text) for _, text in status)
+            used = len(lead) + sum(cell_len(text) for _, text in status)
             return [
-                ("class:frame.border", "┌─ "),
+                ("class:frame.border", lead),
                 *status,
                 ("class:frame.border", f" {'─' * max(0, columns - used - 2)}┐"),
             ]
@@ -2720,17 +2721,35 @@ class PromptLayout:
             return fit_fragments([*heading, ("class:activity.meta", " · "), *label], width)
         return panel_fragments(heading, width)
 
-    def plan_heading_border(self) -> VSplit:
-        """A top border with the heading at the left, cut to fit the row.
+    def heading_lead(self) -> str:
+        """What comes before a box's heading on its top row.
 
-        Drawn like pcode's ``Frame`` title, but truncated by ``plan_heading``
-        and swapped into the editor frame as well as the plan's own.
+        Bordered, the corner and a rule stub (`┌─ `). Shaded there is no line
+        to start, so the heading lines up with the rows under it: the task
+        icons and the prompt chevron, one column in (two with `task_style icons`).
         """
+        if self.frame_shaded():
+            return " " * (1 + self.task_padding())
+        return "┌─ "
+
+    def plan_heading_border(self) -> VSplit:
+        """A top border with the task heading at the left, cut to fit the row.
+
+        Swapped into the editor frame as well as the plan's own.
+        """
+        return self.heading_border(self.plan_heading)
+
+    def heading_border(self, heading) -> VSplit:
+        """A top border with `heading` at the left, drawn like pcode's ``Frame`` title."""
         return VSplit(
             [
-                Window(FormattedTextControl("┌─ "), width=3, style="class:frame.border"),
+                Window(
+                    FormattedTextControl(self.heading_lead),
+                    width=lambda: len(self.heading_lead()),
+                    style="class:frame.border",
+                ),
                 Label(
-                    self.plan_heading,
+                    heading,
                     style="class:frame.label",
                     dont_extend_width=True,
                 ),
@@ -2876,6 +2895,14 @@ class PromptLayout:
         # Corners, stub, a space either side, and at least one rule cell.
         return fit_fragments(self.session_label(), self.size().columns - TITLE_CHROME - 1)
 
+    def frame_shaded(self) -> bool:
+        """Whether the boxes are drawn as shades rather than lines (`frame_style`)."""
+        return (
+            self.activity.frame_style == "shaded"
+            and self.transcript is not None
+            and self.transcript.frame_shades() is not None
+        )
+
     def editor_frame(self) -> Frame:
         session = self.session
         editor_frame = Frame(
@@ -2903,6 +2930,7 @@ class PromptLayout:
         side = partial(Window, char="│", width=1, style="class:frame.border")
         status = Condition(lambda: self.activity.status_shown)
         attached = Condition(self.plan_attached)
+        shaded = Condition(self.frame_shaded)
         plain_top = editor_frame.container.children[0]
         editor_frame.container.children[0] = HSplit(
             [
@@ -2910,7 +2938,12 @@ class PromptLayout:
                 ConditionalContainer(self.plan_heading_border(), filter=attached & ~status),
                 ConditionalContainer(
                     HSplit([plain_top], style="class:frame.header"),
-                    filter=~attached & ~status,
+                    filter=~attached & ~status & ~shaded,
+                ),
+                # Shaded, the session's name lines up with the prompt chevron.
+                ConditionalContainer(
+                    self.heading_border(self.idle_title),
+                    filter=~attached & ~status & shaded,
                 ),
                 ConditionalContainer(
                     HSplit(
