@@ -69,7 +69,7 @@ def test_pending_steering_lets_the_whole_batch_run_then_arrives_once(tmp_path):
 def test_steering_beside_a_limit_warning_reaches_history(tmp_path):
     """A near-limit warning ends the request with a message only the request carries;
     steering added after it must still be saved, not sent once and lost."""
-    from pcode.meridian_reminders import MeridianLimitWarnings
+    from pydantic_ai_harness.compaction import WarnNearLimits
 
     async def run():
         pending = [STEER]
@@ -89,7 +89,7 @@ def test_steering_beside_a_limit_warning_reaches_history(tmp_path):
 
         agent = Agent(
             FunctionModel(stream_function=model),
-            capabilities=[MeridianLimitWarnings(max_iterations=2, warning_threshold=0.1)],
+            capabilities=[WarnNearLimits(max_iterations=2, warning_threshold=0.1)],
         )
 
         @agent.tool_plain

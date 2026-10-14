@@ -5,7 +5,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 MISSING_SDK = (
     "claude: models need pcode's optional `claude` extra, which is not installed. "
     "From a pcode checkout run `make install`, "
-    "or `uv tool install --python 3.14 --editable '.[claude]'`."
+    "or `uv tool install --python 3.15 --editable '.[claude]'`."
 )
 
 

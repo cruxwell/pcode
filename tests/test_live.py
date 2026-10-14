@@ -24,7 +24,10 @@ from pcode.ui import TerminalOutput, create_prompt
 
 def test_codex_uses_native_model_with_only_wire_dialect_overrides(tmp_path, monkeypatch):
     monkeypatch.delenv("PCODE_LLM_PROXY", raising=False)
-    with patch("pcode.agent.Agent") as constructor, patch("pcode.agent.OpenAICodexModel") as model:
+    with (
+        patch("pcode.agent.Agent") as constructor,
+        patch("pydantic_ai.models.openai_codex.OpenAICodexModel") as model,
+    ):
         create_agent("openai-codex:gpt-5.6-luna", tmp_path)
     model.assert_called_once_with(
         "gpt-5.6-luna", profile={"openai_supports_prompt_cache_breakpoints": False}

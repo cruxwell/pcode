@@ -34,7 +34,7 @@ def test_native_codex_wire_payload_omits_unsupported_cache_marker(monkeypatch, t
             def native_model(name, *, profile):
                 return OpenAICodexModel(name, provider=provider, profile=profile)
 
-            monkeypatch.setattr("pcode.agent.OpenAICodexModel", native_model)
+            monkeypatch.setattr("pydantic_ai.models.openai_codex.OpenAICodexModel", native_model)
             agent = create_agent("openai-codex:gpt-5.6-sol", tmp_path)
             with pytest.raises(ModelHTTPError):
                 await agent.run(["A durable user message", CachePoint()])
@@ -81,7 +81,7 @@ def test_deferred_mcp_schemas_reach_the_wire_beside_the_tool_search(monkeypatch,
             def native_model(name, *, profile):
                 return OpenAICodexModel(name, provider=provider, profile=profile)
 
-            monkeypatch.setattr("pcode.agent.OpenAICodexModel", native_model)
+            monkeypatch.setattr("pydantic_ai.models.openai_codex.OpenAICodexModel", native_model)
             agent = create_agent("openai-codex:gpt-6-astra", tmp_path)
             with pytest.raises(ModelHTTPError):
                 async with agent:

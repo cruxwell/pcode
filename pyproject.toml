@@ -33,11 +33,11 @@ dependencies = [
     # itself is downloaded on first use, not at install.
     # Harness ships from the pydantic-ai repo with every Pydantic AI release and
     # pins pydantic-ai-slim to the same minor; bump both together.
-    "pydantic-ai-harness[exa,coder,codemode,playwright]>=0.55.0,<0.56",
+    "pydantic-ai-harness[exa,coder,codemode,playwright]>=0.56.0,<0.57",
     # duckduckgo and web-fetch back the bundled web_research extension when no
     # provider-native search or Exa key is available.
     # google covers both google and google-cloud providers; bedrock pulls boto3.
-    "pydantic-ai-slim[anthropic,bedrock,duckduckgo,google,groq,mcp,openai,web-fetch,xai]>=2.55.0,<3",
+    "pydantic-ai-slim[anthropic,bedrock,duckduckgo,google,groq,mcp,openai,web-fetch,xai]>=2.56.0,<3",
     "rich>=15,<16",
     # FastMCP 4.x OAuth callback server selects Uvicorn's websockets-sansio protocol.
     # Capped below 17 by google-genai (still <17 as of 2.29), not by pcode.
@@ -49,7 +49,7 @@ dependencies = [
 # (about 95 MB to download, 215 MB installed); the sdist would run whatever
 # `claude` is on PATH instead of the CLI version pcode was verified against.
 claude = [
-    "claude-agent-sdk>=0.2.164,<0.3",
+    "claude-agent-sdk>=0.2.167,<0.3",
 ]
 
 [project.urls]
