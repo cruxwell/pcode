@@ -102,3 +102,27 @@ def test_wire_prefix_tools_plan_changes_and_saved_resume(provider_name):
             assert after["messages"][: len(before["messages"])] == before["messages"]
 
     asyncio.run(run())
+
+
+def test_append_reminder_skips_a_history_ending_in_a_response():
+    from types import SimpleNamespace
+
+    from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+
+    from pcode.meridian_reminders import append_reminder
+
+    def context(messages):
+        ctx = SimpleNamespace(run_id="run", conversation_id="conv", messages=list(messages))
+        return ctx, SimpleNamespace(messages=list(messages))
+
+    # A suspended response is resumed, not answered; nothing may follow it.
+    ctx, request = context([ModelResponse(parts=[TextPart("partial")])])
+    append_reminder(ctx, request, "<tag>", "<tag> one")
+    assert len(request.messages) == len(ctx.messages) == 1
+
+    # A request gets the reminder once; the same text again is a no-op.
+    ctx, request = context([ModelRequest(parts=[UserPromptPart("hi")])])
+    append_reminder(ctx, request, "<tag>", "<tag> one")
+    append_reminder(ctx, request, "<tag>", "<tag> one")
+    assert [m.parts[0].content for m in request.messages] == ["hi", "<tag> one"]
+    assert ctx.messages == request.messages

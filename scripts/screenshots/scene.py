@@ -45,7 +45,7 @@ class Call:
 # request after each round of tool results.
 
 
-# pcode appends reminders (the plan, limit warnings) as user-prompt parts
+# pcode appends reminders (the plan, MCP notices) as user-prompt parts
 # opening with a tag such as `<plan-reminder>`. They are not the user's prompt.
 REMINDER = re.compile(r"\s*<[a-z-]+>")
 

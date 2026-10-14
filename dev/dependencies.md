@@ -424,9 +424,8 @@ requests or authentication.
 
 ### Context indicator
 
-`src/pcode/model_metadata.py` resolves context limits; `context_usage.py`,
-and `compaction.py` share its synchronous memory-only
-lookup. Refreshes run outside rendering. Preserve input, output, default context,
+`src/pcode/model_metadata.py` resolves context limits; `context_usage.py` and
+`compaction.py` share its synchronous memory-only lookup. Refreshes run outside rendering. Preserve input, output, default context,
 opt-in maximum, source, and fetch timestamp separately. Unknown deployments must
 not inherit a familiar model name's direct-API limit. An explicit
 `PCODE_CONTEXT_WINDOW` applies to every consumer and is capped by known
@@ -577,8 +576,8 @@ For every provider, pcode's `IdentifiedPlanning` disables reminder injection by
 default. Planning tool results report changes, and `read_plan` retrieves the stored
 state; UI snapshots are independent of model reminders. Existing reminders in
 saved history are left untouched. pcode adds no near-limit warnings (Harness's
-`Coder` dropped `WarnNearLimits` in 0.56; auto-compaction runs before its 90%
-threshold, and its replace-in-place rewrite busts the cache). Reminders pcode does
+`Coder` dropped `WarnNearLimits` in 0.56; auto-compaction runs before the warning's
+90% threshold, and its replace-in-place rewrite busts the cache). Reminders pcode does
 send (`append_reminder`, used by the MCP notice) use `before_model_request`, whose
 messages Pydantic AI persists, not the ephemeral `wrap_model_request` boundary.
 Reminder deduplication compares

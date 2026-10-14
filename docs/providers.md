@@ -163,7 +163,7 @@ The Claude Code CLI comes bundled, so you need neither Node.js nor a separate
 `claude` install. Because the bundle is large (over 200 MB installed), it is the
 optional `claude` extra. The Homebrew formula and `make install` include it;
 elsewhere install `pcode[claude]`, for example
-`uv tool install --python 3.14 --editable '.[claude]'` from a checkout. Without it, `claude:`
+`uv tool install --python 3.15 --editable '.[claude]'` from a checkout. Without it, `claude:`
 models are left out of `/model`, and naming one tells you what to install.
 
 pcode keeps one Claude Code process per conversation and runs every tool itself.
@@ -212,7 +212,7 @@ writes it to the cache again.
 - Anthropic server tools are not available. Claude Code's own WebSearch and
   WebFetch take the place of web search and fetch (see
   [web search](tools.md#web-search)); there is no code execution.
-- Text pcode adds beside tool results (steering, plan reminders)
+- Text pcode adds beside tool results (steering, MCP server notices)
   reaches the model as a message the user sent while it was working.
 - Thinking is shown in summarized form.
 
