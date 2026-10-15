@@ -64,7 +64,7 @@ def test_without_true_color_the_borders_stay(monkeypatch):
     assert transcript().frame_shade() is None
 
 
-def render(columns, *, running, task_style="status"):
+def render(columns, *, running, task_style="status", plan=True):
     """The shaded layout's rows, and the resolved cell attributes of the top row and the next."""
 
     async def run():
@@ -74,7 +74,8 @@ def render(columns, *, running, task_style="status"):
         activity = app.activity
         activity.frame_style = "shaded"
         activity.task_style = task_style
-        activity.plan = [{"content": "Example task", "status": "in_progress"}]
+        if plan:
+            activity.plan = [{"content": "Example task", "status": "in_progress"}]
         if running:
             activity.prompt_state = "running"
         style = app.transcript.prompt_style(task_style, "shaded")
@@ -98,7 +99,7 @@ def render(columns, *, running, task_style="status"):
                 for row in range(screen.height)
             ]
             lines = ["".join(cell.char for cell in row) for row in rows]
-            top = next(i for i, line in enumerate(lines) if "Example task" in line) - 1
+            top = next(i for i, line in enumerate(lines) if line.endswith("┐"))
             attrs = [
                 [style.get_attrs_for_style_str(cell.style) for cell in rows[row]]
                 for row in (top, top + 1)
@@ -135,3 +136,12 @@ def test_shaded_headings_line_up_with_the_task_icons(
     # The heading row sits a touch darker than the box below it.
     assert corner.bgcolor < shade
     assert below[-1].bgcolor == shade
+
+
+@pytest.mark.usefixtures("true_color")
+def test_a_new_sessions_empty_top_row_keeps_the_box_shade(monkeypatch):
+    monkeypatch.setattr(theme, "_background", (BACKGROUND, "dark"))
+    lines, top, (attrs, below) = render(40, running=False, plan=False)
+    assert lines[top].strip(" ─┐") == "", lines[top]
+    shade = frame_shade(BACKGROUND, "dark").removeprefix("#")
+    assert attrs[-1].bgcolor == below[-1].bgcolor == shade

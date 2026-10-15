@@ -2908,6 +2908,10 @@ class PromptLayout:
         chrome = len(self.heading_lead()) + 3 if self.frame_shaded() else TITLE_CHROME + 1
         return fit_fragments(self.session_label(leads=True), self.size().columns - chrome)
 
+    def top_row_filled(self) -> bool:
+        """Whether the editor's top row carries text: a status, tasks, or a title."""
+        return self.activity.status_shown or self.plan_attached() or bool(self.idle_title())
+
     def frame_shaded(self) -> bool:
         """Whether the boxes are drawn as shades rather than lines (`frame_style`)."""
         return (
@@ -2947,7 +2951,8 @@ class PromptLayout:
         plain_top = editor_frame.container.children[0]
         editor_frame.container.children[0] = HSplit(
             [
-                # Shaded, the top row is a touch darker than the rest of the box.
+                # Shaded, a top row with something on it is a touch darker than
+                # the rest of the box; a new session's empty row keeps the box's shade.
                 HSplit(
                     [
                         ConditionalContainer(self.status_border(), filter=status),
@@ -2962,7 +2967,7 @@ class PromptLayout:
                             filter=~attached & ~status & shaded,
                         ),
                     ],
-                    style="class:shaded.top",
+                    style=lambda: "class:shaded.top" if self.top_row_filled() else "",
                 ),
                 ConditionalContainer(
                     HSplit(
