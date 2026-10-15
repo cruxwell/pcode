@@ -1,22 +1,131 @@
+import asyncio
+from io import StringIO
+
+import pytest
+from prompt_toolkit.application.current import set_app
+from prompt_toolkit.data_structures import Size
+from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.output.vt100 import Vt100_Output
+from rich.console import Console
+
 from pcode import theme
-from pcode.ui import frame_shades
+from pcode.app import PreviewApp
+from pcode.commands import CommandRegistry
+from pcode.ui import PALETTES, create_prompt, frame_shade
+
+SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+BACKGROUND = "#2e2a29"
 
 
-def test_background_report_is_kept_as_hex(monkeypatch):
-    # Restored afterwards, so no other test sees this report.
-    monkeypatch.setattr(theme, "_background", None)
+@pytest.fixture
+def true_color(monkeypatch):
+    monkeypatch.delenv("PROMPT_TOOLKIT_COLOR_DEPTH", raising=False)
+    monkeypatch.setenv("COLORTERM", "truecolor")
+
+
+def test_a_background_report_is_kept_with_its_theme():
     assert theme.background_theme(b"\x1b]11;rgb:2e2e/2a2a/2929\x1b\\") == "dark"
-    assert theme.terminal_background() == "#2e2a29"
+    assert theme.terminal_background() == (BACKGROUND, "dark")
 
 
-def test_shades_step_away_from_the_background():
-    dark = frame_shades("#000000", "dark")
-    # The header shares the body's shade: a band of its own shows text sitting
-    # high in its cells.
-    assert dark.body == dark.header == "#0f0f0f"
-    light = frame_shades("#ffffff", "light")
-    assert light.body == light.header < "#ffffff"
-    styles = dark.styles()
-    # Border glyphs vanish into their own surface rather than drawing a line.
-    assert styles["shaded frame.border"] == f"nodim fg:{dark.body}"
-    assert styles["shaded frame.header frame.border"] == f"nodim fg:{dark.header}"
+def test_the_shade_steps_away_from_the_background():
+    assert frame_shade("#000000", "dark") == "#0f0f0f"
+    assert frame_shade("#ffffff", "light") < "#ffffff"
+
+
+def transcript(detected="dark"):
+    app = PreviewApp(console=Console(file=StringIO(), width=40, color_system=None))
+    app.transcript.theme = "auto"
+    app.transcript.detected_theme = detected
+    return app.transcript
+
+
+@pytest.mark.usefixtures("true_color")
+def test_the_shade_follows_the_reported_background(monkeypatch):
+    monkeypatch.setattr(theme, "_background", (BACKGROUND, "dark"))
+    assert transcript().frame_shade() == frame_shade(BACKGROUND, "dark")
+
+
+@pytest.mark.usefixtures("true_color")
+def test_a_report_from_another_theme_is_not_mixed_from(monkeypatch):
+    # A light/dark flip reported without a color leaves the old dark one behind.
+    monkeypatch.setattr(theme, "_background", (BACKGROUND, "dark"))
+    light = transcript("light")
+    # `/syntax terminal` (the default) has no surface to fall back on.
+    assert light.frame_shade() is None
+    light.syntax_themes = {**light.syntax_themes, "light": "default"}
+    assert light.frame_shade() == frame_shade(PALETTES["light"].surface, "light")
+
+
+def test_without_true_color_the_borders_stay(monkeypatch):
+    monkeypatch.delenv("PROMPT_TOOLKIT_COLOR_DEPTH", raising=False)
+    monkeypatch.delenv("COLORTERM", raising=False)
+    monkeypatch.setattr(theme, "_background", (BACKGROUND, "dark"))
+    assert transcript().frame_shade() is None
+
+
+def render(columns, *, running, task_style="status"):
+    """The shaded layout's rows, and each top-row cell's resolved attributes."""
+
+    async def run():
+        app = PreviewApp(console=Console(file=StringIO(), width=columns, color_system=None))
+        app.transcript.theme = "auto"
+        app.transcript.detected_theme = "dark"
+        activity = app.activity
+        activity.frame_style = "shaded"
+        activity.task_style = task_style
+        activity.plan = [{"content": "Example task", "status": "in_progress"}]
+        if running:
+            activity.prompt_state = "running"
+        style = app.transcript.prompt_style(task_style, "shaded")
+        with create_pipe_input() as pipe:
+            output = Vt100_Output(
+                StringIO(), lambda: Size(rows=24, columns=columns), enable_cpr=False
+            )
+            session = create_prompt(
+                CommandRegistry(),
+                activity=activity,
+                transcript=app.transcript,
+                on_submit=lambda text: None,
+                input=pipe,
+                output=output,
+            )
+            with set_app(session.app):
+                session.app.renderer.render(session.app, session.app.layout)
+            screen = session.app.renderer._last_screen
+            rows = [
+                [screen.data_buffer[row][col] for col in range(columns)]
+                for row in range(screen.height)
+            ]
+            lines = ["".join(cell.char for cell in row) for row in rows]
+            top = next(i for i, line in enumerate(lines) if "Example task" in line) - 1
+            attrs = [style.get_attrs_for_style_str(cell.style) for cell in rows[top]]
+            return lines, top, attrs
+
+    return asyncio.run(run())
+
+
+@pytest.mark.usefixtures("true_color")
+@pytest.mark.parametrize("columns", [20, 40, 80])
+@pytest.mark.parametrize("running", [False, True])
+@pytest.mark.parametrize("task_style, lead", [("status", 1), ("icons", 2)])
+def test_shaded_headings_line_up_with_the_task_icons(
+    monkeypatch, columns, running, task_style, lead
+):
+    monkeypatch.setattr(theme, "_background", (BACKGROUND, "dark"))
+    lines, top, attrs = render(columns, running=running, task_style=task_style)
+    heading, task = lines[top], lines[top + 1]
+    # The heading starts in the task icon's column, after the invisible side.
+    assert heading[:lead] == " " * lead and heading[lead] != " ", heading
+    assert task[:lead].strip("│ ") == "" and task[lead] != " ", task
+    if running:
+        assert heading[lead] in SPINNER
+    else:
+        assert heading[lead:].startswith("Tasks")
+    # Same geometry as borders: the row fills the pane and keeps its corner.
+    assert len(heading) == columns and heading.endswith("┐")
+    shade = frame_shade(BACKGROUND, "dark")
+    # Border glyphs, rule included, vanish into the shade instead of drawing a line.
+    corner = attrs[-1]
+    assert corner.color == corner.bgcolor == shade.removeprefix("#")
+    assert not corner.dim

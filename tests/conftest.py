@@ -232,6 +232,14 @@ def isolated_preferences(monkeypatch, tmp_path, request):
         "show_hints",
         replace_setting(preferences.SETTINGS["show_hints"], default="off"),
     )
+    # Most layout tests find the boxes by their border glyphs, and whether
+    # shading applies depends on the developer's terminal (COLORTERM); shaded
+    # rendering has its own tests in tests/test_frame_shades.py.
+    monkeypatch.setitem(
+        preferences.SETTINGS,
+        "frame_style",
+        replace_setting(preferences.SETTINGS["frame_style"], default="borders"),
+    )
     # The shipped thresholds would hide the task widget on the small screens
     # most tests draw; tests/test_task_size_autohide.py covers them itself.
     for name in ("tasks_min_rows", "tasks_min_columns"):
@@ -278,6 +286,18 @@ def session_transport(request, monkeypatch):
     install(monkeypatch)
     yield
     shutil.rmtree(directory, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def isolated_terminal_background(monkeypatch):
+    """No test inherits a background another test's OSC 11 reply recorded.
+
+    `frame_style shaded` mixes from it, so a leftover report would flip a
+    later test's boxes from borders to shades depending on worker order.
+    """
+    from pcode import theme
+
+    monkeypatch.setattr(theme, "_background", None)
 
 
 @pytest.fixture(autouse=True)

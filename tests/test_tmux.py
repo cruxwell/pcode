@@ -132,6 +132,8 @@ def pane(request, tmp_path):
                 "paced_scrollback": "off",
                 "group_tools": "off",
                 "show_hints": "off",
+                # Row counters find the editor by its border glyphs.
+                "frame_style": "borders",
                 "key_prefix": "ctrl",
             }
         )

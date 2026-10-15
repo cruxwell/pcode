@@ -31,6 +31,7 @@ def heading(activity: Activity, prefix: str = "ctrl", columns: int = 80) -> str:
         size=lambda: SimpleNamespace(columns=columns),
         plan_attached=lambda: True,
         session_label=lambda: [],
+        heading_lead=lambda: "┌─ ",
     )
     return fragment_list_to_text(PromptLayout.plan_heading(layout))
 

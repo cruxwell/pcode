@@ -80,7 +80,7 @@ def test_defaults_and_path_do_not_create_files():
         "show_hints": "off",  # conftest's test default; the shipped one is "on".
         "attach_tasks": "on",
         "task_style": "status",
-        "frame_style": "shaded",
+        "frame_style": "borders",  # conftest's test default; the shipped one is "shaded".
         "tool_glyphs": "auto",
         "tool_max_lines": "3",
         "tool_linger_seconds": "10",

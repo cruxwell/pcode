@@ -17,13 +17,16 @@ _BACKGROUND = re.compile(
 )
 
 
-# The last background the terminal reported, as `#rrggbb`; None until one does.
-# Shaded frames mix their surfaces from it, so they suit any theme.
-_background: str | None = None
+# The last background the terminal reported, as `#rrggbb` with the theme it
+# implies; None until one does. Shaded frames mix their surfaces from it, so
+# they suit any theme. The theme rides along because a mode 2031 report can
+# flip light/dark without a color: a stale dark color must not be read as the
+# new light terminal's.
+_background: tuple[str, str] | None = None
 
 
-def terminal_background() -> str | None:
-    """The terminal's reported background as `#rrggbb`, or None if never reported."""
+def terminal_background() -> tuple[str, str] | None:
+    """The last reported background, `(#rrggbb, "light" | "dark")`, or None."""
     return _background
 
 
@@ -37,10 +40,11 @@ def background_theme(response: bytes) -> str | None:
     if match is None:
         return None
     rgb = [int(value, 16) / (16 ** len(value) - 1) for value in match.groups()]
-    _background = "#" + "".join(f"{round(value * 255):02x}" for value in rgb)
     # Perceived brightness, rather than the unweighted RGB average.
     brightness = sum(value * weight for value, weight in zip(rgb, (0.299, 0.587, 0.114)))
-    return "light" if brightness >= 0.5 else "dark"
+    theme = "light" if brightness >= 0.5 else "dark"
+    _background = ("#" + "".join(f"{round(value * 255):02x}" for value in rgb), theme)
+    return theme
 
 
 def _terminal():

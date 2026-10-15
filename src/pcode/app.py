@@ -1252,6 +1252,10 @@ class PreviewApp:
     def follow_appearance(self, detected: str) -> None:
         """The terminal reported its background; repaint if `theme auto` now differs."""
         if detected == self.transcript.detected_theme:
+            # Same theme, but maybe a new background (another dark profile):
+            # shaded frames mix from it, so let the editor's style re-read it.
+            if self.prompt_session is not None:
+                self.prompt_session.app.invalidate()
             return
         self.transcript.detected_theme = detected
         if self.transcript.theme == "auto":

@@ -108,7 +108,7 @@ def test_live_submission_does_not_echo_quote_before_response():
 
 
 @pytest.mark.parametrize("theme", ["dark", "light"])
-def test_status_row_accents_the_live_phase_and_mutes_its_chrome(theme):
+def test_status_row_colours_the_live_phase_and_mutes_its_chrome(theme):
     from pcode.ui import PALETTES, Activity
 
     palette = PALETTES[theme]
@@ -120,12 +120,15 @@ def test_status_row_accents_the_live_phase_and_mutes_its_chrome(theme):
     fragments = activity.status_fragments("⠋", 80, "✓ 2 tools")
     attrs = {style: prompt_style.get_attrs_for_style_str(style) for style, _ in fragments if style}
     accent = palette.accent.lstrip("#")
-    # Live: the spinner and phase share the accent; only the phase is bold.
-    assert attrs["class:activity.spinner"].color == accent
-    assert attrs["class:activity.phase"].color == accent
+    hue = palette.task_heading.lstrip("#")
+    # Live: the spinner and phase take the task heading's hue, like the
+    # footer's running jobs, not the accent of the task rows' in-progress
+    # icon; only the phase is bold.
+    assert attrs["class:activity.spinner"].color == hue != accent
+    assert attrs["class:activity.phase"].color == hue
     assert attrs["class:activity.phase"].bold
-    # Content takes the session name's hue, unbolded; chrome is muted and never bold.
-    assert attrs["class:activity.detail"].color == palette.task_heading.lstrip("#")
+    # Content takes the same hue, unbolded; chrome is muted and never bold.
+    assert attrs["class:activity.detail"].color == hue
     assert not attrs["class:activity.detail"].bold
     assert attrs["class:activity.meta"].color == muted
     assert not attrs["class:activity.meta"].bold

@@ -129,49 +129,36 @@ def _mix(color: str, toward: str, amount: float) -> str:
     )
 
 
-@dataclass(frozen=True)
-class FrameShades:
+def shaded_styles(shade: str) -> dict[str, str]:
     """`frame_style shaded`: the editor and task boxes as surfaces, not outlines.
 
-    `body` fills the box and `header` its top row (the status or title bar).
-    Border glyphs keep their cells but take their surface's color, so the
-    geometry, and every height sum built on it, is the same in both styles.
+    `shade` fills the box, title row included: a title band of its own showed
+    how the terminal sets text in a cell (high, over room for descenders and
+    line spacing), so its text looked off-centre. Border glyphs keep their
+    cells in the shade's own color, so the geometry, and every height sum
+    built on it, is the same in both styles.
     """
-
-    body: str
-    header: str
-
-    def styles(self) -> dict[str, str]:
-        # Later rules win, and a rule naming more classes wins over fewer:
-        # the header's border cells match both border rules.
-        return {
-            "shaded": f"bg:{self.body}",
-            # nodim: the terminal palette mutes borders with dim, which would
-            # leave a faint line in the surface's own color.
-            "shaded frame.border": f"nodim fg:{self.body}",
-            "shaded frame.header": f"bg:{self.header}",
-            "shaded frame.header frame.border": f"nodim fg:{self.header}",
-        }
+    # Appended after the palette's `frame.border`: for equal classes the later
+    # rule wins, so these override its muted color.
+    return {
+        "shaded": f"bg:{shade}",
+        # nodim: the terminal palette mutes borders with dim, which would
+        # leave a faint line in the surface's own color.
+        "shaded frame.border": f"nodim fg:{shade}",
+    }
 
 
 @cache
-def frame_shades(background: str, theme: str) -> FrameShades:
-    """Shades lifted off `background` toward the theme's contrast.
+def frame_shade(background: str, theme: str) -> str:
+    """A shade lifted off `background` toward the theme's contrast.
 
     Mixed from the terminal's actual background rather than fixed, so the box
     reads as a gentle step up on any scheme. Light backgrounds need a smaller
     step: the eye picks out darkening sooner than lightening.
-
-    The header takes the body's shade. A band of its own shows how the
-    terminal sets text within a cell (high, over room for descenders and
-    line spacing), so its text looked off-centre; the status text's own
-    accent and weight set it apart instead.
     """
     if theme == "light":
-        body = _mix(background, "#000000", 0.045)
-    else:
-        body = _mix(background, "#ffffff", 0.06)
-    return FrameShades(body, body)
+        return _mix(background, "#000000", 0.045)
+    return _mix(background, "#ffffff", 0.06)
 
 
 @dataclass(frozen=True)
@@ -228,7 +215,7 @@ class Palette:
         self,
         menu: "Palette | None" = None,
         task_style: str = "status",
-        shades: "FrameShades | None" = None,
+        shade: str | None = None,
     ) -> Style:
         # Palette is immutable. Reuse the Style so DynamicStyle's identity-based
         # invalidation hash changes only with the palette, not on every redraw.
@@ -275,15 +262,18 @@ class Palette:
                 "plan.tree": self.muted,
                 "prompt": f"{self.accent} bold",
                 # The live area has three weights. Live: the spinner and the
-                # phase word, the one thing that says the turn is moving.
-                # Content: what it is doing, in the session name's hue, so the
+                # phase word, the one thing that says the turn is moving, in
+                # the task heading's hue and bold like the footer's running
+                # jobs, so the status row never reads as one of the task rows
+                # under it, whose in-progress icon takes the accent.
+                # Content: what it is doing, in the same hue unbolded, so the
                 # border's text keeps one colour whether it holds the name or
                 # the turn's detail, and never reads as prose. A sub-agent's
                 # line there takes its own hue instead (`activity.agent`).
                 # Chrome: counts, clocks, notices, jobs and queues, muted.
-                "activity.spinner": self.accent,
+                "activity.spinner": self.task_heading,
                 "activity.badge": self.accent,
-                "activity.phase": f"nodim {self.accent} bold",
+                "activity.phase": f"nodim {self.task_heading} bold",
                 "activity.detail": f"nodim {self.task_heading}",
                 # Weight only: the colour comes from its `agent.hue.N` class.
                 "activity.agent": "nodim",
@@ -299,13 +289,14 @@ class Palette:
                 # The tool row under the thought: upright where the thought is
                 # italic, and muted whether its call runs or has settled, so it
                 # never flips shade; a running call's mark is the status row's
-                # spinner in this shade, not its accent. Only a success takes a
-                # colour, dimmed so it never reads as a plan's completed step,
-                # which uses the same `✓` at full strength. A failure is dimmed
+                # spinner in this shade, not its accent. A success's `✓` is the
+                # row's own muted shade, never the plan's green: dimmed green
+                # still read as a completed task's `✓` beside the task rows, so
+                # colour on a check means the plan. A failure is dimmer still,
                 # without a hue: plenty of commands are meant to fail (a grep
                 # with no match, a probe), so the row notes it without alarm.
                 "activity.tool": self.muted,
-                "activity.tool.done": f"dim {self.success}",
+                "activity.tool.done": self.muted,
                 "activity.tool.failed": f"dim {self.muted}",
                 # System work is pcode's own: the badge and accent mark it, and
                 # its queued rows keep an italic detail.
@@ -387,7 +378,7 @@ class Palette:
                 "reference": f"{self.task_heading} underline",
                 "auto-suggestion": self.muted,
                 **(ICON_TASK_STYLES if task_style == "icons" else {}),
-                **(shades.styles() if shades is not None else {}),
+                **(shaded_styles(shade) if shade is not None else {}),
             }
         )
 
@@ -832,7 +823,7 @@ class Activity:
     # gives it one weight, colours only the icon, and pads rows off the frame.
     task_style: str = "status"
     # The `frame_style` setting: `borders` draws box lines, `shaded` paints the
-    # boxes in shades of the terminal's background instead (see `frame_shades`).
+    # boxes in shades of the terminal's background instead (see `frame_shade`).
     frame_style: str = "borders"
     # The `tool_glyphs` setting: `auto`, `on` or `off` (see `tool_glyphs_on`).
     tool_glyphs: str = "auto"
@@ -2225,9 +2216,15 @@ def terminal_color_depth() -> ColorDepth | None:
     """
     if os.environ.get("PROMPT_TOOLKIT_COLOR_DEPTH"):
         return None
-    if os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit"):
-        return ColorDepth.TRUE_COLOR
-    return None
+    return ColorDepth.TRUE_COLOR if true_color() else None
+
+
+def true_color() -> bool:
+    """Whether the editor renders 24-bit color, by choice or by the terminal's word."""
+    explicit = os.environ.get("PROMPT_TOOLKIT_COLOR_DEPTH")
+    if explicit:
+        return explicit == ColorDepth.TRUE_COLOR.value
+    return os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit")
 
 
 def _fit_editor(session: PromptSession) -> Window:
@@ -2700,16 +2697,13 @@ class PromptLayout:
                 ("class:frame.border", f" {'─' * max(0, columns - used - 2)}┐"),
             ]
 
-        return Window(
-            FormattedTextControl(fragments, show_cursor=False),
-            height=1,
-            style="class:frame.header",
-        )
+        return Window(FormattedTextControl(fragments, show_cursor=False), height=1)
 
     def plan_heading(self):
         """The task heading, without permanent shortcut instructions."""
         activity = self.activity
-        width = self.size().columns - 8
+        # The lead, a space and at least one rule cell, the corner, and margin.
+        width = self.size().columns - len(self.heading_lead()) - 5
         style = "bold"
         if activity.displayed_plan:
             style = "class:plan.heading.done" if activity.plan_done else "class:plan.heading"
@@ -2758,7 +2752,6 @@ class PromptLayout:
                 Window(char="┐", width=1, style="class:frame.border"),
             ],
             height=1,
-            style="class:frame.header",
         )
 
     def commands_block(self) -> ConditionalContainer:
@@ -2893,14 +2886,16 @@ class PromptLayout:
         border instead.
         """
         # Corners, stub, a space either side, and at least one rule cell.
-        return fit_fragments(self.session_label(), self.size().columns - TITLE_CHROME - 1)
+        # Shaded, `heading_border` draws it: the lead, a space, a rule cell, the corner.
+        chrome = len(self.heading_lead()) + 3 if self.frame_shaded() else TITLE_CHROME + 1
+        return fit_fragments(self.session_label(), self.size().columns - chrome)
 
     def frame_shaded(self) -> bool:
         """Whether the boxes are drawn as shades rather than lines (`frame_style`)."""
         return (
             self.activity.frame_style == "shaded"
             and self.transcript is not None
-            and self.transcript.frame_shades() is not None
+            and self.transcript.frame_shade() is not None
         )
 
     def editor_frame(self) -> Frame:
@@ -2937,7 +2932,7 @@ class PromptLayout:
                 ConditionalContainer(self.status_border(), filter=status),
                 ConditionalContainer(self.plan_heading_border(), filter=attached & ~status),
                 ConditionalContainer(
-                    HSplit([plain_top], style="class:frame.header"),
+                    plain_top,
                     filter=~attached & ~status & ~shaded,
                 ),
                 # Shaded, the session's name lines up with the prompt chevron.
@@ -3535,24 +3530,30 @@ class Transcript:
 
     def prompt_style(self, task_style: str = "status", frame_style: str = "borders") -> Style:
         """The prompt_toolkit style for the current theme, syntax, task and frame style."""
-        shades = self.frame_shades() if frame_style == "shaded" else None
-        return self.chrome_palette.prompt_style(self.menu_palette, task_style, shades)
+        shade = self.frame_shade() if frame_style == "shaded" else None
+        return self.chrome_palette.prompt_style(self.menu_palette, task_style, shade)
 
-    def frame_shades(self) -> FrameShades | None:
-        """Shades for `frame_style shaded`, or None to keep the borders.
+    def frame_shade(self) -> str | None:
+        """The shade for `frame_style shaded`, or None to keep the borders.
 
-        From the background the terminal reported when that agrees with the
-        theme in use (an explicit `/theme light` on a dark terminal does not),
-        else from the palette's surface. `/syntax terminal` without a report
-        has nothing to mix from, so it falls back to borders.
+        From the background the terminal last reported when its theme is the
+        one in use (an explicit `/theme light` on a dark terminal is not, nor a
+        light/dark flip reported without a color), else from the palette's
+        surface. `/syntax terminal` has no surface to fall back on. Off true
+        color, the shade would round to the nearest of 256 colors, a visible
+        blotch on a tinted background, so that keeps the borders too.
         """
-        theme = self.resolved_theme
-        background = terminal_background()
-        if background is None or self.detected_theme != theme:
-            background = self.palette.surface if not self.terminal_colors else None
-        if background is None:
+        if not true_color():
             return None
-        return frame_shades(background, theme)
+        theme = self.resolved_theme
+        reported = terminal_background()
+        if reported is not None and reported[1] == theme:
+            background = reported[0]
+        elif self.terminal_colors:
+            return None
+        else:
+            background = self.palette.surface
+        return frame_shade(background, theme)
 
     @property
     def rich_theme(self) -> Theme:
