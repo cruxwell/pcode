@@ -64,7 +64,7 @@ def test_without_true_color_the_borders_stay(monkeypatch):
     assert transcript().frame_shade() is None
 
 
-def render(columns, *, running, task_style="status", plan=True):
+def render(columns, *, running, task_style="status", plan=True, outcome=None):
     """The shaded layout's rows, and the resolved cell attributes of the top row and the next."""
 
     async def run():
@@ -78,6 +78,7 @@ def render(columns, *, running, task_style="status", plan=True):
             activity.plan = [{"content": "Example task", "status": "in_progress"}]
         if running:
             activity.prompt_state = "running"
+        activity.turn_outcome = outcome
         style = app.transcript.prompt_style(task_style, "shaded")
         with create_pipe_input() as pipe:
             output = Vt100_Output(
@@ -99,7 +100,8 @@ def render(columns, *, running, task_style="status", plan=True):
                 for row in range(screen.height)
             ]
             lines = ["".join(cell.char for cell in row) for row in rows]
-            top = next(i for i, line in enumerate(lines) if line.endswith("┐"))
+            # The editor box is the last on screen; search up so a box above can't match.
+            top = max(i for i, line in enumerate(lines) if line.endswith("┐"))
             attrs = [
                 [style.get_attrs_for_style_str(cell.style) for cell in rows[row]]
                 for row in (top, top + 1)
@@ -145,3 +147,12 @@ def test_a_new_sessions_empty_top_row_keeps_the_box_shade(monkeypatch):
     assert lines[top].strip(" ─┐") == "", lines[top]
     shade = frame_shade(BACKGROUND, "dark").removeprefix("#")
     assert attrs[-1].bgcolor == below[-1].bgcolor == shade
+
+
+@pytest.mark.usefixtures("true_color")
+def test_a_finished_turns_title_row_darkens_without_tasks(monkeypatch):
+    monkeypatch.setattr(theme, "_background", (BACKGROUND, "dark"))
+    lines, top, (attrs, below) = render(40, running=False, plan=False, outcome="done")
+    assert "✓" in lines[top], lines[top]
+    shade = frame_shade(BACKGROUND, "dark").removeprefix("#")
+    assert attrs[-1].bgcolor < shade == below[-1].bgcolor
