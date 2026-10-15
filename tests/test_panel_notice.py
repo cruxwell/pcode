@@ -128,7 +128,8 @@ def test_idle_editor_border_names_the_session_once_it_has_a_name():
     # No name yet (a new session): a plain rule.
     assert editor_top(Activity()) == "┌" + "─" * 38 + "┐"
     title = "Rework\nthe status row"
-    assert editor_top(Activity()) == "┌─ Rework the status row " + "─" * 14 + "┐"
+    # No outcome known yet (a resumed session): a muted dot leads the name.
+    assert editor_top(Activity()) == "┌─ • Rework the status row " + "─" * 12 + "┐"
     # A long name is cut to the pane, leaving the rule its corners.
     title = "x" * 100
     top = editor_top(Activity())
@@ -146,7 +147,7 @@ def test_idle_editor_border_names_the_session_once_it_has_a_name():
     planned.attach_tasks = False
     tasks, editor = tops(planned, 60)
     assert tasks.startswith("┌─ Tasks 1/1 ─")
-    assert editor.startswith("┌─ Rework the status row ─")
+    assert editor.startswith("┌─ • Rework the status row ─")
     # The last turn's outcome leads the name, and shows before there is one.
     for state, mark in [("done", "✓"), ("cancelled", "⊘"), ("failed", "✗")]:
         assert editor_top(Activity(turn_outcome=state)).startswith(f"┌─ {mark} Rework the status ")

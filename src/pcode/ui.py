@@ -325,6 +325,7 @@ class Palette:
                 "session.name": f"nodim {self.task_heading}",
                 "session.done": f"nodim {self.success}",
                 "session.cancelled": self.muted,
+                "session.unknown": self.muted,
                 "session.failed": "nodim ansired bold",
                 # The keybinding overlay: keys in the accent so the eye finds
                 # them first, its way out muted in the bottom border.
@@ -754,6 +755,8 @@ def latest_thought(text: str) -> str:
 
 # How the last turn ended, at the head of the idle editor box's title.
 TURN_MARKS = {"done": "✓", "cancelled": "⊘", "failed": "✗"}
+# A named session whose last outcome this process never saw (see `session_label`).
+UNKNOWN_TURN_MARK = "•"
 
 
 def fit_fragments(fragments: list[tuple[str, str]], width: int) -> list[tuple[str, str]]:
@@ -2863,16 +2866,22 @@ class PromptLayout:
         """
         return " ".join((self.session_title() or "").split())
 
-    def session_label(self) -> list[tuple[str, str]]:
+    def session_label(self, leads: bool = False) -> list[tuple[str, str]]:
         """The last turn's mark, then the session's name; either may be absent.
 
-        A new session, with no name and no finished turn, gets nothing.
+        A new session, with no name and no finished turn, gets nothing. When
+        the label `leads` its row, a name with no outcome known here (a resumed
+        session, a /tree jump) gets a muted `•`, so it never sits bare over the
+        prompt chevron; after `Tasks 1/1 ·` it would only be noise.
         """
         label = []
         outcome = self.activity.turn_outcome
+        name = self.session_name()
         if mark := TURN_MARKS.get(outcome):
             label.append((f"class:session.{outcome}", mark))
-        if name := self.session_name():
+        elif name and leads:
+            label.append(("class:session.unknown", UNKNOWN_TURN_MARK))
+        if name:
             if label:
                 label.append(("", " "))
             label.append(("class:session.name", name))
@@ -2888,7 +2897,7 @@ class PromptLayout:
         # Corners, stub, a space either side, and at least one rule cell.
         # Shaded, `heading_border` draws it: the lead, a space, a rule cell, the corner.
         chrome = len(self.heading_lead()) + 3 if self.frame_shaded() else TITLE_CHROME + 1
-        return fit_fragments(self.session_label(), self.size().columns - chrome)
+        return fit_fragments(self.session_label(leads=True), self.size().columns - chrome)
 
     def frame_shaded(self) -> bool:
         """Whether the boxes are drawn as shades rather than lines (`frame_style`)."""
