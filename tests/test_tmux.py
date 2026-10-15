@@ -111,6 +111,11 @@ def pane(request, tmp_path):
     # reports can stretch the layout into the remaining pane. Keep them on a
     # real tmux.
     env.pop("PROMPT_TOOLKIT_NO_CPR", None)
+    # Off true color, `frame_style shaded` keeps the borders that row counters
+    # find the editor by, including in panes whose scripts set up their own
+    # config; the developer's COLORTERM would otherwise decide.
+    env.pop("COLORTERM", None)
+    env.pop("PROMPT_TOOLKIT_COLOR_DEPTH", None)
     # Most panes assert on the widget while the prompt is idle, so opt them out
     # of the default auto-hide; a test that wants it turns it back on itself.
     config = pathlib.Path(env["XDG_CONFIG_HOME"]) / "pcode"

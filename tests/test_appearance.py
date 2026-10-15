@@ -146,3 +146,20 @@ def test_reported_appearance_repaints_auto_only():
     assert regenerated == ["light"]
     # Remembered for when the user goes back to auto.
     assert app.transcript.detected_theme == "dark"
+
+
+def test_a_flip_without_a_color_asks_for_the_background_once(monkeypatch):
+    from pcode import theme
+
+    app = PreviewApp(theme="auto", console=Console(file=StringIO()))
+    app.transcript.detected_theme = "dark"
+    asked = []
+    app._appearance = type("Watch", (), {"refresh": lambda self: asked.append(1)})()
+    monkeypatch.setattr(theme, "_background", ("#1e1e1e", "dark"))
+    # A mode 2031 report: light now, but the recorded color is still dark's.
+    app.follow_appearance("light")
+    assert asked == [1]
+    # The OSC 11 answer records its own theme, so it asks nothing more.
+    theme.background_theme(b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\")
+    app.follow_appearance("light")
+    assert asked == [1]

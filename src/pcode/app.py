@@ -70,7 +70,7 @@ from pcode.shell_mode import shell_command
 from pcode.startup_input import StartupInput
 from pcode.stream_display import PrintedReply, present_events, present_stream_event
 from pcode.terminal_notify import TabProgress, TabTitle
-from pcode.theme import THEMES, replay_pending_input
+from pcode.theme import THEMES, replay_pending_input, terminal_background
 from pcode.tool_display import plain
 from pcode.ui import (
     WATCHED_PREFIX,
@@ -1250,18 +1250,22 @@ class PreviewApp:
         self.transcript.regenerate()
 
     def follow_appearance(self, detected: str) -> None:
-        """The terminal reported its background; repaint if `theme auto` now differs."""
-        if detected == self.transcript.detected_theme:
-            # Same theme, but maybe a new background (another dark profile):
-            # shaded frames mix from it, so let the editor's style re-read it.
-            if self.prompt_session is not None:
-                self.prompt_session.app.invalidate()
-            return
-        self.transcript.detected_theme = detected
-        if self.transcript.theme == "auto":
-            self.transcript.regenerate()
-            if self.prompt_session is not None:
-                self.prompt_session.app.invalidate()  # The editor's style follows too.
+        """The terminal reported its appearance; repaint what follows it.
+
+        Always invalidates the editor: shaded frames mix from the reported
+        background even when the theme stays (another dark profile), or under
+        a fixed `/theme`. A mode 2031 flip carries no color, so it asks for
+        one; the OSC 11 answer records a matching theme, so this asks once.
+        """
+        reported = terminal_background()
+        if self._appearance is not None and (reported is None or reported[1] != detected):
+            self._appearance.refresh()
+        if detected != self.transcript.detected_theme:
+            self.transcript.detected_theme = detected
+            if self.transcript.theme == "auto":
+                self.transcript.regenerate()
+        if self.prompt_session is not None:
+            self.prompt_session.app.invalidate()
 
     def syntax(self, argument: str) -> None:
         """Choose the Pygments style for code, the completion menu and the prompt.

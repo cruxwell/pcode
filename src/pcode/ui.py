@@ -2871,8 +2871,9 @@ class PromptLayout:
 
         A new session, with no name and no finished turn, gets nothing. When
         the label `leads` its row, a name with no outcome known here (a resumed
-        session, a /tree jump) gets a muted `•`, so it never sits bare over the
-        prompt chevron; after `Tasks 1/1 ·` it would only be noise.
+        session, a /tree jump) gets a muted `•` in either frame style, so the
+        title row always leads with a mark like a finished turn's; after
+        `Tasks 1/1 ·` it would only be noise.
         """
         label = []
         outcome = self.activity.turn_outcome
