@@ -1299,7 +1299,7 @@ def test_status_row_keeps_a_blank_line_below_the_last_tool_line(pane):
     last = max(i for i, line in enumerate(lines) if last_summary in line)
     assert lines[last + 1].strip() == ""
     live = [line.strip() for line in lines[last + 2 : tool]]
-    assert live in ([], ["✓ ⎘ file_30.py"], ["✓ ⎘ file_29.py", "✓ ⎘ file_30.py"]), screen
+    assert live in ([], ["√ ⎘ file_30.py"], ["√ ⎘ file_29.py", "√ ⎘ file_30.py"]), screen
 
 
 IMMEDIATE_PROMPT_SCRIPT = """

@@ -37,7 +37,7 @@ TASK_ROWS = 5
 ACTIVE_TASK_ICON = "↺"
 PLAN_ICONS = {
     "pending": "○",
-    "completed": "✓",
+    "completed": "✔",
     "cancelled": "–",
     "blocked": "!",
 }

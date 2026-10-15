@@ -758,7 +758,7 @@ def test_a_delegate_shows_its_plan_but_not_its_calls():
     rows = [text for _, text in task_panel_rows([], history, 10, "*")]
     assert rows[0].startswith("» Worker · ") and " · Starting · fix it" in rows[0]
     assert rows[1:] == [
-        "├── ✓ Read the code",
+        "├── ✔ Read the code",
         "├── * Fix the bug",
         "└── ○ Run the tests",
     ]
@@ -775,7 +775,7 @@ def test_a_delegate_shows_its_plan_but_not_its_calls():
         ],
     )
     assert [text for _, text in task_panel_rows([], history, 10, "*")][1:] == [
-        "├── ✓ Fix the bug",
+        "├── ✔ Fix the bug",
         "├── * Run the tests",
         "└── ○ Report back",
     ]

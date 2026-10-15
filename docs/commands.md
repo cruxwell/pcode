@@ -278,7 +278,7 @@ box (or above it, with `attach_tasks=off`). Task
 rows show status icons and keep the active item in view. By default the text is
 shaded by status too: the active task stands out and finished ones fade.
 `/config set task_style icons` gives every task's text the same weight instead,
-so only the coloured icon (`✓` done, `↺` in progress, `○` pending, `–`
+so only the coloured icon (`✔` done, `↺` in progress, `○` pending, `–`
 cancelled) says where it stands; `task_style status` brings the shading back.
 Both apply immediately. Running
 [sub-agents](#delegated-sub-agents) appear beneath the active task with tree
@@ -311,14 +311,15 @@ waits on a job. A tool without one keeps its verb spelled out. Many fonts
 lack `⌕`, `⎘` and `⧖`, and the terminal borrows them from another font;
 if they look off in yours, `/config set tool_glyphs off` drops them and names
 the verb once the call settles. Shell calls keep `$`.
-Once a call finishes, its spinner turns into `✓` or `✗` and the row stays
+Once a call finishes, its spinner turns into a light `√` (lighter than a
+finished task's `✔`, so the two never read alike) or `✗`, and the row stays
 while the next calls run, newest last, so parallel calls each get a row and
 line up whether or not a thought is showing:
 
 ```text
 ∴ Checking where the config is loaded
-✓ ⎘ src/app.py
-✓ ⌕ load_config
+√ ⎘ src/app.py
+√ ⌕ load_config
 ◜ $ make test
 ┌─ ◜ Run shell ────────────────────────────────────── ✓ 9 tools · 3s ─┐
 ```
@@ -415,7 +416,7 @@ in the extension guide).
 ```text
 ↺ Fix the flaky login test
 └── » investigating the retry path · 12.4s · Working
-    ├── ✓ Read the retry code
+    ├── ✔ Read the retry code
     ├── ↺ Reproduce the failure
     └── ○ Report back
 ```

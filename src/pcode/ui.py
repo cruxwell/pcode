@@ -256,7 +256,7 @@ class Palette:
                 **{f"agent.hue.{index}": hue for index, hue in enumerate(self.agents)},
                 "plan.icon.pending": self.muted,
                 "plan.icon.in_progress": f"nodim {self.accent} bold",
-                "plan.icon.completed": f"nodim {self.success}",
+                "plan.icon.completed": f"nodim bold {self.success}",
                 "plan.icon.cancelled": f"{self.muted} dim",
                 "plan.icon.blocked": "nodim ansiyellow bold",
                 "plan.tree": self.muted,
@@ -755,6 +755,9 @@ def latest_thought(text: str) -> str:
 
 # How the last turn ended, at the head of the idle editor box's title.
 TURN_MARKS = {"done": "✓", "cancelled": "⊘", "failed": "✗"}
+# A settled tool call's mark on the live tool rows: a lighter tick than the
+# plan's `✓`, so a finished command never reads as a finished task beside it.
+TOOL_DONE_MARK = "√"
 # A named session whose last outcome this process never saw (see `session_label`).
 UNKNOWN_TURN_MARK = "•"
 
@@ -1329,7 +1332,7 @@ class Activity:
         elif call.failed:
             mark = ("class:activity.tool.failed", "✗")
         else:
-            mark = ("class:activity.tool.done", "✓")
+            mark = ("class:activity.tool.done", TOOL_DONE_MARK)
         # A wide spinner (`dots12`) would push running rows' text past
         # settled ones'; pad the settled mark's column to its width.
         pad = "" if call.settled is None else " " * max(0, cell_len(spinner) - 1)

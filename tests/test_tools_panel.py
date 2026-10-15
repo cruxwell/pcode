@@ -301,7 +301,7 @@ def test_parallel_tool_calls_never_get_task_panel_rows(status):
     ]
     icon = "⟳" if status == "in_progress" else {"pending": "○", "blocked": "!"}[status]
     text = [text for _, text in task_panel_rows(items, history, 10, "⟳")]
-    assert text == ["✓ Inspect", f"{icon} Implement"]
+    assert text == ["✔ Inspect", f"{icon} Implement"]
     assert task_panel_rows([], history, 10, "⟳") == []
 
 

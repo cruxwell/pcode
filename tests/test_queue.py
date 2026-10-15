@@ -209,7 +209,7 @@ def test_status_row_reports_the_newest_running_tool_call():
     # One call is its own phase: its label is already the verb.
     assert parts["activity.phase"] == "Read file" and "activity.detail" not in parts
     # The status row says the verb; the tool row's glyph stands in for it.
-    assert tool_row(activity) == "· ⎘ example.py\n✓ ⌕ pattern"
+    assert tool_row(activity) == "· ⎘ example.py\n√ ⌕ pattern"
     # At one row, only the call the status row reports.
     activity.tool_max_rows = 1
     assert tool_row(activity) == "· ⎘ example.py"
@@ -236,7 +236,7 @@ def test_finished_call_is_held_as_done_under_the_models_phase():
     # and the held call is muted chrome with its result mark, not live work.
     assert parts["activity.phase"] == "Waiting for model" and "activity.detail" not in parts
     assert activity.tool_rows(activity.status_line(), 80)[-1] == [
-        ("class:activity.tool.done", "✓"),
+        ("class:activity.tool.done", "√"),
         ("class:activity.tool", " ⎘ example.py"),
     ]
     activity.tools.clear()
@@ -244,7 +244,7 @@ def test_finished_call_is_held_as_done_under_the_models_phase():
     assert "activity.detail" not in parts and parts["activity.meta"] == "0s"
     # The tool row keeps the turn's last call, so the editor box does not
     # jump a row with every call; a new turn starts without one.
-    assert tool_row(activity) == "✓ ⎘ example.py"
+    assert tool_row(activity) == "√ ⎘ example.py"
     activity.start_prompt("Next")
     assert tool_row(activity) == ""
 
@@ -258,7 +258,7 @@ def test_tool_row_spells_out_a_verb_with_no_glyph():
     # The status row names the verb while it runs, so the row need not.
     assert tool_row(activity) == "· pcode docs"
     activity.tools.record(ToolSummary("web_search", "pcode docs", call_id="one"))
-    assert tool_row(activity) == "✓ web_search · pcode docs"
+    assert tool_row(activity) == "√ web_search · pcode docs"
 
 
 def test_tool_row_spells_out_verbs_with_glyphs_off(monkeypatch):
@@ -272,20 +272,20 @@ def test_tool_row_spells_out_verbs_with_glyphs_off(monkeypatch):
     activity.think("Checking the example")
     assert tool_row(activity) == "· example.py"
     activity.tools.record(ToolSummary("read_file", "example.py", call_id="one"))
-    assert tool_row(activity) == "✓ Read file · example.py"
+    assert tool_row(activity) == "√ Read file · example.py"
     # `auto` draws the symbols except on the Linux console, which has no
     # fallback font for them.
     activity.tool_glyphs = "auto"
     monkeypatch.setenv("TERM", "linux")
-    assert tool_row(activity) == "✓ Read file · example.py"
+    assert tool_row(activity) == "√ Read file · example.py"
     monkeypatch.setenv("TERM", "xterm-256color")
-    assert tool_row(activity) == "✓ ⎘ example.py"
+    assert tool_row(activity) == "√ ⎘ example.py"
     # `$` is ASCII, in every font: shell calls keep it with the symbols off.
     activity.tool_glyphs = "off"
     activity.tools.record(ToolStarted("shell", "make test", "two"))
-    assert tool_row(activity) == "✓ Read file · example.py\n· $ make test"
+    assert tool_row(activity) == "√ Read file · example.py\n· $ make test"
     activity.tools.record(ToolSummary("shell", "make test", call_id="two"))
-    assert tool_row(activity) == "✓ Read file · example.py\n✓ $ make test"
+    assert tool_row(activity) == "√ Read file · example.py\n√ $ make test"
 
 
 def test_tool_rows_line_up_under_a_wide_spinner():
@@ -298,7 +298,7 @@ def test_tool_rows_line_up_under_a_wide_spinner():
     activity.tools.record(ToolSummary("read_file", "a.py", call_id="one"))
     activity.tools.record(ToolStarted("read_file", "b.py", "two"))
     rows = activity.tool_rows(activity.status_line(), 80, spinner="⢀⠀")
-    assert ["".join(text for _, text in row) for row in rows] == ["✓  ⎘ a.py", "⢀⠀ ⎘ b.py"]
+    assert ["".join(text for _, text in row) for row in rows] == ["√  ⎘ a.py", "⢀⠀ ⎘ b.py"]
 
 
 def test_tool_rows_keep_the_latest_calls_and_the_status_rows_own():
@@ -316,12 +316,12 @@ def test_tool_rows_keep_the_latest_calls_and_the_status_rows_own():
     run("read_file", "b.py", "two")
     run("read_file", "c.py", "three")
     # The oldest finished call gives its row up to the newest.
-    assert tool_row(activity) == "✓ ⎘ b.py\n✓ ⎘ c.py"
+    assert tool_row(activity) == "√ ⎘ b.py\n√ ⎘ c.py"
     # A delegate has its own panel row, and its sub-agent's calls are its own.
     activity.tools.record(ToolStarted("delegate_task", "", "d", agent="worker", task="t"))
     activity.tools.record(ToolStarted("grep", "x", "d:grep", parent_call_id="d"))
     activity.tools.record(ToolStarted("read_file", "d.py", "four"))
-    assert tool_row(activity) == "✓ ⎘ c.py\n· ⎘ d.py"
+    assert tool_row(activity) == "√ ⎘ c.py\n· ⎘ d.py"
     # The call the status row reports keeps its row, however the window slides:
     # at one row, it is the only one.
     line = activity.status_line()
@@ -348,10 +348,10 @@ def test_tool_rows_clear_a_finished_call_after_it_lingers():
         tool_row(activity)
         activity.tools.record(ToolSummary("read_file", detail, call_id=call_id))
     activity.tools.record(ToolStarted("read_file", "c.py", "three"))
-    assert tool_row(activity) == "✓ ⎘ a.py\n✓ ⎘ b.py\n· ⎘ c.py"
+    assert tool_row(activity) == "√ ⎘ a.py\n√ ⎘ b.py\n· ⎘ c.py"
     # `a.py` finished long ago; `b.py` just now; `c.py` is still running.
     activity.tools.turn_calls[0].settled -= 11
-    assert tool_row(activity) == "✓ ⎘ b.py\n· ⎘ c.py"
+    assert tool_row(activity) == "√ ⎘ b.py\n· ⎘ c.py"
     # Even the status row's own call clears once it has lingered.
     activity.tools.record(ToolSummary("read_file", "c.py", call_id="three"))
     for call in activity.tools.turn_calls:
@@ -360,10 +360,10 @@ def test_tool_rows_clear_a_finished_call_after_it_lingers():
     # Except while the status row still names it.
     line = replace(activity.status_line(), call=activity.tools.turn_calls[-1])
     rows = activity.tool_rows(line, 80)
-    assert ["".join(text for _, text in row) for row in rows] == ["✓ ⎘ c.py"]
+    assert ["".join(text for _, text in row) for row in rows] == ["√ ⎘ c.py"]
     # 0 keeps finished rows until newer calls push them out.
     activity.tool_linger_seconds = 0
-    assert tool_row(activity) == "✓ ⎘ a.py\n✓ ⎘ b.py\n✓ ⎘ c.py"
+    assert tool_row(activity) == "√ ⎘ a.py\n√ ⎘ b.py\n√ ⎘ c.py"
 
 
 def test_tool_rows_tell_lookalike_calls_apart():
@@ -383,16 +383,16 @@ def test_tool_rows_tell_lookalike_calls_apart():
     # Edits to one file say what each changed.
     run("edit_file", "a.py", "one", added=3, removed=1)
     run("edit_file", "a.py", "two", added=1)
-    assert tool_row(activity) == "✓ ✎ a.py · +3 −1\n✓ ✎ a.py · +1 −0"
+    assert tool_row(activity) == "√ ✎ a.py · +3 −1\n√ ✎ a.py · +1 −0"
     # A repeated call shares the row of the one before it, counted, but a
     # failure keeps a row of its own.
     run("grep", "pattern", "three", failed=True)
     run("grep", "pattern", "four")
     run("grep", "pattern", "five")
-    assert tool_row(activity) == ("✓ ✎ a.py · +3 −1\n✓ ✎ a.py · +1 −0\n✗ ⌕ pattern\n✓ ⌕ pattern ×2")
+    assert tool_row(activity) == ("√ ✎ a.py · +3 −1\n√ ✎ a.py · +1 −0\n✗ ⌕ pattern\n√ ⌕ pattern ×2")
     # An edit with no diff has no counts, rather than `+0 −0`.
     run("write_file", "img.bin", "six", omitted="Binary content")
-    assert tool_row(activity).endswith("✓ ✎ img.bin")
+    assert tool_row(activity).endswith("√ ✎ img.bin")
     # The counts outlast a long path cut to the pane.
     run("edit_file", "src/" + "deep/" * 20 + "b.py", "seven", added=2, removed=2)
     last = "".join(text for _, text in activity.tool_rows(activity.status_line(), 40)[-1])
@@ -497,7 +497,7 @@ def test_status_row_waits_on_sub_agents_listed_in_the_panel(monkeypatch):
     activity.tools.record(ToolSummary("read_file", "x.py", call_id="a:read"))
     parts = styled(activity.status_fragments("⠋", 80))
     assert parts["activity.phase"] == "Waiting for 2 agents"
-    assert tool_row(activity) == "✓ ⎘ x.py"
+    assert tool_row(activity) == "√ ⎘ x.py"
     monkeypatch.setattr("pcode.tool_panel.STATUS_DWELL", 0.0)
     activity.tools.record(ToolSummary("delegate_task", "done", call_id="b"))
     parts = styled(activity.status_fragments("⠋", 80))
@@ -1116,7 +1116,7 @@ def test_tool_rows_hold_calls_that_finished_between_frames():
         )
     activity.tools.record(ToolStarted("read_file", "3.py", "three"))
     # No frame drew while `1.py` or `2.py` ran.
-    assert tool_row(activity) == "✓ ⎘ 1.py\n✗ ⎘ 2.py\n· ⎘ 3.py"
+    assert tool_row(activity) == "√ ⎘ 1.py\n✗ ⎘ 2.py\n· ⎘ 3.py"
     # A new turn drops finished rows; the call the status row reports stays.
     activity.forget_calls()
     assert tool_row(activity) == "· ⎘ 3.py"

@@ -42,7 +42,7 @@ def test_only_delegates_and_their_plans_nest_under_the_active_task(task_tree):
     rows = task_panel_rows(items, history, 10, "*")
     # Plain calls, the parent's and the sub-agent's, stay on the status row.
     assert rows == [
-        ("class:plan.completed", "✓ Inspect"),
+        ("class:plan.completed", "✔ Inspect"),
         ("class:plan.in_progress", "* Implement"),
         ("class:plan.agent,agent.hue.0", "└── » Worker · 0.0s · Working · Fix it"),
         ("class:plan.in_progress,agent.hue.0", "    ├── * Read the code"),
@@ -93,8 +93,8 @@ def test_without_an_active_task_only_the_delegate_children_have_guides(task_tree
     items[1]["status"] = "completed"
     rows = task_panel_rows(items, history, 10, "*")
     assert [text for _, text in rows] == [
-        "✓ Inspect",
-        "✓ Implement",
+        "✔ Inspect",
+        "✔ Implement",
         "○ Validate",
         "» Worker · 0.0s · Working · Fix it",
         "├── * Read the code",
