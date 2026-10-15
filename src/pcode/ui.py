@@ -138,6 +138,9 @@ def shaded_styles(shade: str) -> dict[str, str]:
     cells in the shade's own color, so the geometry, and every height sum
     built on it, is the same in both styles.
     """
+    # The editor's top row (status, task heading or session name) sits a
+    # touch darker, so it reads as the box's header without a drawn line.
+    top = _mix(shade, "#000000", 0.05)
     # Appended after the palette's `frame.border`: for equal classes the later
     # rule wins, so these override its muted color.
     return {
@@ -145,6 +148,8 @@ def shaded_styles(shade: str) -> dict[str, str]:
         # nodim: the terminal palette mutes borders with dim, which would
         # leave a faint line in the surface's own color.
         "shaded frame.border": f"nodim fg:{shade}",
+        "shaded.top": f"bg:{top}",
+        "shaded.top frame.border": f"nodim fg:{top}",
     }
 
 
@@ -2942,16 +2947,22 @@ class PromptLayout:
         plain_top = editor_frame.container.children[0]
         editor_frame.container.children[0] = HSplit(
             [
-                ConditionalContainer(self.status_border(), filter=status),
-                ConditionalContainer(self.plan_heading_border(), filter=attached & ~status),
-                ConditionalContainer(
-                    plain_top,
-                    filter=~attached & ~status & ~shaded,
-                ),
-                # Shaded, the session's name lines up with the prompt chevron.
-                ConditionalContainer(
-                    self.heading_border(self.idle_title),
-                    filter=~attached & ~status & shaded,
+                # Shaded, the top row is a touch darker than the rest of the box.
+                HSplit(
+                    [
+                        ConditionalContainer(self.status_border(), filter=status),
+                        ConditionalContainer(self.plan_heading_border(), filter=attached & ~status),
+                        ConditionalContainer(
+                            plain_top,
+                            filter=~attached & ~status & ~shaded,
+                        ),
+                        # Shaded, the session's name lines up with the prompt chevron.
+                        ConditionalContainer(
+                            self.heading_border(self.idle_title),
+                            filter=~attached & ~status & shaded,
+                        ),
+                    ],
+                    style="class:shaded.top",
                 ),
                 ConditionalContainer(
                     HSplit(

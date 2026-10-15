@@ -65,7 +65,7 @@ def test_without_true_color_the_borders_stay(monkeypatch):
 
 
 def render(columns, *, running, task_style="status"):
-    """The shaded layout's rows, and each top-row cell's resolved attributes."""
+    """The shaded layout's rows, and the resolved cell attributes of the top row and the next."""
 
     async def run():
         app = PreviewApp(console=Console(file=StringIO(), width=columns, color_system=None))
@@ -99,7 +99,10 @@ def render(columns, *, running, task_style="status"):
             ]
             lines = ["".join(cell.char for cell in row) for row in rows]
             top = next(i for i, line in enumerate(lines) if "Example task" in line) - 1
-            attrs = [style.get_attrs_for_style_str(cell.style) for cell in rows[top]]
+            attrs = [
+                [style.get_attrs_for_style_str(cell.style) for cell in rows[row]]
+                for row in (top, top + 1)
+            ]
             return lines, top, attrs
 
     return asyncio.run(run())
@@ -113,7 +116,7 @@ def test_shaded_headings_line_up_with_the_task_icons(
     monkeypatch, columns, running, task_style, lead
 ):
     monkeypatch.setattr(theme, "_background", (BACKGROUND, "dark"))
-    lines, top, attrs = render(columns, running=running, task_style=task_style)
+    lines, top, (attrs, below) = render(columns, running=running, task_style=task_style)
     heading, task = lines[top], lines[top + 1]
     # The heading starts in the task icon's column, after the invisible side.
     assert heading[:lead] == " " * lead and heading[lead] != " ", heading
@@ -124,8 +127,11 @@ def test_shaded_headings_line_up_with_the_task_icons(
         assert heading[lead:].startswith("Tasks")
     # Same geometry as borders: the row fills the pane and keeps its corner.
     assert len(heading) == columns and heading.endswith("┐")
-    shade = frame_shade(BACKGROUND, "dark")
-    # Border glyphs, rule included, vanish into the shade instead of drawing a line.
+    shade = frame_shade(BACKGROUND, "dark").removeprefix("#")
+    # Border glyphs, rule included, vanish into the row's shade instead of drawing a line.
     corner = attrs[-1]
-    assert corner.color == corner.bgcolor == shade.removeprefix("#")
+    assert corner.color == corner.bgcolor
     assert not corner.dim
+    # The heading row sits a touch darker than the box below it.
+    assert corner.bgcolor < shade
+    assert below[-1].bgcolor == shade
