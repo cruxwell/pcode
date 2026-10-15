@@ -85,7 +85,7 @@ def test_task_tree_guides_survive_resize_at_each_depth(pane):
         screen = capture(pane, "src/auth.py", running=True, columns=width)
         assert "Main task" in screen
         assert "│└── » Explorer" in screen
-        assert "│    ├── ✓ Inspect" in screen
+        assert "│    ├── ✔ Inspect" in screen
         assert any("│    ├── " + row in screen for row in active_task(" Work"))
         assert "│    └── ○ Validate" in screen
         assert "Search" not in screen

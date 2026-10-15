@@ -930,9 +930,9 @@ def test_plan_panel_is_bounded_updates_and_clears(pane, release, split):
     pane("send-keys", "-t", "preview:0.0", "-l", "editable draft")
     resize(pane, "split-window", split, "-t", "preview:0.0", "cat")
     release()
-    completed = capture(pane, "✓ Task 0")
+    completed = capture(pane, "✔ Task 0")
     assert any(line.startswith("┌─ Tasks 12/12 · ✓ ─") for line in completed.splitlines())
-    assert "│✓ Task 0" in completed
+    assert "│✔ Task 0" in completed
     assert input_rows(completed) == 1
     assert completed.count("┌") == completed.count("└") == 1
     resize(pane, "kill-pane", "-t", "preview:0.1")

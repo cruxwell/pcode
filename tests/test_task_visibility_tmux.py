@@ -23,7 +23,7 @@ def test_toggle_removes_entire_widget_and_restores_the_latest_plan(pane, release
     assert screen.count("┌") == screen.count("└") == 1
     assert input_rows(screen) == 1
     pane("send-keys", "-t", "preview:0.0", "C-o")
-    screen = capture(pane, "✓ Task 0")
+    screen = capture(pane, "✔ Task 0")
     assert "Tasks 12/12" in screen  # Plan updates kept arriving while hidden.
     assert "kept draft" in screen
     assert screen.count("┌") == screen.count("└") == 1
@@ -53,7 +53,7 @@ def test_autohide_reclaims_the_frame_when_the_turn_ends(pane, release):  # noqa:
     assert screen.count("┌") == screen.count("└") == 1
     assert input_rows(screen) == 1
     pane("send-keys", "-t", "preview:0.0", "C-o")  # Ctrl+O brings it straight back.
-    screen = capture(pane, "✓ Task 0")
+    screen = capture(pane, "✔ Task 0")
     assert "kept draft" in screen
     assert screen.count("┌") == screen.count("└") == 1
     assert screen.count("├") == 1
