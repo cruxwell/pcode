@@ -381,8 +381,10 @@ def test_closing_a_menu_that_scrolled_the_screen_restores_the_transcript(pane):
     pane("send-keys", "-t", "preview:0.0", "C-c")
 
     def above_editor(screen):
+        # The idle editor keeps a blank row between itself and a trailing note.
         lines = screen.splitlines()
-        return lines[max(i for i, line in enumerate(lines) if line.startswith("┌")) - 1]
+        top = max(i for i, line in enumerate(lines) if line.startswith("┌"))
+        return lines[top - 2] if not lines[top - 1].strip() else ""
 
     screen = settle(pane, lambda screen: "Input discarded" in above_editor(screen))
     # Before the replay the screen kept the menu's height as blank rows.

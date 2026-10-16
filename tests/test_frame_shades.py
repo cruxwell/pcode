@@ -64,7 +64,7 @@ def test_without_true_color_the_borders_stay(monkeypatch):
     assert transcript().frame_shade() is None
 
 
-def render(columns, *, running, task_style="status", plan=True, outcome=None):
+def render(columns, *, running, task_style="status", plan=True, outcome=None, note=None):
     """The shaded layout's rows, and the resolved cell attributes of the top row and the next."""
 
     async def run():
@@ -79,6 +79,8 @@ def render(columns, *, running, task_style="status", plan=True, outcome=None):
         if running:
             activity.prompt_state = "running"
         activity.turn_outcome = outcome
+        if note is not None:
+            app.transcript.retained_note(note)
         style = app.transcript.prompt_style(task_style, "shaded")
         with create_pipe_input() as pipe:
             output = Vt100_Output(
@@ -156,3 +158,50 @@ def test_a_finished_turns_title_row_darkens_without_tasks(monkeypatch):
     assert "✓" in lines[top], lines[top]
     shade = frame_shade(BACKGROUND, "dark").removeprefix("#")
     assert attrs[-1].bgcolor < shade == below[-1].bgcolor
+
+
+@pytest.mark.usefixtures("true_color")
+@pytest.mark.parametrize("running", [False, True])
+def test_the_prompt_drops_a_row_below_a_filled_top_row(monkeypatch, running):
+    monkeypatch.setattr(theme, "_background", (BACKGROUND, "dark"))
+    lines, top, _ = render(40, running=running, plan=False, outcome="done")
+    # The box keeps its three rows: heading, a blank shaded row, then the prompt.
+    assert lines[top + 1].strip(" └─┘") == "", lines[top + 1]
+    assert lines[top + 2].startswith("│❯"), lines[top + 2]
+    assert not any(line.startswith("└") for line in lines[top + 2 :]), lines
+
+
+@pytest.mark.usefixtures("true_color")
+def test_attached_tasks_keep_the_prompt_under_their_divider(monkeypatch):
+    monkeypatch.setattr(theme, "_background", (BACKGROUND, "dark"))
+    lines, top, _ = render(40, running=False, plan=True, outcome="done")
+    assert lines[top + 2].startswith("├"), lines
+    assert lines[top + 3].startswith("│❯") and lines[top + 4].startswith("└"), lines
+
+
+def test_drawn_borders_keep_the_prompt_under_the_title(monkeypatch):
+    # Without true color the borders stay, and their line already separates the two.
+    monkeypatch.delenv("PROMPT_TOOLKIT_COLOR_DEPTH", raising=False)
+    monkeypatch.delenv("COLORTERM", raising=False)
+    monkeypatch.setattr(theme, "_background", (BACKGROUND, "dark"))
+    lines, top, _ = render(40, running=False, plan=False, outcome="done")
+    assert lines[top + 1].startswith("│❯") and lines[top + 2].startswith("└"), lines
+
+
+@pytest.mark.usefixtures("true_color")
+def test_a_new_sessions_prompt_stays_centred(monkeypatch):
+    monkeypatch.setattr(theme, "_background", (BACKGROUND, "dark"))
+    lines, top, _ = render(40, running=False, plan=False)
+    assert lines[top + 1].startswith("│❯"), lines[top + 1]
+    assert lines[top + 2].startswith("└"), lines[top + 2]
+
+
+@pytest.mark.usefixtures("true_color")
+def test_the_idle_editor_keeps_a_blank_row_below_startup_notes(monkeypatch):
+    monkeypatch.setattr(theme, "_background", (BACKGROUND, "dark"))
+    # Scrollback ending blank needs no row of the editor's own...
+    lines, top, _ = render(40, running=False, plan=False)
+    assert top == 0, lines
+    # ...but ending on a note, as startup's repository and skill lines do, it does.
+    lines, top, _ = render(40, running=False, plan=False, note="Skill commands: /skill:x")
+    assert top == 1 and lines[0].strip() == "", lines
