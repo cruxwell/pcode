@@ -67,7 +67,8 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   Conversation pane on the right highlights exactly what Enter will copy. The
   newest response is selected first. A quote renders with a `▌` rail and wraps to
   the terminal, which makes it awkward to select by hand, so its row copies the
-  text as written, without the `>` markers. Code is copied without a trailing
+  text without the `>` markers, and with lines that only wrap in the source
+  joined, as the quote displays them (blank lines and hard breaks stay). Code is copied without a trailing
   newline, so pasting it into a shell doesn't run it. Escape closes the popup
   without copying. When the only response is plain text, `/copy` skips the popup
   and copies it straight away.

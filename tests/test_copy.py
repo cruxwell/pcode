@@ -31,7 +31,7 @@ def test_snippets_pull_top_level_quotes_and_code_without_markers():
     found = snippets(RESPONSE)
     assert found[0] == Snippet("response", RESPONSE)
     assert found[1:] == [
-        Snippet("quote", "SAML login fails for\n**all** users.\nlazy continuation"),
+        Snippet("quote", "SAML login fails for **all** users. lazy continuation"),
         # No trailing newline, which would run the command when pasted in a shell.
         Snippet("code", "zed schema read", "bash"),
         Snippet("quote", "outer\n> nested"),
@@ -43,7 +43,7 @@ def test_snippets_pull_top_level_quotes_and_code_without_markers():
 
 def test_a_quote_opening_a_list_item_copies_without_the_list_marker():
     assert snippets("2. > quoted in list\n   > and more\n")[1:] == [
-        Snippet("quote", "quoted in list\nand more")
+        Snippet("quote", "quoted in list and more")
     ]
 
 
@@ -109,7 +109,7 @@ UP = "\x1b[A"
         # A response's quotes and code blocks are rows of their own under it.
         (RESPONSE, UP * 2 + "\r", "outer\n> nested"),
         (RESPONSE, UP * 3 + "\r", "zed schema read"),
-        (RESPONSE, UP * 4 + "\r", "SAML login fails for\n**all** users.\nlazy continuation"),
+        (RESPONSE, UP * 4 + "\r", "SAML login fails for **all** users. lazy continuation"),
         (RESPONSE, UP * 5 + "\r", RESPONSE.strip()),
     ],
 )
@@ -259,3 +259,8 @@ def test_ctrl_y_with_an_empty_editor_copies_the_last_response():
 
     asyncio.run(run())
     assert asked == [True]
+
+
+def test_quotes_copy_soft_wrapped_lines_joined_as_they_render():
+    quote = "> one\n> two  \n> hard\\\n> break\n>\n> - item\n>   wraps\n>\n> ```\n> a\n> b\n> ```\n"
+    assert snippets(quote)[1].text == "one two\nhard\nbreak\n\n- item wraps\n\n```\na\nb\n```"

@@ -89,6 +89,43 @@ def _unquote(lines: list[str]) -> str:
     ).strip("\n")
 
 
+_HARD_BREAK = re.compile(r"(  |\\)$")
+
+
+def _unwrap(markdown: str) -> str:
+    """``markdown`` with each paragraph's soft line breaks joined by spaces.
+
+    Markdown draws a lone newline inside a paragraph as a space, so a quote
+    copied as written would break where nothing on screen does. Hard breaks,
+    blank lines, code, and nested quotes keep their lines.
+    """
+    lines = markdown.splitlines()
+    depth = 0
+    joined: dict[int, int] = {}  # paragraph's first line -> its end
+    for token in MarkdownIt("commonmark").parse(markdown):
+        if token.type == "blockquote_open":
+            depth += 1
+        elif token.type == "blockquote_close":
+            depth -= 1
+        elif token.type == "paragraph_open" and depth == 0 and token.map:
+            joined[token.map[0]] = token.map[1]
+    out: list[str] = []
+    index = 0
+    while index < len(lines):
+        end = joined.get(index, index + 1)
+        paragraph = lines[index:end]
+        line = paragraph[0]
+        for following in paragraph[1:]:
+            if _HARD_BREAK.search(line):
+                out.append(_HARD_BREAK.sub("", line).rstrip())
+                line = following
+            else:
+                line = f"{line.rstrip()} {following.lstrip()}"
+        out.append(line)
+        index = end
+    return "\n".join(out)
+
+
 def snippets(markdown: str) -> list[Snippet]:
     """The whole response, then each top-level quote and code block in order."""
     if not markdown.strip():
@@ -105,7 +142,7 @@ def snippets(markdown: str) -> list[Snippet]:
                 quoted = lines[start:end]
                 if (marker := quoted[0].find(">")) > 0:
                     quoted[0] = quoted[0][marker:]
-                if text := _unquote(quoted):
+                if text := _unwrap(_unquote(quoted)):
                     found.append(Snippet("quote", text, lines=(start, end)))
             depth += 1
         elif token.type == "blockquote_close":
