@@ -46,15 +46,38 @@ In a trace it shows up as a tool call with a `srvtoolu_` id named
   `response_inclusion` and `use_cache`. That's the natural home for this.
 - No issue reports the sandbox being mistaken for the agent's shell.
 
+Checked 2026-10-16 against the #7633 diff and the locked Anthropic SDK:
+
+- #7633's only approvals are from the `github-actions` review bot, and that bot
+  asked @DouweM to confirm the API shape (#7338 left it as a maintainer call). So
+  the shape isn't settled yet and an extra field costs no re-review.
+- As written, #7633 bypasses the profile workaround: a `response_inclusion` or
+  `use_cache` setting returns the `20260318` param before the
+  `supports_dynamic_filtering` check, so a profile with it set to `False` gets
+  the sandbox back.
+- It also marks `code_execution` and friends as enabled server tools whenever a
+  `20260209`/`20260318` web tool is present. With `allowed_callers: ["direct"]`
+  that should be skipped, or a hallucinated `code_execution` call is no longer
+  dropped (the #6401 fix).
+- The SDK params for web search `20260209`/`20260318` and web fetch
+  `20260209`/`20260309`/`20260318` all accept `allowed_callers`.
+
 ## Upstream tasks
 
-- [ ] Comment on #7633 (or open an issue that links it) asking for
-      `allowed_callers` in both Anthropic web tool settings. Lead with the
-      shell confusion and the numbers above; ZDR eligibility is a second reason.
-- [ ] If maintainers prefer, offer the PR: `allowed_callers: list[str]` passed
-      through on the `_20260209`+ params, keeping the newer version.
-- [ ] Ask whether docs should warn that the `_20260209` tools put an implicit
-      code-execution tool in front of the model, next to any local `shell`.
+Decision: one comment on #7633, not a separate issue. It's the same settings
+shape, the PR already touches the version selection and the implicit-tool set,
+and the bypass is a bug in the PR itself.
+
+- [ ] Comment on #7633: add `allowed_callers` to both Anthropic settings
+      TypedDicts, pass it through on `20260209`+ params, skip the implicit
+      code-execution names when it excludes code execution, and point out the
+      profile bypass. Lead with the shell confusion and the numbers above; ZDR
+      eligibility is a second reason. Offer to push the change or a follow-up PR.
+- [ ] If the author wants to keep scope, open an issue linking #7633 and send
+      the follow-up PR from it.
+- [ ] Docs: in the same comment, ask for a note on `WebSearchTool` /
+      `WebFetchTool` that the `20260209`+ tools give the model an implicit
+      code-execution tool, which competes with any local shell tool.
 - [ ] Once released, swap the profile workaround for
       `WebSearchTool(provider_settings={"anthropic": {"allowed_callers": ["direct"]}})`
       wherever it was applied.
