@@ -50,6 +50,8 @@ CONFIG_NAME = "memory.toml"
 # Not ~/basic-memory: that's Basic Memory's own default project, and it refuses
 # to register a project nested inside another.
 DEFAULT_VAULT_ROOT = "~/vaults"
+# `/plan --obsidian` outside every configured org: one shared vault under vault_root.
+DEFAULT_VAULT = "default"
 BRIEFS = "briefs"
 FORMAT_NOTE = "Brief format.md"
 SNIPPET = "memory-states"
@@ -109,20 +111,29 @@ def safe_name(text: str, limit: int = 90) -> str:
     return text.rstrip(" .")
 
 
+def read_config(path: Path) -> dict:
+    """`memory.toml` as a table; a missing file is empty, a broken one raises ValueError."""
+    try:
+        return tomllib.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise ValueError(f"{path}: {error}") from None
+
+
+def vault_root(data: dict, path: Path) -> Path:
+    value = data.get("vault_root", DEFAULT_VAULT_ROOT)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{path}: vault_root must be a nonempty path string")
+    return Path(value).expanduser()
+
+
 def load_orgs(path: Path | None = None) -> list[Org]:
     """Orgs from `memory.toml`; a missing file means none, a broken one raises ValueError."""
     path = path or config_path()
-    try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return []
-    except (OSError, tomllib.TOMLDecodeError) as error:
-        raise ValueError(f"{path}: {error}") from None
+    data = read_config(path)
     default_sync = bool(data.get("auto_sync", False))
-    root_value = data.get("vault_root", DEFAULT_VAULT_ROOT)
-    if not isinstance(root_value, str) or not root_value.strip():
-        raise ValueError(f"{path}: vault_root must be a nonempty path string")
-    vault_root = Path(root_value).expanduser()
+    root = vault_root(data, path)
     entries = data.get("org", [])
     if not isinstance(entries, list):
         raise ValueError(f"{path}: org must be an array of [[org]] tables")
@@ -142,7 +153,7 @@ def load_orgs(path: Path | None = None) -> list[Org]:
             Org(
                 name=name,
                 root=Path(str(entry["root"])).expanduser().resolve(),
-                vault=Path(str(entry.get("vault") or vault_root / name)).expanduser().resolve(),
+                vault=Path(str(entry.get("vault") or root / name)).expanduser().resolve(),
                 auto_sync=bool(entry.get("auto_sync", default_sync)),
             )
         )
@@ -349,6 +360,14 @@ def enabled() -> bool:
     return NAME in name_list("extensions_on") - name_list("extensions_off")
 
 
+def watches(workspace: Path) -> bool:
+    """Whether this extension tracks note edits here: on, and an org covers `workspace`."""
+    try:
+        return enabled() and place_for(workspace) is not None
+    except ValueError:  # setup() reports the broken config and registers nothing.
+        return False
+
+
 def plan_guidance(directory: Path) -> str:
     """Guidance also works for a saved absolute marker without current org configuration."""
     return (
@@ -363,13 +382,19 @@ def plan_guidance(directory: Path) -> str:
 def plan_location(workspace: Path) -> PlanLocation:
     """The vault for `/plan --obsidian`, whether or not this extension is on.
 
-    Raises ValueError with setup guidance when no writable org vault covers `workspace`.
+    A workspace no org covers uses the shared `default` vault under `vault_root`,
+    so planning in Obsidian needs no configuration. Raises ValueError with setup
+    guidance when the config is broken or the vault isn't writable.
     """
     try:
+        path = config_path()
         place = place_for(workspace)
-        if place is None:
-            raise ValueError(f"No configured org covers {workspace}")
-        vault = place.org.vault
+        if place:
+            vault = place.org.vault
+            project = place.repo or (Path(place.dir).name if place.dir != "." else place.org.name)
+        else:
+            vault = (vault_root(read_config(path), path) / DEFAULT_VAULT).resolve()
+            project = (project_checkout(workspace) or workspace.resolve()).name
         # Planning needs neither the dashboard nor Obsidian settings or sync.
         format_note = vault / FORMAT_NOTE
         if (format_note.exists() or format_note.is_symlink()) and not format_note.is_file():
@@ -384,13 +409,12 @@ def plan_location(workspace: Path) -> PlanLocation:
             write_text(format_note, (FILES / FORMAT_NOTE).read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         raise ValueError(
-            f"/plan --obsidian: {error}. Configure a matching [[org]] with name, root "
-            f"and a writable vault in {config_path()}, then retry (or use /plan --local)."
+            f"/plan --obsidian: {error}. Fix {config_path()} (orgs and vault_root) or make "
+            "the vault writable, then retry (or use /plan --local)."
         ) from None
-    project = place.repo or (Path(place.dir).name if place.dir != "." else place.org.name)
     return PlanLocation(
         vault / BRIEFS,
-        safe_name(project, 40) or place.org.name,
+        safe_name(project, 40) or (place.org.name if place else DEFAULT_VAULT),
         plan_guidance(vault / BRIEFS),
     )
 

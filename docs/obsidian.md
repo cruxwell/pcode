@@ -16,9 +16,9 @@ It takes two pieces: plans in your vault (`/plan --obsidian`) and the
 /plan --obsidian Design the export pipeline
 ```
 
-writes the plan into your org's vault instead of `.pcode/plans/`. See
-[Plans](memory.md#plans) for the vault setup. Project memory doesn't need to
-be on. The model is asked to record the plan's session in its front matter
+writes the plan into your org's vault instead of `.pcode/plans/`, or into
+`~/vaults/default` when no org is configured for the directory (see
+[Plans](memory.md#plans)). Project memory doesn't need to be on. The model is asked to record the plan's session in its front matter
 (`session: 7c1d72d9-…`), which is how the plugin finds it. If a plan is
 missing it, *pcode bridge: Set this note's session* adds it.
 

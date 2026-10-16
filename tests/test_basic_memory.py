@@ -320,8 +320,19 @@ def test_plan_location_does_not_depend_on_the_extension(org, tmp_path, memory_on
     assert location.path_for("add export button to the orders page").name == (
         "Plan — app — Add export button to the orders page.md"
     )
-    with pytest.raises(ValueError, match="No configured org"):
-        bm.plan_location(tmp_path / "elsewhere")
+    elsewhere = bm.plan_location(tmp_path / "elsewhere")
+    assert elsewhere.directory == (tmp_path / "vaults" / "default").resolve() / "briefs"
+    assert elsewhere.path_for("topic").name == "Plan — elsewhere — Topic.md"
+
+
+def test_plan_location_needs_no_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(bm, "config_path", lambda: tmp_path / "missing.toml")
+    monkeypatch.setattr(bm, "project_checkout", lambda _: tmp_path / "repo")
+    monkeypatch.setattr(bm, "DEFAULT_VAULT_ROOT", str(tmp_path / "vaults"))
+    location = bm.plan_location(tmp_path / "repo-worktree")
+    assert location.directory == (tmp_path / "vaults" / "default").resolve() / "briefs"
+    assert location.path_for("topic").name == "Plan — repo — Topic.md"
+    assert (tmp_path / "vaults" / "default" / "Brief format.md").is_file()
 
 
 def test_plan_mode_writes_vault_plans_and_approves_them(org, tmp_path):

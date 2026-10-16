@@ -93,11 +93,11 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   worktree ([details](workspace.md#one-git-worktree-per-session)).
 - `/plan [--obsidian|--local] [request]`: discuss a change and keep a written plan
   before implementing. New plans go in `.pcode/plans/` by default; `--obsidian`
-  keeps the plan in your org's Obsidian vault instead, whether or not project
-  memory is on. Bare `/plan` resumes the active plan, or else the newest local one.
+  keeps the plan in your org's Obsidian vault instead (or a shared `default`
+  vault when no org is configured), whether or not project memory is on. Bare `/plan` resumes the active plan, or else the newest local one.
   `/plan status` shows its file; `/plan off` stops planning without deleting it.
   Approve in the conversation to start implementation. See [Plans](memory.md#plans)
-  for setup and feedback from Obsidian.
+  for where vault plans go and feedback from Obsidian.
 - `/resend`: retry from the last checkpoint without a new message; shows the previous
   prompt and spinner.
 - `/jobs [stop ID|stop all|watch ID|unwatch]`: bare `/jobs` opens a popup listing this

@@ -14,11 +14,12 @@ just says what the user wants. The active plan lives in a marker file beside
 the plans, so it survives `/reload` (which re-imports this module) and restarts.
 
 `--obsidian` makes the plan a note in the workspace's org vault instead
-(`briefs/Plan — <project> — <title>.md`, configured in `memory.toml`), whether or
+(`briefs/Plan — <project> — <title>.md`; orgs come from `memory.toml`, and an
+uncovered workspace uses the shared `default` vault), whether or
 not the `basic_memory` extension is on: where a plan lives is a per-plan choice,
 not a memory setting. `--local` (the default) keeps it in `.pcode/plans`. The
 marker holds a vault note's absolute path rather than a local slug. With memory
-off, only the active note gets edit feedback and lifecycle updates.
+off, only the active note gets edit feedback.
 """
 
 import asyncio
@@ -90,13 +91,14 @@ def setup(pcode) -> None:
         EDITED,
         NOTE_TOOLS,
         NoteFeedback,
-        enabled,
         is_side,
         plan_guidance,
         plan_location,
+        watches,
     )
 
-    memory_on = enabled()
+    # Whether basic_memory tracks edits to vault notes here; if not, this does.
+    memory_on = watches(pcode.workspace)
     feedback = NoteFeedback()
     session = None
 
@@ -192,7 +194,7 @@ def setup(pcode) -> None:
         arguments=("off", "status", "--obsidian", "--local"),
         free_arguments=True,  # anything else is the request to plan
         argument_descriptions={
-            "--obsidian": "Keep the plan in the org's Obsidian vault",
+            "--obsidian": "Keep the plan in an Obsidian vault",
             "--local": "Keep the plan in .pcode/plans (the default)",
             "off": "Leave plan mode (the plan file is kept)",
             "status": "Show whether plan mode is on and its file",
@@ -220,17 +222,11 @@ def setup(pcode) -> None:
                 " First mark it approved, as the brief format says: `state: approved`, "
                 "`cssclasses: [approved]`, and the APPROVED banner."
             )
-            if memory_on:
-                result += (
-                    " If an existing brief is linked, add ✅ on the brief's Open plans line "
-                    "and, when the work ships, fold it into the brief. Mark the plan implemented "
-                    "when shipped, even if it is standalone; do not create a brief implicitly."
-                )
-            else:
-                result += (
-                    " When the work ships, mark the plan implemented. Project memory is off: "
-                    "update only this plan, not a project brief; do not create or maintain one."
-                )
+            result += (
+                " If an existing brief is linked, add ✅ on the brief's Open plans line "
+                "and, when the work ships, fold it into the brief. Mark the plan implemented "
+                "when shipped, even if it is standalone; do not create a brief implicitly."
+            )
         return result
 
     @pcode.hooks.on.before_tool_execute
@@ -299,10 +295,6 @@ def setup(pcode) -> None:
                         "(add it, or update it if it names another session)."
                     )
                 if not memory_on:
-                    extra += (
-                        "\n- Project memory is off. Update only this plan, not project briefs, "
-                        "including on approval and completion."
-                    )
                     changed = await asyncio.to_thread(feedback.edits, path_of(current).resolve())
                     if changed:
                         extra += "\n" + EDITED + "\n" + "\n\n".join(changed)

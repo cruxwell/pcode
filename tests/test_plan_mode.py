@@ -171,9 +171,8 @@ def test_explicit_vault_with_memory_off_bootstraps_only_planning(configured_vaul
     assert "standalone plan" in note and "do not create a project brief" in note
     assert "re-read" in note
     result = api.tools["exit_plan_mode"]()
-    assert "state: approved" in result and "mark the plan implemented" in result
-    assert "fold it into the brief" not in result
-    assert "update only this plan" in result
+    assert "state: approved" in result and "Mark the plan implemented" in result
+    assert "do not create a brief" in result
     assert not bm.enabled()
 
 
@@ -227,7 +226,6 @@ def test_bad_flags_leave_marker_and_vault_untouched(configured_vault, flags):
 @pytest.mark.parametrize(
     "config_text",
     [
-        None,
         "broken = [",
         "org = 3",
         '[[org]]\nname = "p"',
@@ -237,10 +235,7 @@ def test_bad_flags_leave_marker_and_vault_untouched(configured_vault, flags):
 )
 def test_explicit_config_errors_do_not_fall_back(configured_vault, config_text):
     workspace, vault, config = configured_vault
-    if config_text is None:
-        config.unlink()
-    else:
-        config.write_text(config_text)
+    config.write_text(config_text)
     api = FakeAPI(workspace)
     plan_mode.setup(api)
     api.commands["/plan"]("Original")
@@ -265,7 +260,7 @@ def test_explicit_bootstrap_keeps_format_and_reports_invalid_vault(configured_va
     before = marker(workspace).read_text()
     (vault / "briefs").rmdir()
     (vault / "briefs").write_text("not a directory")
-    with pytest.raises(ValueError, match="writable vault"):
+    with pytest.raises(ValueError, match="vault writable"):
         api.commands["/plan"]("--obsidian Another")
     assert marker(workspace).read_text() == before
 
@@ -288,7 +283,7 @@ def test_explicit_unwritable_briefs_preserves_active_plan(configured_vault, monk
         raise PermissionError(f"Permission denied: {dir}")
 
     monkeypatch.setattr(bm.tempfile, "NamedTemporaryFile", deny_probe)
-    with pytest.raises(ValueError, match="writable vault") as error:
+    with pytest.raises(ValueError, match="vault writable") as error:
         api.commands["/plan"](arguments)
     assert str(briefs) in str(error.value)
     assert str(config) in str(error.value)
@@ -332,7 +327,6 @@ def test_reload_absolute_marker_keeps_guidance_without_config(configured_vault):
     assert reloaded.commands["/plan"]("") is None
     [note] = remind(reloaded)
     assert str(vault / "Brief format.md") in note
-    assert "Project memory is off" in note
 
 
 def observe(api, path, *, agent="pcode", capabilities=None):
@@ -495,11 +489,45 @@ def test_explicit_vault_resolves_worktrees_to_main_checkout(
     assert Path(marker(worktree).read_text().strip()) == vault / "briefs" / "Plan — app — Topic.md"
 
 
-def test_explicit_vault_requires_matching_org(configured_vault, tmp_path):
+def test_explicit_vault_outside_every_org_uses_the_default_vault(
+    configured_vault, tmp_path, monkeypatch
+):
     _, vault, _ = configured_vault
+    monkeypatch.setattr(bm, "DEFAULT_VAULT_ROOT", str(tmp_path / "vaults"))
     api = FakeAPI(tmp_path / "outside")
     plan_mode.setup(api)
-    with pytest.raises(ValueError, match="No configured org covers"):
-        api.commands["/plan"]("--obsidian Topic")
-    assert not marker(api.workspace).exists()
+    api.commands["/plan"]("--obsidian Topic")
+    default = (tmp_path / "vaults" / "default").resolve()
+    assert Path(marker(api.workspace).read_text().strip()) == (
+        default / "briefs" / "Plan — outside — Topic.md"
+    )
     assert not vault.exists()
+
+
+def test_memory_on_outside_every_org_still_reports_plan_edits(
+    configured_vault, tmp_path, monkeypatch
+):
+    # basic_memory registers nothing where no org covers the workspace, so plan
+    # mode tracks the default-vault plan itself even with memory on.
+    monkeypatch.setattr(bm, "enabled", lambda: True)
+    api = FakeAPI(tmp_path / "outside")
+    plan_mode.setup(api)
+    api.commands["/plan"]("--obsidian Topic")
+    path = Path(marker(api.workspace).read_text().strip())
+    path.write_text("Before")
+    observe(api, path)
+    path.write_text("After: user answer")
+    assert "+After: user answer" in remind(api)[0]
+
+
+@pytest.mark.parametrize("memory_on", [False, True])
+def test_approval_text_does_not_depend_on_memory(configured_vault, monkeypatch, memory_on):
+    workspace, _, _ = configured_vault
+    monkeypatch.setattr(bm, "enabled", lambda: memory_on)
+    api = FakeAPI(workspace)
+    plan_mode.setup(api)
+    api.commands["/plan"]("--obsidian Topic")
+    [note] = remind(api)
+    assert "Project memory is off" not in note
+    result = api.tools["exit_plan_mode"]()
+    assert "fold it into the brief" in result and "do not create a brief" in result

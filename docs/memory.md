@@ -21,7 +21,8 @@ each org has its own vault, so nothing links across orgs. Create
 `~/.config/pcode/memory.toml`:
 
 ```toml
-vault_root = "~/vaults"   # each org's vault defaults to <vault_root>/<name>
+vault_root = "~/vaults"   # each org's vault defaults to <vault_root>/<name>;
+                          # /plan --obsidian outside every org uses <vault_root>/default
 auto_sync = false         # default for /brief sync in every org
 
 [[org]]
@@ -95,19 +96,22 @@ answer its open questions there instead:
 /plan --obsidian Design the export pipeline
 ```
 
-Configure an org and vault in `memory.toml` as described [above](#orgs-and-vaults).
-You do not need to enable `basic_memory` or run `/brief setup`. The command creates
-only the missing `Brief format.md` and `briefs/` directory, keeping your existing
-format unchanged. It does not set up dashboards, styling, session imports or sync,
-and it does not open Obsidian automatically. Missing or invalid configuration is
-an error, not a silent fallback to a local plan.
+It needs no setup. The plan goes in the vault of the [org](#orgs-and-vaults)
+that covers the workspace, or in a shared `default` vault (`~/vaults/default`,
+or under your `vault_root`) when none does, including when there is no
+`memory.toml`. You do not need to enable `basic_memory` or run `/brief setup`. The
+command creates only the missing `Brief format.md` and `briefs/` directory, keeping
+your existing format unchanged. It does not set up dashboards, styling, session
+imports or sync, and it does not open Obsidian automatically. A broken
+`memory.toml` or an unwritable vault is an error, not a silent fallback to a local
+plan.
 
 The plan lives at `briefs/Plan — <project> — <title>.md`: a *proposed brief* with a
 banner saying it isn't implemented yet. It links an existing brief when there is
-one, but can stand alone. With memory off, the model maintains only the plan, not
-project briefs. Saying "go ahead" in the conversation marks it approved and starts
-implementation. When the work ships, the model marks it implemented. The plan
-stays as the record of why the change was made.
+one, but can stand alone; the model never creates a brief for it. Saying "go ahead"
+in the conversation marks it approved and starts implementation. When the work
+ships, the model marks it implemented and folds the change into the linked brief,
+if any. The plan stays as the record of why the change was made.
 
 Where a plan lives is chosen per plan, never by the memory setting. Bare `/plan`
 resumes the active plan, or else the newest local one. `/plan --local` or
@@ -115,8 +119,8 @@ resumes the active plan, or else the newest local one. `/plan --local` or
 destination, and otherwise starts a new one there without moving the old one. `/plan status` shows the
 active path, and `/plan off` leaves the file in place.
 
-With memory enabled, approval and completion also update the linked brief. If
-you ran `/brief setup`, the proposed and approved notes have yellow and blue tints.
+If you ran `/brief setup`, the proposed and approved notes have yellow and blue
+tints.
 
 ## Answering in the note
 
@@ -129,8 +133,8 @@ paragraph:
 
 With your next message, from the terminal or from Obsidian with the
 [pcode bridge plugin](obsidian.md), the model receives a diff of your edits. With
-memory off, only the active Obsidian plan is watched. With memory on, this covers
-vault notes the model has read or written in this session. It acts on your answers
+memory off, or outside every org, only the active Obsidian plan is watched. With
+memory on, this covers vault notes the model has read or written in this session. It acts on your answers
 and comments, removes them, and records what changed in the note's *Log*.
 
 Edit between turns: simultaneous model and user edits are not conflict-free.
