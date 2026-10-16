@@ -19,6 +19,7 @@ from rich.console import Console
 from rich.rule import Rule
 from rich.text import Text
 
+from pcode import glyphs, terminal_color
 from pcode.appearance import AppearanceWatch
 from pcode.cli import ask, restore_stdin
 from pcode.commands import Command, CommandRegistry
@@ -70,7 +71,7 @@ from pcode.shell_mode import shell_command
 from pcode.startup_input import StartupInput
 from pcode.stream_display import PrintedReply, present_events, present_stream_event
 from pcode.terminal_notify import TabProgress, TabTitle
-from pcode.theme import THEMES, replay_pending_input, terminal_background
+from pcode.theme import THEMES, ambiguous_wide, replay_pending_input, terminal_background
 from pcode.tool_display import plain
 from pcode.ui import (
     WATCHED_PREFIX,
@@ -149,6 +150,7 @@ class PreviewApp:
         session_id: str | None = None,
         host=None,
     ) -> None:
+        terminal_color.configure(load_preferences().get("color_depth"))
         self.activity = Activity(
             show_tasks=load_preferences().get("show_tasks", "on") == "on",
             autohide_tasks=load_preferences().get("autohide_tasks", "off") == "on",
@@ -226,11 +228,16 @@ class PreviewApp:
             apply_effort(agent, model, effort_for(model))
         if agent is not None and model:
             apply_thinking(agent, model, self.activity.thinking_mode)
+        glyph_setting = load_preferences().get("glyphs", SETTINGS["glyphs"].default)
         self.transcript = Transcript(
-            console or Console(),
+            console or Console(color_system=terminal_color.rich_color_system()),
             theme or load_preferences().get("theme", SETTINGS["theme"].default),
             activity=self.activity,
+            probe_width=console is None and glyph_setting == "auto",
         )
+        if console is None:
+            # The editor's own terminal, which the startup probe has measured.
+            glyphs.apply(glyphs.wanted(glyph_setting, wide=ambiguous_wide()))
         self.running = True
         self._popup_generation = 0
         self._command_popup_generation: int | None = None

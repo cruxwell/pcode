@@ -2,6 +2,11 @@
 
 OSC 11 is an xterm query, not a command to change the terminal's colors.
 Never query while prompt_toolkit owns input; cache the result at startup.
+
+The same window measures how wide the terminal draws `─`: Unicode calls it
+ambiguous, and a terminal set to draw those two cells wide (a CJK locale,
+iTerm2's option) shifts every row pcode lays out with one. `pcode.glyphs`
+switches to ASCII when it does.
 """
 
 import os
@@ -15,6 +20,17 @@ _pending_input = bytearray()
 _BACKGROUND = re.compile(
     rb"\x1b\]11;rgb:([0-9a-fA-F]{1,4})/([0-9a-fA-F]{1,4})/([0-9a-fA-F]{1,4})(?:\x07|\x1b\\)"
 )
+_CPR = re.compile(rb"\x1b\[(\d+);(\d+)R")
+# Where the cursor is, then save it, draw the ambiguous-width glyph, say where
+# the cursor is now, and put the cursor back and wipe what was drawn. Sent as
+# one write, so the glyph is gone before the terminal can show it; the
+# replies still measure it because a terminal answers in order.
+_WIDTH_PROBE = "\x1b[6n\x1b7─\x1b[6n\x1b8\x1b[K".encode()
+# The probe's position reports that had not arrived when it gave up waiting.
+# They are the first the editor will see, ahead of its own, so it drops them.
+_unanswered_cprs = 0
+# The probe's answer: True when `─` took two cells, None when unmeasured.
+_ambiguous_wide: bool | None = None
 
 
 # The last background the terminal reported, as `#rrggbb` with the theme it
@@ -28,6 +44,26 @@ _background: tuple[str, str] | None = None
 def terminal_background() -> tuple[str, str] | None:
     """The last reported background, `(#rrggbb, "light" | "dark")`, or None."""
     return _background
+
+
+def ambiguous_wide() -> bool | None:
+    """Whether the startup probe saw `─` drawn two cells wide; None if it didn't measure."""
+    return _ambiguous_wide
+
+
+def _measure_width(response: bytearray) -> bool:
+    """Take the probe's two position reports out of `response`; whether both were there."""
+    global _ambiguous_wide
+    reports = list(_CPR.finditer(response))[:2]
+    if len(reports) < 2:
+        return False
+    (row, before), (row_after, after) = ((int(match[1]), int(match[2])) for match in reports)
+    # A glyph that wrapped onto the next row measures nothing.
+    if row == row_after and after - before in (1, 2):
+        _ambiguous_wide = after - before == 2
+    for match in reversed(reports):
+        del response[match.start() : match.end()]
+    return True
 
 
 def background_theme(response: bytes) -> str | None:
@@ -65,7 +101,8 @@ def _terminal():
     return handle.fileno(), handle.fileno(), handle
 
 
-def _query_background(timeout: float = 0.15) -> str | None:
+def _query_background(timeout: float = 0.15, *, probe_width: bool = False) -> str | None:
+    global _unanswered_cprs
     # Nothing will be colored, so there is no palette to match: stay quiet
     # rather than write an escape sequence into whatever stdout is.
     if os.environ.get("TERM") == "dumb" or not (sys.stdout.isatty() or sys.stderr.isatty()):
@@ -78,6 +115,11 @@ def _query_background(timeout: float = 0.15) -> str | None:
     if fd is None:
         return None
     response = bytearray()
+    # Only the terminal pcode draws on is measured; the controlling terminal
+    # fallback serves `--print`, which lays nothing out.
+    probe_width = probe_width and handle is None
+    measured = not probe_width
+    detected = None
     try:
         # Don't steal already queued input, or flush it on entering/leaving cbreak.
         if select.select([fd], [], [], 0)[0]:
@@ -96,9 +138,9 @@ def _query_background(timeout: float = 0.15) -> str | None:
             if handle is None:
                 # Keep the query behind any text already queued on stdout.
                 sys.stdout.flush()
-            os.write(query_fd, b"\x1b]11;?\x1b\\")
+            os.write(query_fd, b"\x1b]11;?\x1b\\" + (_WIDTH_PROBE if probe_width else b""))
             deadline = time.monotonic() + timeout
-            while True:
+            while detected is None or not measured:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
                     break
@@ -106,10 +148,15 @@ def _query_background(timeout: float = 0.15) -> str | None:
                 if not chunk:
                     break
                 response.extend(chunk)
-                result = background_theme(response)
-                if result is not None:
-                    response[:] = _BACKGROUND.sub(b"", response)
-                    return result
+                if detected is None:
+                    detected = background_theme(response)
+                    if detected is not None:
+                        response[:] = _BACKGROUND.sub(b"", response)
+                if not measured and chunk == b"R":
+                    measured = _measure_width(response)
+            if not measured:
+                _unanswered_cprs = 2 - len(_CPR.findall(response))
+                response[:] = _CPR.sub(b"", response)
         finally:
             termios.tcsetattr(fd, termios.TCSANOW, original)
     except OSError, ValueError, termios.error:
@@ -118,10 +165,10 @@ def _query_background(timeout: float = 0.15) -> str | None:
         if handle is not None:
             handle.close()
         else:
-            # Typing can race the query. Only the OSC reply belongs to us;
+            # Typing can race the query. Only the replies belong to us;
             # replay everything else through the editor's normal input parser.
             _pending_input.extend(response)
-    return None
+    return detected
 
 
 def replay_pending_input(app, on_theme=None) -> None:
@@ -135,15 +182,22 @@ def replay_pending_input(app, on_theme=None) -> None:
 
     from pcode.startup_input import StartupInput
 
+    global _unanswered_cprs
     if not isinstance(app.input, Vt100Input):
         return
-    app.input = StartupInput(app.input.stdin, bytes(_pending_input), on_theme)
+    app.input = StartupInput(
+        app.input.stdin, bytes(_pending_input), on_theme, late_cprs=_unanswered_cprs
+    )
     _pending_input.clear()
+    _unanswered_cprs = 0
 
 
-def detect_theme() -> str:
-    """Use OSC 11, then COLORFGBG (when supplied by the terminal), then dark."""
-    detected = _query_background()
+def detect_theme(*, probe_width: bool = False) -> str:
+    """Use OSC 11, then COLORFGBG (when supplied by the terminal), then dark.
+
+    `probe_width` also measures the ambiguous-width glyph (`ambiguous_wide`).
+    """
+    detected = _query_background(probe_width=probe_width)
     if detected is not None:
         return detected
     try:

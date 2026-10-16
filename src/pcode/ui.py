@@ -31,7 +31,6 @@ from prompt_toolkit.layout.containers import VerticalAlign
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.output import Output, create_output
-from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.renderer import Renderer
 from prompt_toolkit.styles import Style
 from prompt_toolkit.utils import get_cwidth
@@ -40,11 +39,13 @@ from rich.cells import cell_len
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.padding import Padding
+from rich.spinner import SPINNERS as RICH_SPINNERS
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 from rich.theme import Theme
 
+from pcode import glyphs
 from pcode.block import INDENT, RULE, RUNNING, block_heading
 from pcode.command_transcript import CommandTranscript
 from pcode.commands import CommandRegistry, SlashCompleter
@@ -78,6 +79,7 @@ from pcode.runtime import CacheBust, CommandOutput, Event, Message, Thinking, To
 from pcode.shell_mode import SHELL_PREFIX
 from pcode.syntax_colors import derive_colors
 from pcode.task_prompt import TaskPrompt
+from pcode.terminal_color import color_depth, true_color
 from pcode.terminal_text import safe_text
 from pcode.theme import detect_theme, terminal_background
 from pcode.theme_gallery import SyntaxGallery
@@ -569,7 +571,7 @@ def tool_glyphs_on(setting: str) -> bool:
     user's to turn off.
     """
     if setting == "auto":
-        return os.environ.get("TERM") != "linux"
+        return os.environ.get("TERM") != "linux" and not glyphs.active()
     return setting == "on"
 
 
@@ -592,13 +594,22 @@ def status_parts(status: str) -> tuple[str, str]:
     return "Working", text
 
 
+ASCII_SPINNERS = {"spinner": "line", "tool_spinner": "balloon"}
+
+
 def status_spinner(setting: str = "spinner") -> Spinner:
     """A spinner for the bottom block, as the `setting` preference names it.
 
     `spinner` is the status row's (waits on a model), `tool_spinner` running
     tool calls'.
     """
-    spinner = Spinner(load_preferences().get(setting, SETTINGS[setting].default))
+    name = load_preferences().get(setting, SETTINGS[setting].default)
+    frames = RICH_SPINNERS.get(name, {}).get("frames", "")
+    if glyphs.active() and not "".join(frames).isascii():
+        # Stand-ins would freeze it on one character; keep the two kinds of
+        # wait distinct with two different ASCII spinners.
+        name = ASCII_SPINNERS[setting]
+    spinner = Spinner(name)
     # Every frame is a full layout pass (~2-3ms), so the animation loop alone
     # costs a few percent of a core for the length of a turn. Rich's built-in
     # interval is tuned for a dedicated terminal spinner, not for driving
@@ -2218,26 +2229,6 @@ def _completes_while_typing() -> bool:
     )
 
 
-def terminal_color_depth() -> ColorDepth | None:
-    """True color when the terminal advertises it, else prompt_toolkit's choice.
-
-    prompt_toolkit only reads `PROMPT_TOOLKIT_COLOR_DEPTH` and otherwise
-    settles on 256 colors, rounding every palette hex to the nearest of them:
-    a shade a few percent off the background becomes a visible blotch.
-    """
-    if os.environ.get("PROMPT_TOOLKIT_COLOR_DEPTH"):
-        return None
-    return ColorDepth.TRUE_COLOR if true_color() else None
-
-
-def true_color() -> bool:
-    """Whether the editor renders 24-bit color, by choice or by the terminal's word."""
-    explicit = os.environ.get("PROMPT_TOOLKIT_COLOR_DEPTH")
-    if explicit:
-        return explicit == ColorDepth.TRUE_COLOR.value
-    return os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit")
-
-
 def _fit_editor(session: PromptSession) -> Window:
     """The session's editor window, sized to its content and without search."""
     # Retain PromptSession's editor/processors, but give its frame a content-sized
@@ -3170,7 +3161,7 @@ def create_prompt(
         activity, transcript, callbacks, key_prefix, lambda: session.default_buffer
     )
 
-    kwargs.setdefault("color_depth", terminal_color_depth())
+    kwargs.setdefault("color_depth", color_depth())
     output = kwargs.pop("output", None)
     if not isinstance(output, CursorSafeOutput):
         output = CursorSafeOutput(output if output is not None else create_output())
@@ -3257,7 +3248,11 @@ class Transcript:
         activity: Activity | None = None,
         preferences: dict[str, str] | None = None,
         detected_theme: str | None = None,
+        probe_width: bool = False,
     ) -> None:
+        # `probe_width`: also measure the terminal's ambiguous-width glyphs
+        # (`pcode.theme`), for the editor's terminal only: its late replies
+        # need the editor's input to take them out.
         preferences = load_preferences() if preferences is None else preferences
         self.error_scrollback_lines = int(preferences.get("error_scrollback_lines", "20"))
         self.tool_error_scrollback = preferences.get("tool_error_scrollback", "off") == "on"
@@ -3273,7 +3268,9 @@ class Transcript:
         self.activity = activity
         self.console = console
         self.theme = theme
-        self.detected_theme = detect_theme() if detected_theme is None else detected_theme
+        self.detected_theme = (
+            detect_theme(probe_width=probe_width) if detected_theme is None else detected_theme
+        )
         self.syntax_themes = syntax_themes(preferences)
         self._delta = delta_from_preferences(preferences)
         self.diff_dedent = preferences.get("diff_dedent", SETTINGS["diff_dedent"].default) == "on"

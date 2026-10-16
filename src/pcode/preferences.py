@@ -610,7 +610,19 @@ SETTINGS = {
         "auto",
         ("auto", "on", "off"),
         description="Symbols on the tool row; off spells out verbs but shell's $ "
-        "(auto: off on the Linux console)",
+        "(auto: off on the Linux console or with ASCII glyphs)",
+    ),
+    "glyphs": Setting(
+        "auto",
+        ("auto", "unicode", "ascii"),
+        description="Draw marks, borders and spinners as Unicode or plain ASCII (auto: ASCII "
+        "on the Linux console, a non-UTF-8 locale, or a terminal drawing them two cells wide)",
+    ),
+    "color_depth": Setting(
+        "auto",
+        ("auto", "truecolor", "256"),
+        description="Colors the editor and transcript draw with (auto: 24-bit where the "
+        "terminal says or is known to support it, else 256)",
     ),
     "tool_max_lines": Setting(
         "3",

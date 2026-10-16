@@ -190,6 +190,15 @@ def isolated_preferences(monkeypatch, tmp_path, request):
     # Diffs render with Rich whether or not the machine has delta installed;
     # tests of delta itself put it back.
     monkeypatch.setattr("pcode.delta.find_delta", lambda: None)
+    # Only COLORTERM, which tests set themselves, may decide true color: not
+    # the developer's terminal, nor the tmux client the suite happens to run in.
+    monkeypatch.delenv("TERM_PROGRAM", raising=False)
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("PROMPT_TOOLKIT_COLOR_DEPTH", raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setattr("pcode.terminal_color._tmux_rgb", lambda pane: False)
+    monkeypatch.setattr("pcode.terminal_color._setting", "auto")
+    monkeypatch.setattr("pcode.glyphs._active", False)
     # The CLI fixes the project overlay root once per process; tests that run
     # main() would otherwise leak this checkout's .pcode/preferences.json into
     # every later test.

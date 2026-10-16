@@ -44,10 +44,10 @@ def test_invalid_response(response):
     [("0;7", "light"), ("15;0", "dark"), ("0;default;15", "light"), ("bad", "dark")],
 )
 def test_environment_fallback(monkeypatch, value, expected):
-    monkeypatch.setattr(theme, "_query_background", lambda: None)
+    monkeypatch.setattr(theme, "_query_background", lambda **_: None)
     monkeypatch.setenv("COLORFGBG", value)
     assert theme.detect_theme() == expected
-    monkeypatch.setattr(theme, "_query_background", lambda: "dark")
+    monkeypatch.setattr(theme, "_query_background", lambda **_: "dark")
     assert theme.detect_theme() == "dark"
 
 
@@ -199,7 +199,7 @@ def test_typing_during_query_is_replayed_with_split_utf8(monkeypatch, reply, dra
 
 
 def test_auto_palette_and_syntax(monkeypatch):
-    monkeypatch.setattr("pcode.ui.detect_theme", lambda: "light")
+    monkeypatch.setattr("pcode.ui.detect_theme", lambda **_: "light")
     transcript = Transcript(Console(file=StringIO()), "auto")
     assert transcript.theme == "auto"
     assert transcript.palette == PALETTES["light"]
@@ -214,7 +214,7 @@ def test_auto_palette_and_syntax(monkeypatch):
 
 
 def test_auto_setting_persists_and_toggle_uses_resolved_theme(monkeypatch):
-    monkeypatch.setattr("pcode.ui.detect_theme", lambda: "light")
+    monkeypatch.setattr("pcode.ui.detect_theme", lambda **_: "light")
     save_preferences(theme="auto")
     app = PreviewApp(console=Console(file=StringIO()))
     assert app.transcript.theme == "auto"
@@ -226,7 +226,7 @@ def test_auto_setting_persists_and_toggle_uses_resolved_theme(monkeypatch):
 
 
 def test_saved_syntax_themes_apply_per_palette(monkeypatch):
-    monkeypatch.setattr("pcode.ui.detect_theme", lambda: "dark")
+    monkeypatch.setattr("pcode.ui.detect_theme", lambda **_: "dark")
     save_preferences(syntax_dark="monokai", syntax_light="tango")
     transcript = Transcript(Console(file=StringIO()), "auto")
     assert transcript.code_theme == "monokai"

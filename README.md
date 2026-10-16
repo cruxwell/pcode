@@ -95,7 +95,7 @@ See [PLAN.md](https://github.com/cruxwell/pcode/blob/master/PLAN.md) for the lon
 | [Configuration](https://cruxwell.github.io/pcode/configuration/) | `pcode config`, per-repository overrides, trusting repository code, the settings table, syntax styles |
 | [Commands and keys](https://cruxwell.github.io/pcode/commands/) | Slash commands, key bindings, vi mode, tmux newlines, status line, `!command`, the diff and tool inspectors |
 | [Keybindings](https://cruxwell.github.io/pcode/keybindings/) | Custom command mappings with `/bind`, Ctrl shortcuts, vi editing, a normal-mode leader, and custom escape sequences such as `jj` |
-| [Terminal setup](https://cruxwell.github.io/pcode/terminal/) | Tab titles, the progress bar, iTerm2 and tmux settings |
+| [Terminal setup](https://cruxwell.github.io/pcode/terminal/) | Tab titles, the progress bar, symbols and colors, iTerm2 and tmux settings |
 | [Tools](https://cruxwell.github.io/pcode/tools/) | Tool permissions, web search, the browser, code mode |
 | [MCP servers](https://cruxwell.github.io/pcode/mcp/) | Opt-in MCP configuration, OAuth sign-in, deferred tool search |
 | [Working in a repository](https://cruxwell.github.io/pcode/workspace/) | `AGENTS.md`/`CLAUDE.md`, skills as slash commands, one worktree per session |

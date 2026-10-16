@@ -82,6 +82,8 @@ def test_defaults_and_path_do_not_create_files():
         "task_style": "status",
         "frame_style": "borders",  # conftest's test default; the shipped one is "shaded".
         "tool_glyphs": "auto",
+        "glyphs": "auto",
+        "color_depth": "auto",
         "tool_max_lines": "3",
         "tool_linger_seconds": "10",
         "tasks_max_height": None,

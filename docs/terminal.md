@@ -11,8 +11,9 @@ switching, what each one is doing and whether it's still working.
 
 How they look (where the title shows, how wide a tab gets, how thick and what
 colour the bar is) is up to the terminal, so most of the tuning happens in its
-settings rather than pcode's. This page covers what pcode sends, then the
-settings worth changing in [iTerm2](#iterm2) and [tmux](#tmux).
+settings rather than pcode's. This page covers what pcode sends, what to do
+when [symbols or colors look off](#symbols-and-colors), then the settings worth
+changing in [iTerm2](#iterm2) and [tmux](#tmux).
 
 ## Tab and pane titles
 
@@ -73,6 +74,46 @@ kitty doesn't report its version, so `auto` leaves it out; on kitty 0.47 or
 newer, set `terminal_progress on`. `on` sends it to any terminal, and
 terminals that don't know it ignore it; `off` never sends it. The setting is
 read when pcode starts.
+
+## Symbols and colors
+
+pcode picks what it draws from what the terminal tells it, so most terminals
+need nothing set. When something looks off, two settings cover it.
+
+**Boxes, marks or spinners look broken.** Either a font lacks the symbols
+(they show as empty boxes), or the terminal draws them two cells wide, which
+pushes the editor's border and the status row out of line. Switch to plain
+ASCII stand-ins:
+
+```sh
+pcode config set glyphs ascii
+```
+
+Each stand-in takes the same single cell as its symbol (`✓` becomes `v`, `─`
+becomes `-`, `┌` becomes `+`), so the layout doesn't change, and Rich tables in
+replies get ASCII borders. With `glyphs auto`, pcode already does this on the
+Linux console, under a locale naming a charset other than UTF-8, and in a
+terminal it measures drawing `─` two cells wide when it starts (a CJK locale, or
+iTerm2's *Treat ambiguous-width characters as double width*). Under tmux that
+measures tmux's own widths rather than the terminal's, so set `glyphs ascii`
+there yourself. `glyphs unicode` keeps the symbols regardless.
+
+**Colors look blotchy, or the editor box has lines instead of shading.** pcode
+uses 24-bit color when the terminal says so (`COLORTERM=truecolor`), when it is
+one known to support it (iTerm2, Ghostty, kitty, WezTerm, Alacritty, VS Code
+and others; over ssh, those that set their own `TERM`, such as kitty and
+Ghostty), or under tmux when tmux lists `RGB` among its client's features
+(`tmux display -p '#{client_termfeatures}'`). Anywhere else it keeps the terminal's
+256 colors, where the shaded editor box falls back to borders. If your
+terminal does 24-bit color but pcode doesn't notice:
+
+```sh
+pcode config set color_depth truecolor
+```
+
+`color_depth 256` goes the other way, for a terminal that claims 24-bit but
+draws it badly. [`NO_COLOR`](https://no-color.org) turns color off, keeping
+bold and the like, and wins over `color_depth`.
 
 ## iTerm2
 
