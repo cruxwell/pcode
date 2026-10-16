@@ -2365,12 +2365,15 @@ class PromptLayout:
         if live is not None:
             return live[3] + tasks
         size = self.size()
-        available = max(1, size.rows - 4 - self.activity_height() - tasks - len(self.queue_rows()))
+        gap = self.top_gap()
+        available = max(
+            1, size.rows - 4 - gap - self.activity_height() - tasks - len(self.queue_rows())
+        )
         cap = self.activity.height_cap(size.rows)
         if cap is not None:
-            available = min(available, max(1, cap - 2 - self.tasks_height()))
+            available = min(available, max(1, cap - 2 - gap - self.tasks_height()))
         text_height = self.editor.preferred_height(max(1, size.columns - 2), available).preferred
-        return min(text_height, available) + 2 + tasks
+        return min(text_height, available) + 2 + gap + tasks
 
     def refresh_interval(self) -> float:
         """Seconds until the next frame."""
@@ -2394,8 +2397,15 @@ class PromptLayout:
             budget = (
                 min(10, max(1, rows // 2 - 2))
                 if cap is None
-                # The editor box keeps one text row inside its two borders.
-                else max(1, cap - self.task_chrome() - 3)
+                # The editor box keeps one text row inside its two borders,
+                # and detached tasks leave it any blank row under its status.
+                else max(
+                    1,
+                    cap
+                    - self.task_chrome()
+                    - 3
+                    - (0 if self.activity.attach_tasks else self.top_gap(attached=False)),
+                )
             )
         # The active step turns with the running commands' spinner.
         return self.activity.plan_rows(budget, self.tool_spinner_frame())
@@ -2457,16 +2467,20 @@ class PromptLayout:
         # Attached tasks share the editor's top border and add only a divider.
         chrome_rows = 1 if activity.attach_tasks else 2
         task_floor = 1 + chrome_rows if plans else 0
-        editor_room = max(1, room - 2 - 4 - task_floor)
+        gap = self.top_gap(attached=activity.attach_tasks and bool(plans))
+        editor_room = max(1, room - 2 - gap - 4 - task_floor)
         cap = activity.height_cap(size.rows)
         if cap is not None:
             tasks = len(plans) + chrome_rows if plans else 0
-            editor_room = min(editor_room, max(1, cap - 2 - tasks))
+            editor_room = min(editor_room, max(1, cap - 2 - gap - tasks))
         editor_rows = min(editor_room, self.editor.preferred_height(width, editor_room).preferred)
-        editor_height = editor_rows + 2
+        editor_height = editor_rows + 2 + gap
         plan_budget = max(0, room - editor_height - 4 - chrome_rows)
         if len(plans) > plan_budget:
             plans = self.base_plan_rows(plan_budget)
+            # Trimmed away entirely, attached tasks no longer stand in for the gap.
+            trimmed_gap = self.top_gap(attached=activity.attach_tasks and bool(plans))
+            editor_height += trimmed_gap - gap
         plan_height = len(plans) + chrome_rows if plans else 0
         # Chrome: the two rule lines, plus the indented `$ command` a shell
         # preview repeats below its heading, exactly as scrollback does.
@@ -2912,16 +2926,24 @@ class PromptLayout:
         """Whether the editor's top row carries text: a status, tasks, or a title."""
         return self.activity.status_shown or self.plan_attached() or bool(self.idle_title())
 
-    def prompt_lowered(self) -> bool:
-        """Shaded, whether the prompt sits on the box's last row, a blank row under the top.
+    def top_gap(self, attached: bool | None = None) -> int:
+        """Shaded, a blank row (1) between a filled top row and the text, else 0.
 
-        A new session's empty top row reads as padding, so the prompt stays
-        centred between it and the bottom one. Once a status or the session's
-        name fills that row, the prompt directly beneath it looks crowded.
-        Drawn borders already separate the two, and attached tasks bring a
-        divider of their own.
+        A new session's empty top row reads as padding, so the prompt sits
+        between it and the bottom row. Once a status or the session's name
+        fills that row, the prompt directly beneath it looks crowded, so the
+        box grows a row and keeps the prompt between two blank ones. Drawn
+        borders already separate the two, and attached tasks bring a divider
+        of their own. `preview_layout` passes `attached`, since asking
+        `plan_attached` there would re-enter it.
         """
-        return self.frame_shaded() and not self.plan_attached() and self.top_row_filled()
+        if attached is None:
+            attached = self.plan_attached()
+        return int(
+            self.frame_shaded()
+            and not attached
+            and (self.activity.status_shown or bool(self.idle_title()))
+        )
 
     def frame_shaded(self) -> bool:
         """Whether the boxes are drawn as shades rather than lines (`frame_style`)."""
@@ -2936,39 +2958,36 @@ class PromptLayout:
         editor_frame = Frame(
             self.editor, title=self.idle_title, height=self.frame_height, style="class:shaded"
         )
-
-        def bottom_border() -> VSplit:
-            # Replace only the bottom border: the badge must not add a row or alter CPR sizing.
-            return VSplit(
-                [
-                    Window(char="└", width=1, style="class:frame.border"),
-                    Window(char="─", style="class:frame.border"),
-                    ConditionalContainer(
-                        Label(
-                            lambda: editor_mode_badge(session.app),
-                            dont_extend_width=True,
-                        ),
-                        filter=Condition(lambda: session.app.editing_mode == EditingMode.VI),
+        # Replace only the bottom border: the badge must not add a row or alter CPR sizing.
+        editor_frame.container.children[-1] = VSplit(
+            [
+                Window(char="└", width=1, style="class:frame.border"),
+                Window(char="─", style="class:frame.border"),
+                ConditionalContainer(
+                    Label(
+                        lambda: editor_mode_badge(session.app),
+                        dont_extend_width=True,
                     ),
-                    Window(FormattedTextControl("─┘"), width=2, style="class:frame.border"),
-                ],
-                height=1,
-            )
-
-        # Lowered, the bottom row moves above the text instead: the box keeps
-        # its height, and the prompt drops a row away from the top row's text.
-        lowered = Condition(self.prompt_lowered)
-        top, middle, _ = editor_frame.container.children
+                    filter=Condition(lambda: session.app.editing_mode == EditingMode.VI),
+                ),
+                Window(FormattedTextControl("─┘"), width=2, style="class:frame.border"),
+            ],
+            height=1,
+        )
+        side = partial(Window, char="│", width=1, style="class:frame.border")
+        top, middle, bottom = editor_frame.container.children
         editor_frame.container.children[:] = [
             top,
-            ConditionalContainer(bottom_border(), filter=lowered),
+            ConditionalContainer(
+                VSplit([side(), Window(), side()], height=1),
+                filter=Condition(lambda: bool(self.top_gap())),
+            ),
             middle,
-            ConditionalContainer(bottom_border(), filter=~lowered),
+            bottom,
         ]
         # The top border carries the running status, else the attached tasks'
         # heading. Attached tasks sit under it, and a divider separates them
         # from the text; frame_height counts both.
-        side = partial(Window, char="│", width=1, style="class:frame.border")
         status = Condition(lambda: self.activity.status_shown)
         attached = Condition(self.plan_attached)
         shaded = Condition(self.frame_shaded)

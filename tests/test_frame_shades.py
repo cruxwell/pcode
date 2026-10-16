@@ -64,7 +64,7 @@ def test_without_true_color_the_borders_stay(monkeypatch):
     assert transcript().frame_shade() is None
 
 
-def render(columns, *, running, task_style="status", plan=True, outcome=None, note=None):
+def render(columns, *, running, task_style="status", plan=True, outcome=None, note=None, vi=False):
     """The shaded layout's rows, and the resolved cell attributes of the top row and the next."""
 
     async def run():
@@ -92,6 +92,7 @@ def render(columns, *, running, task_style="status", plan=True, outcome=None, no
                 transcript=app.transcript,
                 on_submit=lambda text: None,
                 input=pipe,
+                vi_mode=vi,
                 output=output,
             )
             with set_app(session.app):
@@ -162,13 +163,14 @@ def test_a_finished_turns_title_row_darkens_without_tasks(monkeypatch):
 
 @pytest.mark.usefixtures("true_color")
 @pytest.mark.parametrize("running", [False, True])
-def test_the_prompt_drops_a_row_below_a_filled_top_row(monkeypatch, running):
+def test_a_filled_top_row_gets_a_blank_row_under_it(monkeypatch, running):
     monkeypatch.setattr(theme, "_background", (BACKGROUND, "dark"))
-    lines, top, _ = render(40, running=running, plan=False, outcome="done")
-    # The box keeps its three rows: heading, a blank shaded row, then the prompt.
-    assert lines[top + 1].strip(" └─┘") == "", lines[top + 1]
-    assert lines[top + 2].startswith("│❯"), lines[top + 2]
-    assert not any(line.startswith("└") for line in lines[top + 2 :]), lines
+    lines, top, _ = render(40, running=running, plan=False, outcome="done", vi=True)
+    # Heading, then the prompt between two blank rows, the vi badge on the last.
+    assert lines[top + 1].strip("│ ") == "", lines
+    assert lines[top + 2].startswith("│❯"), lines
+    assert lines[top + 3].startswith("└") and "INSERT" in lines[top + 3], lines
+    assert len(lines) == top + 4, lines
 
 
 @pytest.mark.usefixtures("true_color")
