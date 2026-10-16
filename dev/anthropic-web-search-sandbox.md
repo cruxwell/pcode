@@ -59,37 +59,51 @@ Checked 2026-10-16 against the #7633 diff and the locked Anthropic SDK:
   `20260209`/`20260318` web tool is present. With `allowed_callers: ["direct"]`
   that should be skipped, or a hallucinated `code_execution` call is no longer
   dropped (the #6401 fix).
-- The SDK params for web search `20260209`/`20260318` and web fetch
-  `20260209`/`20260309`/`20260318` all accept `allowed_callers`.
+- Every web tool param in the SDK accepts `allowed_callers`, the 2025 versions
+  included. Anthropic's docs say the `20260209` versions default to the code
+  execution caller *only* (the model can't call `web_search` directly at all),
+  and the earlier versions default to `["direct"]`.
 
-## Upstream tasks
+## Upstream work (filed 2026-10-16)
 
-Decision: one comment on #7633, not a separate issue. It's the same settings
-shape, the PR already touches the version selection and the implicit-tool set,
-and the bypass is a bug in the PR itself.
+We sent the PR first, then the issue, so a bot couldn't pick up the issue and
+start its own fix. Upstream's CONTRIBUTING asks for maintainer alignment before
+a PR, so expect a reply about the shape first.
 
-- [ ] Comment on #7633: add `allowed_callers` to both Anthropic settings
-      TypedDicts, pass it through on `20260209`+ params, skip the implicit
-      code-execution names when it excludes code execution, and point out the
-      profile bypass. Lead with the shell confusion and the numbers above; ZDR
-      eligibility is a second reason. Offer to push the change or a follow-up PR.
-- [ ] If the author wants to keep scope, open an issue linking #7633 and send
-      the follow-up PR from it.
-- [ ] Docs: in the same comment, ask for a note on `WebSearchTool` /
-      `WebFetchTool` that the `20260209`+ tools give the model an implicit
-      code-execution tool, which competes with any local shell tool.
-- [ ] Once released, swap the profile workaround for
-      `WebSearchTool(provider_settings={"anthropic": {"allowed_callers": ["direct"]}})`
-      wherever it was applied.
+- [x] PR [#10489](https://github.com/pydantic/pydantic-ai/pull/10489)
+      (`aweis89:feat/anthropic-web-tools-allowed-callers`, worktree
+      `~/p/pydantic-ai-allowed-callers`). It adds
+      `AnthropicModelSettings.anthropic_web_tools_allowed_callers`, which is
+      passed through on whichever web tool version is picked. The implicit
+      `code_execution` names now come from the built tool params, so `['direct']`
+      still drops hallucinated calls. Docs: "Web Tool Callers" in
+      `docs/models/anthropic.md`. It's a model setting because #7633's
+      `provider_settings` shape is still open, and the PR offers to move it there.
+      Tests use mocks only, since there was no API key to record a cassette.
+- [x] Issue [#10490](https://github.com/pydantic/pydantic-ai/issues/10490),
+      closed by the PR.
+- [x] [Comment on #7633](https://github.com/pydantic/pydantic-ai/pull/7633#issuecomment-6223937421)
+      about the `20260318` bypass of the profile workaround.
+- [ ] A maintainer has to add `pkg:core`; the Package Label check fails until
+      then (we lack triage access).
+- [ ] Not checked live: whether the API accepts `allowed_callers` on Vertex's
+      `web_search_20250305`, and whether replaying `code_execution_20260120`
+      caller history into a `['direct']` request is accepted.
+- [ ] Once released, set `anthropic_web_tools_allowed_callers=['direct']` (or
+      whatever shape lands) wherever the profile workaround was applied.
 
 ## pcode
 
-pcode is exposed too: `extensions/web_research.py` adds native `WebSearch` in
-`auto` mode, and native `WebFetch` for `anthropic:` models (`claude:` goes through
-the CLI and is unaffected). pcode's `shell` sits beside it, so the same mix-up can
-happen in an interactive session; it's just more visible there.
+`extensions/web_research.py` adds native `WebSearch` in `auto` mode, and native
+`WebFetch` for `anthropic:` models (`claude:` goes through the CLI and is
+unaffected). With a subscription login, `AnthropicOAuthModel.profile` already
+narrows to the 2025 tool versions, because that endpoint confines the `20260209`
+tools to a rate-limited sandbox. So only API-key `anthropic:` sessions get the
+sandbox beside pcode's `shell`.
 
-- [ ] Check saved sessions for `srvtoolu_` `code_execution` calls to see how
-      often it happens here.
-- [ ] If it does, apply the same interim fix for `anthropic:` models, or wait for
-      the upstream setting if that lands soon.
+- [ ] Check saved API-key sessions for `srvtoolu_` `code_execution` calls to see
+      how often it happens here.
+- [ ] Once #10489 (or its replacement) is released, try
+      `allowed_callers=['direct']` on the subscription endpoint. It may let
+      OAuth sessions use the `20260209` tools (and domain filtering) again
+      instead of the profile downgrade.
