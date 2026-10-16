@@ -28,6 +28,8 @@ your Claude or ChatGPT subscription.
 
 **Documentation: [cruxwell.github.io/pcode](https://cruxwell.github.io/pcode/)**
 
+**Tried it? [Share feedback](https://github.com/cruxwell/pcode/discussions/4)**: what worked, what didn't, and where you got stuck.
+
 ## Install
 
 With [Homebrew](https://brew.sh/):
@@ -112,6 +114,7 @@ checks every page and anchor link.
 ## Contributing
 
 Bugs: [open an issue](https://github.com/cruxwell/pcode/issues/new/choose).
+Feedback and ideas: [the feedback discussion](https://github.com/cruxwell/pcode/discussions/4).
 Security problems: see [SECURITY.md](https://github.com/cruxwell/pcode/blob/master/SECURITY.md). Setup and checks are in
 [CONTRIBUTING.md](https://github.com/cruxwell/pcode/blob/master/CONTRIBUTING.md).
 
