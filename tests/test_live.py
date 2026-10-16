@@ -182,8 +182,6 @@ def test_coder_allows_all_commands_by_default(tmp_path):
     ]
     # Commands get the whole host environment, minus provider credentials.
     assert list(shell.denied_env_patterns) == list(LLM_API_KEY_ENV_PATTERNS)
-    # direnv's banner would otherwise corrupt piped command output.
-    assert shell.env["DIRENV_LOG_FORMAT"] == ""
     assert shell.env["PATH"] == os.environ["PATH"]
     env = {**shell.env, "ANTHROPIC_API_KEY": "synthetic", "KEEP_ME": "1"}
     resolved = replace(shell, env=env).get_toolset()._resolve_env()

@@ -214,13 +214,11 @@ def _job_shell(shell: Shell, workspace: Path) -> JobShell:
     `__init__`.
     """
     values = _init_fields(shell)
-    # direnv writes its status banner to stderr on every cd into a managed
-    # directory, which pollutes command output the agent parses (e.g.
-    # `... | jq`). An empty log format silences it.
-    values["env"] = {**(shell.env or os.environ), "DIRENV_LOG_FORMAT": ""}
     # Commands inherit the whole host environment (see `JobShell`), so keep
     # provider credentials out of it, as Coder did before it left the
-    # environment to the workspace.
+    # environment to the workspace. The env must be explicit: Harness applies
+    # `denied_env_patterns` only to an explicit env, never to `None`.
+    values["env"] = dict(shell.env or os.environ)
     values["denied_env_patterns"] = [*values["denied_env_patterns"], *LLM_API_KEY_ENV_PATTERNS]
     return JobShell(**values, workdir=workspace)
 
