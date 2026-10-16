@@ -96,14 +96,22 @@ a PR, so expect a reply about the shape first.
 
 `extensions/web_research.py` adds native `WebSearch` in `auto` mode, and native
 `WebFetch` for `anthropic:` models (`claude:` goes through the CLI and is
-unaffected). With a subscription login, `AnthropicOAuthModel.profile` already
-narrows to the 2025 tool versions, because that endpoint confines the `20260209`
-tools to a rate-limited sandbox. So only API-key `anthropic:` sessions get the
-sandbox beside pcode's `shell`.
+unaffected). `AnthropicOAuthModel.profile` narrows to the 2025 tool versions,
+but `LEGACY_ANTHROPIC_AUTH` is off, so every `anthropic:` session takes the
+API-key path (`auth.anthropic_model`, a plain `AnthropicModel`). On Opus 5.5,
+Sonnet 5/5.5 and Haiku 5.5 that sends the `20260209` tools, so the sandbox sits
+beside pcode's `shell`.
 
-- [ ] Check saved API-key sessions for `srvtoolu_` `code_execution` calls to see
-      how often it happens here.
-- [ ] Once #10489 (or its replacement) is released, try
-      `allowed_callers=['direct']` on the subscription endpoint. It may let
-      OAuth sessions use the `20260209` tools (and domain filtering) again
-      instead of the profile downgrade.
+Checked 2026-10-16 across all 544 saved sessions: 7 used native web tools, and
+one (`001c8e1d`) made 16 sandbox `code_execution` calls. Every one was dynamic
+filtering doing its job (`await web_search(...)` / `web_fetch(...)`, then
+slicing big docs pages), plus a `print("noop")`. No `bash_code_execution`, and
+no shell-style commands sent to the sandbox. So there's no sign of the mix-up
+here yet, and turning the sandbox off would cost that filtering (whole pages
+land in context instead).
+
+- [ ] Once #10489 (or its replacement) is released, decide whether pcode sets
+      `allowed_callers=['direct']`, weighing the risk of a mix-up against the
+      context dynamic filtering saves. Until then, the interim lever is
+      `anthropic_supports_dynamic_filtering=False` on the API-key model's profile,
+      the same merge `AnthropicOAuthModel.profile` does.
