@@ -669,6 +669,11 @@ SETTINGS = {
         description="Leave vi insert mode: escape or a literal sequence such as jj; "
         "Escape always works (next launch)",
     ),
+    "vi_wrapped_rows": Setting(
+        "on",
+        ("on", "off"),
+        description="Vi normal-mode j/k move by wrapped screen row, not by line (next launch)",
+    ),
     "theme": Setting(
         "auto",
         ("dark", "light", "auto"),

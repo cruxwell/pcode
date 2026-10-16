@@ -497,6 +497,12 @@ is a newline only in Emacs mode. Other pcode shortcuts are unchanged.
 To leave insert mode by typing `jj` (or another sequence such as `jk`), set
 `vi_escape_sequence`; see [Leave insert mode with jj](keybindings.md#leave-insert-mode-with-jj).
 
+In normal mode, `j` and `k` move one wrapped screen row at a time, like vim's
+`gj` / `gk`, so a long prompt line doesn't count as a single line. At the top or
+bottom of the prompt they step through history as usual. Operators such as
+`dj` still act on whole lines. For vim's line-at-a-time `j` / `k`, run
+`pcode config set vi_wrapped_rows off` and restart.
+
 ### Normal-mode shortcut prefix
 
 `pcode config set vi_key_prefix '<space>'` adds a leader for vi normal mode:

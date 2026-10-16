@@ -105,6 +105,7 @@ def test_defaults_and_path_do_not_create_files():
         "syntax_light": "terminal",
         "editing_mode": "emacs",
         "vi_escape_sequence": "escape",
+        "vi_wrapped_rows": "on",
         "vi_key_prefix": "off",
         "autocompact": "on",
         "autocompact_tokens": None,

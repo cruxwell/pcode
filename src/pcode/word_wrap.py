@@ -14,11 +14,25 @@ positions correct, the same technique ``TabsProcessor`` uses to expand tabs.
 
 from __future__ import annotations
 
-from prompt_toolkit.layout.processors import Processor, Transformation, TransformationInput
-from prompt_toolkit.layout.utils import explode_text_fragments
-from prompt_toolkit.utils import get_cwidth
+from bisect import bisect_right
+from functools import cache
 
-__all__ = ["WordWrapProcessor", "wrap_padding"]
+from prompt_toolkit.document import Document
+from prompt_toolkit.layout.processors import Processor, Transformation, TransformationInput
+from prompt_toolkit.layout.screen import Char
+from prompt_toolkit.layout.utils import explode_text_fragments
+
+__all__ = ["WordWrapProcessor", "display_row_step", "row_starts", "wrap_padding"]
+
+
+@cache
+def cell_width(char: str) -> int:
+    """Columns the renderer draws ``char`` in: a tab shows as ``^I``, two wide."""
+    return Char(char, "").width
+
+
+def text_width(text: str) -> int:
+    return sum(map(cell_width, text))
 
 
 def wrap_padding(text: str, width: int) -> dict[int, int]:
@@ -44,16 +58,74 @@ def wrap_padding(text: str, width: int) -> dict[int, int]:
             end = index
             while end < length and not text[end].isspace():
                 end += 1
-            word = get_cwidth(text[index:end])
+            word = text_width(text[index:end])
             if column + word > width >= word:
                 padding[index] = width - column
                 column = 0
-        char_width = get_cwidth(char)
+        char_width = cell_width(char)
         if column + char_width > width:
             column = 0
         column += char_width
         index += 1
     return padding
+
+
+def row_starts(line: str, width: int) -> list[int]:
+    """Indexes in ``line`` where each display row begins, as the editor wraps it.
+
+    Mirrors the padding above plus prompt_toolkit's column wrap: a character
+    that would overflow ``width`` starts the next row.
+    """
+    padding = wrap_padding(line, width)
+    starts = [0]
+    column = 0
+    for index, char in enumerate(line):
+        char_width = cell_width(char)
+        if index in padding or (column and column + char_width > width):
+            starts.append(index)
+            column = 0
+        column += char_width
+    return starts
+
+
+def display_row_step(
+    document: Document, width: int, delta: int, column: int | None = None
+) -> tuple[int, int] | None:
+    """Vi-normal-mode cursor one display row down (``delta`` 1) or up (-1).
+
+    Returns the new cursor index and the goal column it aimed for, so repeated
+    moves keep the column across shorter rows, or None on the first/last row.
+    ``column`` is that goal from the previous move; None measures the cursor's.
+    """
+    lines = document.lines
+    number = document.cursor_position_row
+    line = lines[number]
+    local = document.cursor_position_col
+    starts = row_starts(line, width)
+    row = bisect_right(starts, local) - 1
+    if column is None:
+        column = text_width(line[starts[row] : local])
+
+    if 0 <= row + delta < len(starts):
+        row += delta
+    elif 0 <= number + delta < len(lines):
+        number += delta
+        line = lines[number]
+        starts = row_starts(line, width)
+        row = 0 if delta > 0 else len(starts) - 1
+    else:
+        return None
+
+    start = starts[row]
+    end = starts[row + 1] if row + 1 < len(starts) else len(line)
+    target = max(start, end - 1)
+    used = 0
+    for index in range(start, end):
+        used += cell_width(line[index])
+        if used > column:
+            target = index
+            break
+    return document.translate_row_col_to_index(number, 0) + target, column
 
 
 class WordWrapProcessor(Processor):

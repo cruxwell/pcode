@@ -10,14 +10,16 @@ from dataclasses import dataclass
 
 from prompt_toolkit.application import get_app
 from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.filters import Condition, vi_insert_mode, vi_mode
+from prompt_toolkit.filters import Condition, vi_insert_mode, vi_mode, vi_navigation_mode
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 from prompt_toolkit.key_binding.vi_state import InputMode
 from prompt_toolkit.keys import Keys
+from prompt_toolkit.layout.processors import DynamicProcessor
 
 from pcode.clipboard import copy as copy_to_clipboard
 from pcode.preferences import SETTINGS, load_preferences
 from pcode.prefix_keys import Choice, PrefixKeys
+from pcode.word_wrap import WordWrapProcessor, display_row_step
 
 
 @dataclass(frozen=True)
@@ -209,6 +211,60 @@ def _down_would_idle() -> bool:
     return not vi_mode() or app.vi_state.input_mode == InputMode.INSERT
 
 
+def _wrap_width(app) -> int | None:
+    """Columns the focused editor wraps its text at, or None if it does not word-wrap."""
+    window = app.layout.current_window
+    info = window.render_info
+    # PromptSession nests its own input_processors in a DynamicProcessor,
+    # which may hand back several merged into one.
+    pending = list(getattr(window.content, "input_processors", None) or ())
+    wrap = None
+    while pending and wrap is None:
+        processor = pending.pop()
+        if isinstance(processor, WordWrapProcessor):
+            wrap = processor
+        elif isinstance(processor, DynamicProcessor):
+            pending.append(processor.get_processor())
+        else:
+            pending.extend(getattr(processor, "processors", ()))
+    if info is None or wrap is None:
+        return None
+    return info.window_width - wrap.prefix_width
+
+
+def _add_wrapped_row_keys(keys: KeyBindings) -> None:
+    """Vi normal-mode j/k by display row, as vim's gj/gk.
+
+    On the first or last row they fall back to prompt_toolkit's own j/k,
+    which step through history; a count that runs out of rows just stops. Operators (`dj`)
+    are untouched: ``vi_navigation_mode`` is off while one is pending.
+    """
+    # The goal column survives a chain of moves through shorter rows, as long
+    # as nothing else moved the cursor or changed the text in between.
+    sticky: dict = {}
+
+    def move(event: KeyPressEvent, delta: int) -> None:
+        buffer = event.current_buffer
+        width = None if buffer.complete_state else _wrap_width(event.app)
+        count = event.arg
+        unmoved = sticky.get("at") == (buffer.text, buffer.cursor_position)
+        column = sticky.get("column") if unmoved else None
+        while count and width and width > 0:
+            step = display_row_step(buffer.document, width, delta, column)
+            if step is None:
+                break
+            buffer.cursor_position, column = step
+            count -= 1
+        if count == event.arg:
+            scroll = buffer.auto_down if delta > 0 else buffer.auto_up
+            scroll(count=count, go_to_start_of_line_if_history_changes=True)
+            column = None
+        sticky.update(at=(buffer.text, buffer.cursor_position), column=column)
+
+    keys.add("j", filter=vi_navigation_mode)(lambda event: move(event, 1))
+    keys.add("k", filter=vi_navigation_mode)(lambda event: move(event, -1))
+
+
 def _editing_keys(
     activity,
     transcript,
@@ -260,6 +316,9 @@ def _editing_keys(
             filter=vi_insert_mode & Condition(lambda: not get_app().quoted_insert),
             eager=True,
         )(normal_mode)
+
+    if load_preferences().get("vi_wrapped_rows", SETTINGS["vi_wrapped_rows"].default) == "on":
+        _add_wrapped_row_keys(keys)
 
     @keys.add("c-j")
     @keys.add("escape", "enter", filter=~vi_mode)
