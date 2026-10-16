@@ -60,17 +60,21 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   search. Filters reset when you reopen it. Output dropped by truncation or stored
   only in a spill file isn't searched. Handy when your terminal or tmux doesn't
   make links clickable.
-- `/copy`: choose a response from the active conversation branch to copy to the
-  system clipboard, newest first and selected by default. Type to search questions
-  or answer text; use ↑/↓ and Enter to choose. With only one answer, skip straight
-  to copying it or choosing a snippet. A quote renders with a `▌` rail and wraps
-  to the terminal, which makes it awkward to select by hand, so
-  when the response holds quotes or fenced code blocks a picker lists each one
-  (without its `>` markers) beside the whole response. Enter copies the selection.
-  This is a second screen in the same popup: Escape returns to the answer list,
-  preserving your search and selection. With only one answer, Escape closes it.
+- `/copy`: copy a prompt, a response, or one quote or code block from the active
+  conversation branch to the system clipboard. It opens in the same layout as
+  `/tree`: the list on the left holds each prompt and response, with a row for
+  every quote and fenced code block under the response it came from, and the
+  Conversation pane on the right highlights exactly what Enter will copy. The
+  newest response is selected first. A quote renders with a `▌` rail and wraps to
+  the terminal, which makes it awkward to select by hand, so its row copies the
+  text as written, without the `>` markers. Code is copied without a trailing
+  newline, so pasting it into a shell doesn't run it. Escape closes the popup
+  without copying. When the only response is plain text, `/copy` skips the popup
+  and copies it straight away.
   pcode asks the model to put text meant for pasting elsewhere, such as a message
   to send, in a quote. **Ctrl+Y** with an empty editor does the same.
+
+  ![/copy with a code block selected: the Conversation pane highlights the block Enter copies](assets/screenshots/copy.svg)
 - `/status`: current model, workspace, session storage path, completed turns, token usage,
   and a breakdown of the prompt overhead re-sent with every request (see
   [Where the fixed prompt goes](context.md#where-the-fixed-prompt-goes)). Opens a popup in

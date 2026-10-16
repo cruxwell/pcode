@@ -28,8 +28,9 @@ selected row the pane follows the active branch where the tree forks.
   either pane (or your [shortcut prefix](commands.md#shortcut-prefix), then
   `y`, if you set one). It copies the text as the Conversation pane shows it
   (truncated at 64 KiB), and the header says what was copied. On a response holding
-  quotes or fenced code blocks, it opens a picker like
-  [`/copy`](commands.md#slash-commands)'s to copy one of those, or the whole response.
+  quotes or fenced code blocks, it opens a picker to copy one of those, or the
+  whole response. [`/copy`](commands.md#slash-commands) opens this same layout
+  with those blocks listed under each response, highlighting what it will copy.
 - **Escape / Ctrl+C:** close the picker without changing context or the draft.
 
 The picker starts on the active position, marked `← active`. It shows every branch

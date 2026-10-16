@@ -1072,7 +1072,8 @@ class PreviewApp:
 
     async def choose_copy(self, output: TerminalOutput, session) -> None:
         from pcode.clipboard import copy as copy_to_clipboard
-        from pcode.copy_ui import answers, copy_dialog, snippets
+        from pcode.copy_ui import answers, snippets
+        from pcode.tree_ui import copy_dialog
 
         self.copy_requested = False
         tree = getattr(self.runtime, "tree", None)
@@ -1085,7 +1086,10 @@ class PreviewApp:
         if len(history) > 1 or len(choices) > 1:
             async with self.popup(output, session) as modal_input:
                 dialog = copy_dialog(
-                    history,
+                    tree,
+                    rich_theme=self.transcript.rich_theme,
+                    code_theme=self.transcript.code_theme,
+                    color_system=self.transcript.console.color_system,
                     input=modal_input,
                     output=session.app.output,
                     style=session.app.style,

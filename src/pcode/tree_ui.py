@@ -2,7 +2,7 @@
 
 from prompt_toolkit.application import Application, get_app
 from prompt_toolkit.document import Document
-from prompt_toolkit.filters import Always, Condition, has_focus
+from prompt_toolkit.filters import Always, Condition, Never, has_focus
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.bindings.focus import focus_next, focus_previous
 from prompt_toolkit.layout import (
@@ -22,14 +22,15 @@ from rich.text import Text
 from rich.theme import Theme
 
 from pcode.clipboard import copy as copy_to_clipboard
-from pcode.conversation_tree import ConversationTree, TurnNode
-from pcode.copy_ui import Snippet, SnippetPicker, snippets
+from pcode.conversation_tree import ConversationTree, TurnNode, excerpt
+from pcode.copy_ui import Snippet, SnippetMarkdown, SnippetPicker, snippets
 from pcode.frame import Frame
 from pcode.popup_ui import (
     RichPane,
     bind_list_paging,
     focus_overlay,
     list_pane_height,
+    marked,
     popup_container,
     popup_mouse,
     popup_style,
@@ -65,8 +66,8 @@ class TreeBrowser:
         self.tree = tree
         self.navigable = navigable
         self.code_theme = code_theme
-        self.rows = tree.rows()
-        self.selected: Selection = (tree.active, False)
+        self.rows = self.list_rows()
+        self.selected = self.first_selection()
         self.notice = ""
         self._branch: tuple[str, ...] | None = None
         self._anchors: dict[Selection, int] = {}
@@ -85,7 +86,7 @@ class TreeBrowser:
         # marks whichever line the Tree selection scrolled to (or wherever the
         # Conversation pane was scrolled to by hand), the same "cursor-line"
         # highlight the Tree list uses for its own selection.
-        self.detail.window.cursorline = Always()
+        self.detail.window.cursorline = self.marks_top_line()
         self.list.buffer.on_cursor_position_changed += lambda _: self.select()
         keys = KeyBindings()
         self.detail.bind_scrolling(keys)
@@ -99,51 +100,21 @@ class TreeBrowser:
 
         @keys.add("enter")
         def accept(event):
-            # A running turn will overwrite the history a checkout installs, so
-            # the picker reads instead of navigating until the turn ends.
-            if self.navigable:
-                event.app.exit(result=self.selected)
+            self.accept(event.app)
 
         keys.add("tab")(focus_next)
         keys.add("s-tab")(focus_previous)
 
         self.prefix_keys = shortcuts = PrefixKeys(key_prefix)
         shortcuts.set_help(
-            lambda: (
-                [
-                    ("↑/↓", "Select snippet"),
-                    ("PgUp/PgDn", "Page"),
-                    ("Ctrl+U/D", "Half page"),
-                    ("Enter", "Copy selected snippet"),
-                    ("Esc/Ctrl+C", "Cancel"),
-                ]
-                if self.picker is not None
-                else [
-                    ("↑/↓", "Select turn / scroll conversation"),
-                    ("PgUp/PgDn", "Page"),
-                    ("Ctrl+U/D", "Half page"),
-                    *([("Enter", "Navigate to selected turn")] if navigable else []),
-                    ("Tab/Shift+Tab", "Change focus"),
-                    ("Esc/Ctrl+C", "Cancel" if navigable else "Close"),
-                ]
-            )
+            lambda: self.picker.help() if self.picker is not None else self.help_rows()
         )
 
         @shortcuts.add("y", "Copy selection", filter=Condition(lambda: self.picker is None))
         def copy_selection(event):
             self.copy(event.app.output)
 
-        header = Label(
-            lambda: (
-                f"Conversation tree · {len(tree.nodes)} turns · "
-                + (
-                    "User: edit & fork · Assistant: continue · Start: empty context"
-                    if navigable
-                    else "read-only while working"
-                )
-                + (f" · {self.notice}" if self.notice else "")
-            )
-        )
+        header = Label(lambda: self.header_text() + (f" · {self.notice}" if self.notice else ""))
         wide = VSplit(
             [
                 Frame(self.list, title="Tree", width=Dimension(weight=2)),
@@ -164,11 +135,7 @@ class TreeBrowser:
                 header,
                 body,
                 Label(shortcuts.summary),
-                Label(
-                    "Switching context does not undo file changes or tool effects."
-                    if navigable
-                    else "Forking waits for the running turn; /btw asks a question meanwhile."
-                ),
+                Label(self.footer_text()),
             ]
         )
         picker = Frame(
@@ -188,6 +155,60 @@ class TreeBrowser:
             **app_options,
         )
         self.refresh()
+
+    # --- What the browser lists and does; `CopyBrowser` overrides these. ---
+
+    def list_rows(self) -> list[tuple[Selection, str]]:
+        return self.tree.rows()
+
+    def first_selection(self) -> Selection:
+        return (self.tree.active, False)
+
+    def marks_top_line(self):
+        return Always()
+
+    def header_text(self) -> str:
+        return f"Conversation tree · {len(self.tree.nodes)} turns · " + (
+            "User: edit & fork · Assistant: continue · Start: empty context"
+            if self.navigable
+            else "read-only while working"
+        )
+
+    def footer_text(self) -> str:
+        return (
+            "Switching context does not undo file changes or tool effects."
+            if self.navigable
+            else "Forking waits for the running turn; /btw asks a question meanwhile."
+        )
+
+    def help_rows(self) -> list[tuple[str, str]]:
+        return [
+            ("↑/↓", "Select turn / scroll conversation"),
+            ("PgUp/PgDn", "Page"),
+            ("Ctrl+U/D", "Half page"),
+            *([("Enter", "Navigate to selected turn")] if self.navigable else []),
+            ("Tab/Shift+Tab", "Change focus"),
+            ("Esc/Ctrl+C", "Cancel" if self.navigable else "Close"),
+        ]
+
+    def accept(self, app: Application) -> None:
+        # A running turn will overwrite the history a checkout installs, so
+        # the picker reads instead of navigating until the turn ends.
+        if self.navigable:
+            app.exit(result=self.selected)
+
+    def show(self, value) -> None:
+        """Bring the selected row's block into the Conversation pane."""
+        self.detail.scroll_to(self._anchors.get(value, 0))
+
+    def block(self, value, renderable):
+        """The Conversation pane's renderable for the row ``value``."""
+        return renderable
+
+    def response(self, node: TurnNode, text: str):
+        return Markdown(text, code_theme=self.code_theme)
+
+    # ---
 
     def refresh(self) -> None:
         lines = [label for _, label in self.rows]
@@ -210,9 +231,8 @@ class TreeBrowser:
         branch = self.branch(value[0])
         if branch != self._branch:
             self._branch = branch
-            self.detail.set(self.details(branch), anchor=self._anchors.get(value))
-        else:
-            self.detail.scroll_to(self._anchors.get(value, 0))
+            self.detail.set(self.details(branch))
+        self.show(value)
 
     def copy(self, output=None) -> None:
         """Copy the selected row's prompt or response, as the pane shows it.
@@ -272,7 +292,7 @@ class TreeBrowser:
             if node.kind != "compaction":
                 blocks.append(Text(""))
                 self._anchors[(identity, True)] = len(blocks)
-                blocks.append(TaskPrompt(literal(node.prompt)))
+                blocks.append(self.block((identity, True), TaskPrompt(literal(node.prompt))))
                 if node.kind == "aside":
                     blocks.append(Text("  from a /btw side thread", style="dim"))
             blocks.append(Text(""))
@@ -280,7 +300,8 @@ class TreeBrowser:
             if node.kind == "compaction":
                 blocks.append(Text(f"  ({node.response})", style="dim"))
             elif text := literal(node.response):
-                blocks.append(Padding(Markdown(text, code_theme=self.code_theme), (0, 0, 0, 2)))
+                response = Padding(self.response(node, text), (0, 0, 0, 2))
+                blocks.append(self.block((identity, False), response))
                 if node.status != "completed":
                     blocks.append(Text(f"  ({node.status})", style="dim"))
             else:
@@ -293,3 +314,114 @@ class TreeBrowser:
 
 def tree_dialog(tree, **options) -> Application:
     return TreeBrowser(tree, **options).app
+
+
+CopyChoice = tuple[str, bool, int]  # turn id, prompt?, snippet index (0 is the whole text)
+
+
+def _mark(value: CopyChoice) -> str:
+    identity, prompt, part = value
+    return f"{identity}/{'prompt' if prompt else 'response'}/{part}"
+
+
+class CopyBrowser(TreeBrowser):
+    """`/copy`: the `/tree` layout over the active branch, highlighting what Enter copies.
+
+    The list holds each prompt and response, with a row per quote and code
+    block under its response. The Conversation pane draws the selected row's
+    text as selected, so the reader sees exactly what leaves the popup.
+    The app's result is the chosen `Snippet`, or None.
+    """
+
+    def __init__(self, tree: ConversationTree, **options) -> None:
+        # Filled by `list_rows`, which the base constructor calls.
+        self._snippets: dict[str, list[Snippet]] = {}
+        self._values: set[CopyChoice] = set()
+        super().__init__(tree, navigable=False, **options)
+
+    def list_rows(self) -> list[tuple[CopyChoice, str]]:
+        rows = []
+        for identity in self.tree.path(self.tree.active):
+            node = self.tree.nodes[identity]
+            if node.kind == "compaction":
+                continue
+            if prompt := literal(node.prompt):
+                who = "btw: " if node.kind == "aside" else "user: "
+                rows.append(((identity, True, 0), who + excerpt(prompt)))
+            found = self._snippets[identity] = snippets(literal(node.response))
+            if not found:
+                continue
+            rows.append(((identity, False, 0), "assistant: " + excerpt(found[0].text)))
+            for part, snippet in enumerate(found[1:], 1):
+                guide = "└─ " if part == len(found) - 1 else "├─ "
+                rows.append(
+                    ((identity, False, part), f"  {guide}{snippet.label}: {excerpt(snippet.text)}")
+                )
+        self._values = {value for value, _ in rows}
+        return rows
+
+    def first_selection(self) -> CopyChoice:
+        """The newest response, what `/copy` copied before it had a picker."""
+        values = [value for value, _ in self.rows]
+        responses = [value for value in values if not value[1] and not value[2]]
+        return (responses or values or [(None, False, 0)])[-1]
+
+    def marks_top_line(self):
+        # The highlight is the selection here; a second marked row would compete.
+        return Never()
+
+    def header_text(self) -> str:
+        return "Copy · the highlighted text is what Enter copies"
+
+    def footer_text(self) -> str:
+        return "Drag over the conversation to copy any other part of it."
+
+    def help_rows(self) -> list[tuple[str, str]]:
+        return [
+            ("↑/↓", "Select prompt, response, quote or code"),
+            ("PgUp/PgDn", "Page"),
+            ("Ctrl+U/D", "Half page"),
+            ("Enter", "Copy highlighted text"),
+            ("Tab/Shift+Tab", "Change focus"),
+            ("Esc/Ctrl+C", "Cancel"),
+        ]
+
+    def chosen(self) -> Snippet | None:
+        if self.selected not in self._values:
+            return None
+        identity, prompt, part = self.selected
+        if prompt:
+            return Snippet("prompt", literal(self.tree.nodes[identity].prompt))
+        return self._snippets[identity][part]
+
+    def accept(self, app: Application) -> None:
+        if (choice := self.chosen()) is not None:
+            app.exit(result=choice)
+
+    def copy(self, output=None) -> None:
+        self.accept(self.app)
+
+    def show(self, value) -> None:
+        if value in self._values:
+            # Moving through the list takes over from a mouse selection.
+            self.detail.selection.clear()
+            self.detail.mark = _mark(value)
+            self.detail.reveal(self.detail.mark)
+
+    def branch(self, identity: str | None) -> tuple[str, ...]:
+        return tuple(self.tree.path(self.tree.active))
+
+    def block(self, value, renderable):
+        return marked(renderable, _mark((*value, 0)))
+
+    def response(self, node: TurnNode, text: str):
+        marks = {
+            snippet.lines: _mark((node.id, False, part))
+            for part, snippet in enumerate(self._snippets.get(node.id, ()))
+            if snippet.lines is not None
+        }
+        return SnippetMarkdown(text, marks, code_theme=self.code_theme)
+
+
+def copy_dialog(tree, **options) -> Application:
+    return CopyBrowser(tree, **options).app

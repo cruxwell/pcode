@@ -3,11 +3,12 @@
 The transcript draws a Markdown quote with a `▌` rail and hard-wraps it to the
 terminal, so selecting it with the mouse picks up both. The source still has
 the text as written: this pulls each top-level quote and fenced code block out
-of it for a small picker, shared by `/copy` and `/tree`.
+of it, for `/copy`'s rows (see `tree_ui.CopyBrowser`, which `SnippetMarkdown`
+highlights them for) and for the small pickers in `/tree` and `/btw`.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from markdown_it import MarkdownIt
 from prompt_toolkit.application import Application, get_app
@@ -18,11 +19,14 @@ from prompt_toolkit.key_binding.bindings.focus import focus_next, focus_previous
 from prompt_toolkit.layout import DynamicContainer, HSplit, Layout
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import Label, TextArea
+from rich.console import Group
+from rich.markdown import BlockQuote, CodeBlock, Markdown
 
 from pcode.frame import Dialog
 from pcode.popup_ui import (
     bind_list_paging,
     focus_overlay,
+    marked,
     popup_container,
     popup_mouse,
     popup_style,
@@ -62,9 +66,11 @@ def answers(tree) -> list[Answer]:
 
 @dataclass(frozen=True)
 class Snippet:
-    kind: str  # "response", "quote", or "code"
+    kind: str  # "prompt", "response", "quote", or "code"
     text: str
     language: str = ""
+    # Source lines [start, end) of a quote or code block, for `SnippetMarkdown`.
+    lines: tuple[int, int] | None = field(default=None, compare=False)
 
     @property
     def label(self) -> str:
@@ -94,8 +100,13 @@ def snippets(markdown: str) -> list[Snippet]:
         if token.type == "blockquote_open":
             if depth == 0 and token.map:
                 start, end = token.map
-                if text := _unquote(lines[start:end]):
-                    found.append(Snippet("quote", text))
+                # Its first line can open inside a list item, e.g. "2. > text":
+                # with no enclosing quote, the first `>` is this quote's own.
+                quoted = lines[start:end]
+                if (marker := quoted[0].find(">")) > 0:
+                    quoted[0] = quoted[0][marker:]
+                if text := _unquote(quoted):
+                    found.append(Snippet("quote", text, lines=(start, end)))
             depth += 1
         elif token.type == "blockquote_close":
             depth -= 1
@@ -103,8 +114,53 @@ def snippets(markdown: str) -> list[Snippet]:
             language = token.info.split()[0] if token.info.strip() else ""
             # No trailing newline: pasted into a shell, it would run the command.
             text = token.content.rstrip("\n")
-            found.append(Snippet("code", text, language))
+            found.append(Snippet("code", text, language, tuple(token.map) if token.map else None))
     return found
+
+
+class _Marked:
+    """A Markdown element tagged with its snippet's pane mark, when it has one."""
+
+    mark: str | None = None
+
+    @classmethod
+    def create(cls, markdown, token):
+        element = super().create(markdown, token)
+        element.mark = markdown.marks.get(tuple(token.map)) if token.map else None
+        return element
+
+    def __rich_console__(self, console, options):
+        rendered = super().__rich_console__(console, options)
+        if self.mark is None:
+            yield from rendered
+        else:
+            yield marked(Group(*rendered), self.mark)
+
+
+class _MarkedCodeBlock(_Marked, CodeBlock):
+    pass
+
+
+class _MarkedBlockQuote(_Marked, BlockQuote):
+    pass
+
+
+class SnippetMarkdown(Markdown):
+    """Markdown whose quotes and code blocks carry their snippets' `marked` keys.
+
+    ``marks`` maps a snippet's source lines to its key. Rich parses the same
+    source as `snippets`, so a block's line map identifies the snippet.
+    """
+
+    elements = {
+        **Markdown.elements,
+        "fence": _MarkedCodeBlock,
+        "blockquote_open": _MarkedBlockQuote,
+    }
+
+    def __init__(self, markup: str, marks: dict[tuple[int, int], str], **options) -> None:
+        super().__init__(markup, **options)
+        self.marks = marks
 
 
 def last_response(tree) -> str:
@@ -335,35 +391,6 @@ class CopyPicker:
         app = get_app()
         focus_overlay(app, self._answer_focus or self.query)
         app.invalidate()
-
-
-def copy_dialog(choices: list[Answer], *, input=None, output=None, style=None):
-    """One popup application whose result is the picked Snippet, or None."""
-    app: Application
-    shortcuts = PrefixKeys()
-    picker = CopyPicker(
-        choices,
-        on_pick=lambda snippet: app.exit(result=snippet),
-        on_cancel=lambda: app.exit(result=None),
-        shortcuts=shortcuts,
-    )
-    shortcuts.set_help(picker.help)
-    dialog = Dialog(
-        title=lambda: picker.title,
-        body=HSplit([picker.container, Label(shortcuts.summary)], padding=1),
-    )
-    app = Application(
-        layout=Layout(
-            popup_container(dialog, shortcuts), focused_element=picker.query or picker.list
-        ),
-        key_bindings=shortcuts.key_bindings(KeyBindings()),
-        full_screen=True,
-        mouse_support=popup_mouse(shortcuts),
-        input=input,
-        output=output,
-        style=popup_style(style),
-    )
-    return app
 
 
 def snippet_dialog(choices: list[Snippet], *, input=None, output=None, style=None):

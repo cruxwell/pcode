@@ -7,7 +7,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, Layout
 from prompt_toolkit.output import DummyOutput
-from prompt_toolkit.widgets import TextArea
+from prompt_toolkit.widgets import Label, TextArea
 
 from pcode.conversation_tree import ConversationTree, TurnNode
 from pcode.copy_ui import (
@@ -17,12 +17,41 @@ from pcode.copy_ui import (
     Snippet,
     SnippetPicker,
     answers,
-    copy_dialog,
     last_response,
     snippets,
 )
-from pcode.popup_ui import popup_container
+from pcode.frame import Dialog
+from pcode.popup_ui import popup_container, popup_mouse, popup_style
 from pcode.prefix_keys import PrefixKeys
+
+
+def copy_picker_dialog(choices: list[Answer], *, input=None, output=None, style=None):
+    """`CopyPicker` as an application of its own, whose result is the picked Snippet."""
+    app: Application
+    shortcuts = PrefixKeys()
+    picker = CopyPicker(
+        choices,
+        on_pick=lambda snippet: app.exit(result=snippet),
+        on_cancel=lambda: app.exit(result=None),
+        shortcuts=shortcuts,
+    )
+    shortcuts.set_help(picker.help)
+    dialog = Dialog(
+        title=lambda: picker.title,
+        body=HSplit([picker.container, Label(shortcuts.summary)], padding=1),
+    )
+    app = Application(
+        layout=Layout(
+            popup_container(dialog, shortcuts), focused_element=picker.query or picker.list
+        ),
+        key_bindings=shortcuts.key_bindings(KeyBindings()),
+        full_screen=True,
+        mouse_support=popup_mouse(shortcuts),
+        input=input,
+        output=output,
+        style=popup_style(style),
+    )
+    return app
 
 
 def test_answers_follow_active_branch_newest_first():
@@ -116,7 +145,7 @@ def test_copy_dialog_plain_answers_real_keys(keys, index):
     async def run():
         with create_pipe_input() as pipe:
             items = choices()
-            app = copy_dialog(items, input=pipe, output=DummyOutput())
+            app = copy_picker_dialog(items, input=pipe, output=DummyOutput())
             pipe.send_text(keys)
             result = await asyncio.wait_for(app.run_async(), 3)
             assert result == (Snippet("response", items[index].text) if index is not None else None)
@@ -222,7 +251,7 @@ def test_copy_picker_back_preserves_screen_query_selection_and_focus(
 def test_copy_dialog_real_keys(items, keys, expected):
     async def run():
         with create_pipe_input() as pipe:
-            app = copy_dialog(items, input=pipe, output=DummyOutput())
+            app = copy_picker_dialog(items, input=pipe, output=DummyOutput())
             pipe.send_text(keys)
             assert await asyncio.wait_for(app.run_async(), 3) == expected
 

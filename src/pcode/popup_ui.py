@@ -42,6 +42,9 @@ from prompt_toolkit.styles import Style, merge_styles
 from prompt_toolkit.utils import get_cwidth
 from prompt_toolkit.widgets import TextArea
 from rich.console import Console
+from rich.segment import Segments
+from rich.style import Style as RichStyle
+from rich.styled import Styled
 from rich.theme import Theme
 
 from pcode.frame import TITLE_CHROME, Frame, text_width
@@ -61,6 +64,18 @@ from pcode.text_selection import (
 # prompt_toolkit's ANSI parser reads CSI only and spills the rest as literal
 # text ("8;id=1;https://…"). A pane cannot follow a link anyway, so drop them.
 OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
+# Style meta naming a block a RichPane can highlight; Rich never draws meta.
+_MARK = "pcode.mark:"
+
+
+def marked(renderable, key: str) -> Styled:
+    """``renderable`` tagged as block ``key``, unchanged on screen until a pane shows it.
+
+    Tags nest, e.g. a code block inside a response, because each is its own meta key.
+    """
+    return Styled(renderable, RichStyle(meta={_MARK + key: True}))
+
 
 # Framed selector panes: rows of list content, before the frame's own borders.
 LIST_ROWS_MIN = 3
@@ -396,6 +411,21 @@ def steer_list_from_query(keys, query, listing) -> None:
         listing.buffer.cursor_down(page())
 
 
+def _mark_spans(segments, first_line: int, spans: dict[str, tuple[int, int]]) -> None:
+    """Widen ``spans`` to every line where a `marked` block drew text."""
+    line = first_line
+    for segment in segments:
+        pieces = segment.text.split("\n")
+        style = segment.style
+        keys = [k[len(_MARK) :] for k in style.meta if k.startswith(_MARK)] if style else []
+        for offset, piece in enumerate(pieces):
+            if piece:
+                for key in keys:
+                    start, end = spans.get(key, (line + offset, line + offset))
+                    spans[key] = (min(start, line + offset), max(end, line + offset))
+        line += len(pieces) - 1
+
+
 class RichPane:
     """A read-only, scrollable pane showing Rich renderables (Markdown, Text).
 
@@ -417,15 +447,19 @@ class RichPane:
         self.notify = notify
         self.renderables: list = []
         self._version = 0
-        self._cache: tuple[int, int, list, list[int]] | None = None
+        self._cache: tuple[int, int, list, list[int], dict[str, tuple[int, int]]] | None = None
         self._line_cache: tuple[int, int, list, list[Row]] | None = None
         # The width last drawn at: selection coordinates mean nothing at another.
         self._width = 0
         self.selection = Selection(lambda: self.rows(self._width), self._copy)
         # Casefolded words marked wherever they appear, e.g. a search query.
         self.highlight: tuple[str, ...] = ()
+        # The `marked` block drawn as selected, e.g. what a copy would take.
+        self.mark: str | None = None
         # Renderable index to scroll to on the next render, once the width is known.
         self._anchor: int | None = None
+        # A `marked` block to scroll into view on the next render.
+        self._reveal: str | None = None
         pane = self
 
         class Control(UIControl):
@@ -450,6 +484,13 @@ class RichPane:
                     # render knows, so a requested anchor is applied here.
                     pane.window.vertical_scroll = pane.line_offset(pane._anchor, width)
                     pane._anchor = None
+                if pane._reveal is not None:
+                    if span := pane.span(pane._reveal, width):
+                        top = pane.window.vertical_scroll
+                        # Only move when part of the block is out of view.
+                        if span[0] < top or span[1] >= top + height:
+                            pane.window.vertical_scroll = span[0]
+                    pane._reveal = None
                 # The window reads the cursor row as a real line, so keep it on
                 # one. A stale scroll outlives a rewrap to fewer lines (resize,
                 # the wide/narrow switch), follow() holding an offset past
@@ -459,10 +500,18 @@ class RichPane:
                     pane.window.vertical_scroll, max(0, len(lines) - 1)
                 )
                 selected = pane.selection.columns
+                # A mouse selection is what gets copied while it shows, and the
+                # two would draw alike, so it replaces the mark.
+                span = None
+                if pane.mark is not None and pane.selection.span() is None:
+                    span = pane.span(pane.mark, width)
 
                 def get_line(row):
+                    line = lines[row]
+                    if span and span[0] <= row <= span[1]:
+                        line = highlight(line, 0, width)
                     columns = selected(row)
-                    return lines[row] if columns is None else highlight(lines[row], *columns)
+                    return line if columns is None else highlight(line, *columns)
 
                 return UIContent(
                     get_line=get_line,
@@ -514,6 +563,15 @@ class RichPane:
         """Put the start of ``renderables[index]`` on the pane's top row at the next render."""
         self._anchor = index
 
+    def reveal(self, key: str) -> None:
+        """Scroll the `marked` block ``key`` into view at the next render, if it is not."""
+        self._reveal = key
+
+    def span(self, key: str, width: int) -> tuple[int, int] | None:
+        """First and last rendered line of the `marked` block ``key`` at ``width``."""
+        self.fragments(width)
+        return self._cache[4].get(key)
+
     def line_offset(self, index: int, width: int) -> int:
         """First rendered line of ``renderables[index]`` at ``width``."""
         self.fragments(width)
@@ -532,17 +590,20 @@ class RichPane:
                 highlight=False,
             )
             offsets, lines, position = [], 0, 0
+            spans: dict[str, tuple[int, int]] = {}
             with marked_rendering():
                 for renderable in self.renderables:
                     offsets.append(lines)
-                    console.print(renderable)
+                    segments = list(console.render(renderable))
+                    _mark_spans(segments, lines, spans)
+                    console.print(Segments(segments))
                     # Read only the new output; re-reading the whole buffer per
                     # renderable would be quadratic on a long transcript.
                     console.file.seek(position)
                     lines += console.file.read().count("\n")
                     position = console.file.tell()
             rendered = OSC.sub("", console.file.getvalue().rstrip("\n"))
-            self._cache = (*key, to_formatted_text(ANSI(rendered)), offsets)
+            self._cache = (*key, to_formatted_text(ANSI(rendered)), offsets, spans)
         return self._cache[2]
 
     def lines(self, width: int) -> list:

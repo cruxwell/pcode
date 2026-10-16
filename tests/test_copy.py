@@ -41,6 +41,12 @@ def test_snippets_pull_top_level_quotes_and_code_without_markers():
     assert snippets("  \n") == []
 
 
+def test_a_quote_opening_a_list_item_copies_without_the_list_marker():
+    assert snippets("2. > quoted in list\n   > and more\n")[1:] == [
+        Snippet("quote", "quoted in list\nand more")
+    ]
+
+
 def tree_with(*responses: str) -> ConversationTree:
     tree = ConversationTree()
     parent = None
@@ -88,23 +94,30 @@ def test_copy_command_copies_a_plain_response_without_a_picker(monkeypatch):
     asyncio.run(run())
 
 
+UP = "\x1b[A"
+
+
 @pytest.mark.parametrize(
-    ("older", "answer_keys", "snippet_keys", "expected"),
+    ("older", "keys", "expected"),
     [
-        ("older plain answer", "older\r", None, "older plain answer"),
-        ("older plain answer", "\x1b", None, None),
-        (RESPONSE, "Two things\r", "\x1b[B\r", "zed schema read"),
-        (RESPONSE, "Two things\r", "\r", "SAML login fails for\n**all** users.\nlazy continuation"),
-        (RESPONSE, "Two things\r", "\x1b\x1b", None),
-        (RESPONSE, "Two things\r", "\x03\x03", None),
-        (RESPONSE, "Two things\r", "\x1b[A\r", RESPONSE.strip()),
+        # Rows: ask, older..., ask, newest answer (selected first), ask.
+        ("older plain answer", "\r", "newest answer"),
+        ("older plain answer", UP * 2 + "\r", "older plain answer"),
+        ("older plain answer", UP + "\r", "ask"),
+        ("older plain answer", "\x1b", None),
+        ("older plain answer", "\x03", None),
+        # A response's quotes and code blocks are rows of their own under it.
+        (RESPONSE, UP * 2 + "\r", "outer\n> nested"),
+        (RESPONSE, UP * 3 + "\r", "zed schema read"),
+        (RESPONSE, UP * 4 + "\r", "SAML login fails for\n**all** users.\nlazy continuation"),
+        (RESPONSE, UP * 5 + "\r", RESPONSE.strip()),
     ],
 )
-def test_main_copy_history_by_keyboard(monkeypatch, older, answer_keys, snippet_keys, expected):
+def test_main_copy_history_by_keyboard(monkeypatch, older, keys, expected):
     from pydantic_ai import Agent
 
     import pcode.clipboard
-    import pcode.copy_ui as copy_ui
+    import pcode.tree_ui as tree_ui
     from pcode.app import PreviewApp
     from pcode.live import AgentRuntime
 
@@ -132,21 +145,15 @@ def test_main_copy_history_by_keyboard(monkeypatch, older, answer_keys, snippet_
                 yield pipe
 
             monkeypatch.setattr(app, "popup", popup)
-            original = copy_ui.copy_dialog
+            original = tree_ui.CopyBrowser
 
-            def build(choices, **kwargs):
-                dialogs.append("copy_dialog")
-                assert [answer.text for answer in choices] == [
-                    "newest answer",
-                    older.strip(),
-                ]
-                dialog = original(choices, **kwargs)
-                dialog.pre_run_callables.append(
-                    lambda: pipe.send_text(answer_keys + (snippet_keys or ""))
-                )
-                return dialog
+            def build(tree, **kwargs):
+                browser = original(tree, **kwargs)
+                dialogs.append(browser)
+                browser.app.pre_run_callables.append(lambda: pipe.send_text(keys))
+                return browser
 
-            monkeypatch.setattr(copy_ui, "copy_dialog", build)
+            monkeypatch.setattr(tree_ui, "CopyBrowser", build)
             session = SimpleNamespace(app=SimpleNamespace(output=DummyOutput(), style=None))
             assert app.registry.dispatch("/copy")
             await asyncio.wait_for(app.choose_copy(output=None, session=session), 5)
@@ -154,7 +161,48 @@ def test_main_copy_history_by_keyboard(monkeypatch, older, answer_keys, snippet_
 
     asyncio.run(run())
     assert copied == ([] if expected is None else [expected])
-    assert dialogs == ["copy_dialog"]
+    [browser] = dialogs
+    # A newer sibling is not on the active branch, so it is not offered.
+    assert all("excluded" not in label for _, label in browser.rows)
+
+
+def test_copy_browser_highlights_exactly_what_it_copies():
+    from pcode.tree_ui import CopyBrowser
+
+    with create_pipe_input() as pipe:
+        browser = CopyBrowser(tree_with("first answer", RESPONSE), input=pipe, output=DummyOutput())
+        pane = browser.detail
+
+        def highlighted(width=60):
+            first, last = pane.span(pane.mark, width)
+            return "\n".join(row.text.rstrip() for row in pane.rows(width)[first : last + 1])
+
+        # It opens on the newest response, the whole of it marked.
+        assert browser.selected == ("t1", False, 0)
+        assert "Two things:" in highlighted() and "zed schema read" in highlighted()
+        assert "first answer" not in highlighted()
+        labels = [label for _, label in browser.rows]
+        assert labels[-3:] == [
+            "  ├─ Quote: SAML login fails for **all** users. lazy continuation",
+            "  ├─ Code (bash): zed schema read",
+            "  └─ Quote: outer > nested",
+        ]
+        browser.list.buffer.cursor_down(2)
+        assert browser.chosen() == Snippet("code", "zed schema read", "bash")
+        assert highlighted().strip() == "zed schema read"
+        browser.list.buffer.cursor_up(1)
+        assert "SAML login fails for" in highlighted() and "Two things" not in highlighted()
+        browser.list.buffer.cursor_up(2)
+        assert browser.chosen() == Snippet("prompt", "ask") and highlighted().strip() == "▌ ask"
+        # A mouse selection, which copies on release, shows instead of the mark,
+        # and moving through the list brings the mark back.
+        pane.control.create_content(60, 20)  # A new width clears any selection.
+        pane.selection.anchor, pane.selection.cursor, pane.selection.active = (0, 0), (0, 3), True
+        content = pane.control.create_content(60, 20)
+        selected = [any("selected" in style for style, *_ in content.get_line(r)) for r in range(4)]
+        assert selected == [True, False, False, False]
+        browser.list.buffer.cursor_down(1)
+        assert pane.selection.span() is None
 
 
 def test_tree_copy_opens_a_picker_for_quotes(monkeypatch):
