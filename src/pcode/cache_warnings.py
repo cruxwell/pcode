@@ -122,8 +122,8 @@ class CacheBustReporting(WarnOnCacheBusts):
                 await ctx.emit(CacheBustEvent(text=command_text(text)))
             elif issubclass(warning.category, CacheNotEnabledWarning):
                 # pcode picks caching per provider (`cache_settings`), leaving
-                # Meridian's off on purpose; and a stray warning would print
-                # over the terminal UI.
+                # some off on purpose; and a stray warning would print over
+                # the terminal UI.
                 continue
             else:
                 warnings.warn_explicit(

@@ -137,10 +137,10 @@ def test_delegated_anthropic_requests_carry_cache_control(tmp_path):
 
 @pytest.mark.parametrize(
     "system, expected",
-    [("anthropic", ANTHROPIC_CACHE_SETTINGS), ("meridian", None), ("openai", None)],
+    [("anthropic", ANTHROPIC_CACHE_SETTINGS), ("openai", None)],
 )
 def test_cache_settings_apply_only_where_they_are_needed(system, expected):
-    """Codex caches server-side, and Meridian strips client markers."""
+    """Codex caches server-side, so only Anthropic gets client markers."""
     context = ModelRequestContext(
         model=SimpleNamespace(system=system),
         messages=[],

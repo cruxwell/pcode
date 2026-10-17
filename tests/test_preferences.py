@@ -33,8 +33,7 @@ def test_effort_persists_per_model_and_restores():
     assert model_efforts() == {"openai-codex:test": "high"}
     assert make_app().current_effort() == "high"
     # Another model keeps its own effort: nothing saved means nothing applied.
-    for provider in ("anthropic", "meridian"):
-        assert make_app(f"{provider}:claude-opus-4-5").runtime.agent.model_settings is None
+    assert make_app("anthropic:claude-opus-4-5").runtime.agent.model_settings is None
     make_app("anthropic:claude-opus-4-5").controller.effort("low")
     assert make_app("anthropic:claude-opus-4-5").runtime.agent.model_settings == {
         "anthropic_effort": "low"
@@ -47,14 +46,6 @@ def test_effort_persists_per_model_and_restores():
     app.controller.effort("default")
     assert make_app().current_effort() == "default"
     assert make_app("anthropic:claude-opus-4-5").current_effort() == "low"
-
-
-def test_effort_refusal_names_meridian_only_while_it_is_offered(monkeypatch):
-    from pcode.preferences import effort_unavailable
-
-    assert "Meridian" not in effort_unavailable("test:local")
-    monkeypatch.setattr("pcode.models.LEGACY_ANTHROPIC_AUTH", True)
-    assert "Meridian" in effort_unavailable("test:local")
 
 
 def test_shared_effort_default_applies_only_to_models_without_their_own():
@@ -212,7 +203,6 @@ def test_invalid_saved_prefix_falls_back_to_ctrl():
 
 
 def test_config_dir_override_moves_every_config_file(monkeypatch, tmp_path):
-    from pcode.anthropic_oauth import credentials_path
     from pcode.ext import user_extension_dir
     from pcode.mcp import config_path as mcp_config_path
 
@@ -220,7 +210,6 @@ def test_config_dir_override_moves_every_config_file(monkeypatch, tmp_path):
     monkeypatch.setenv("PCODE_CONFIG_DIR", str(instance))
 
     assert preferences_path() == instance / "preferences.json"
-    assert credentials_path() == instance / "credentials.json"
     assert mcp_config_path() == instance / "mcp.json"
     assert user_extension_dir() == instance / "extensions"
 

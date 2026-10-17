@@ -367,7 +367,6 @@ def test_help_hides_old_aliases_and_legacy_flags(monkeypatch, capsys):
     shown = capsys.readouterr().out
     assert "--theme-preview" in shown
     assert "--demo" not in shown
-    assert "--upgrade-meridian" not in shown
 
 
 def test_theme_preview_cli_passes_the_theme(monkeypatch):

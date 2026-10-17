@@ -440,7 +440,6 @@ class SessionHost:
                 self.view.replay_conversation()
             controller.show_startup_context()
             controller.warn_without_credentials()
-            await controller.warn_meridian_thinking()
             # Optional, and it can hang; the session must not wait for it.
             self.tasks.append(asyncio.create_task(self._refresh_context()))
             self.tasks.append(asyncio.create_task(controller.warn_outdated()))

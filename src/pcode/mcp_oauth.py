@@ -5,7 +5,7 @@ later. A collision raises SystemExit inside its background task. Reserve the
 actual socket before registration and pass it to an embedded, signal-free server.
 
 Tokens and the dynamic client registration outlive the process in one
-owner-only JSON file, like pcode's Anthropic sign-in, so a server can be enabled
+owner-only JSON file, like pcode's Codex sign-in, so a server can be enabled
 at startup without a browser round trip. No keychain: it locks over SSH, prompts
 after upgrades, and other tools sharing the item have wiped MCP sign-ins.
 """

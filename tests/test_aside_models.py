@@ -108,9 +108,9 @@ def test_labels_drop_the_provider_unless_two_models_would_look_the_same():
         SideTarget("anthropic:claude-x"): "claude-x",
         SideTarget("openai-codex:gpt-y"): "gpt-y",
     }
-    assert model_labels(targets("anthropic:claude-x", "meridian:claude-x", "test")) == {
+    assert model_labels(targets("anthropic:claude-x", "claude:claude-x", "test")) == {
         SideTarget("anthropic:claude-x"): "anthropic:claude-x",
-        SideTarget("meridian:claude-x"): "meridian:claude-x",
+        SideTarget("claude:claude-x"): "claude:claude-x",
         SideTarget("test"): "test",
     }
 
@@ -199,12 +199,12 @@ def test_model_suggestions_come_from_the_model_picker_catalog(monkeypatch):
 
     def providers(current):
         calls.append(current)
-        return {"meridian"}
+        return {"claude"}
 
     monkeypatch.setattr(models, "active_providers", providers)
     first = app.controller.model_suggestions()
-    assert first == models.model_catalog({"meridian"}, "test:local")
-    assert first and all(name.startswith("meridian:") for name in first)
+    assert first == models.model_catalog({"claude"}, "test:local")
+    assert first and all(name.startswith("claude:") for name in first)
     # Typing does not rescan providers on every keystroke.
     assert app.controller.model_suggestions() is first
     assert calls == ["test:local"]

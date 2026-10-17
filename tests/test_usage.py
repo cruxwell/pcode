@@ -1,5 +1,5 @@
-import hashlib
 import json
+import subprocess
 from io import StringIO
 from types import SimpleNamespace
 
@@ -12,110 +12,78 @@ from pcode import usage
 
 NOW = 1_000_000.0
 
-
-def test_keychain_service_hashes_an_explicit_config_dir():
-    # Claude Code suffixes the item whenever CLAUDE_CONFIG_DIR is set, even to ~/.claude.
-    digest = hashlib.sha256(b"/home/me/.claude").hexdigest()[:8]
-    assert usage.keychain_service("/home/me/.claude") == f"Claude Code-credentials-{digest}"
-    assert usage.keychain_service(None) == "Claude Code-credentials"
-
-
-def test_claude_login_falls_back_to_the_credentials_file(tmp_path, monkeypatch):
-    monkeypatch.setattr(usage.sys, "platform", "linux")
-    record = {"accessToken": "token", "subscriptionType": "max"}
-    (tmp_path / ".credentials.json").write_text(json.dumps({"claudeAiOauth": record}))
-    assert usage.claude_login(str(tmp_path)) == record
-    with pytest.raises(usage.UsageUnavailable, match="No Claude Code login"):
-        usage.claude_login(str(tmp_path / "missing"))
+CLI_REPORT = (
+    "You are currently using your subscription to power your Claude Code usage\n\n"
+    "Current session: 6% used · resets Oct 16 at 10:30pm (America/Los_Angeles)\n"
+    "Current week (all models): 9% used · resets Oct 19 at 6pm (America/Los_Angeles)\n\n"
+    "What's contributing to your limits usage?\n"
+    "Last 24h · 765 requests · 36 sessions\n"
+)
 
 
-def test_claude_subscription_limits_and_disabled_extra_usage():
-    data = {
-        "limits": [
-            {
-                "kind": "session",
-                "group": "session",
-                "percent": 9,
-                "resets_at": "1970-01-12T13:46:40+00:00",
-            },
-            {
-                "kind": "weekly_scoped",
-                "group": "weekly",
-                "percent": 15,
-                "resets_at": None,
-                "scope": {"model": {"display_name": "Opus"}},
-            },
-        ],
-        "spend": {
-            "used": {"amount_minor": 0, "currency": "USD", "exponent": 2},
-            "limit": {"amount_minor": 10000, "currency": "USD", "exponent": 2},
-            "percent": 0,
-            "enabled": False,
-            "disabled_reason": "out_of_credits",
-        },
-    }
-    assert usage.claude_lines(data, now=NOW - 3600) == [
-        "Session (5h): 9% used, resets in 1h",
-        "Weekly (Opus): 15% used",
-        "Spend: $0.00 of $100.00 (0%), off (out of credits)",
-    ]
-
-
-def test_claude_enterprise_spend_cap():
-    data = {
-        "five_hour": None,
-        "limits": [],
-        "spend": {
-            "used": {"amount_minor": 65242, "currency": "USD", "exponent": 2},
-            "limit": {"amount_minor": 250000, "currency": "USD", "exponent": 2},
-            "percent": 26,
-            "enabled": True,
-        },
-    }
-    assert usage.claude_lines(data) == ["Spend: $652.42 of $2,500.00 (26%)"]
-
-
-def test_claude_windows_without_a_limits_list():
-    data = {"five_hour": {"utilization": 6.0, "resets_at": None}, "spend": None}
-    assert usage.claude_lines(data) == ["Session (5h): 6% used"]
-    assert usage.claude_lines({}) == ["No limits reported for this login."]
-
-
-def fake_claude(monkeypatch, response=None, **login):
-    monkeypatch.setattr(usage, "claude_login", lambda: {"accessToken": "t", **login})
-    monkeypatch.setattr("pcode.auth.oauth_user_agent", lambda: "claude-code/test")
+def fake_cli(monkeypatch, stdout="", returncode=0, error=None, stderr=""):
+    """Stand in for `claude -p /usage`; records the command and environment."""
     calls = []
 
-    def get(url, **kwargs):
-        calls.append(kwargs["headers"])
-        return response
+    def run(args, **kwargs):
+        calls.append((args, kwargs))
+        if error is not None:
+            raise error
+        return SimpleNamespace(stdout=stdout, stderr=stderr, returncode=returncode)
 
-    monkeypatch.setattr(usage.httpx2, "get", get)
+    monkeypatch.setattr("pcode.models.claude_sdk_installed", lambda: True)
+    monkeypatch.setattr("pcode.claude_sdk.cli_path", lambda: "/bin/claude")
+    monkeypatch.setattr(usage.subprocess, "run", run)
     return calls
 
 
-def test_claude_usage_never_uses_an_expired_token(monkeypatch):
-    calls = fake_claude(monkeypatch, expiresAt=1000)
-    with pytest.raises(usage.UsageUnavailable, match="expired"):
-        usage.claude_usage()
-    assert calls == []
+def cli_json(result, is_error=False):
+    return json.dumps({"type": "result", "is_error": is_error, "num_turns": 0, "result": result})
+
+
+def test_claude_usage_asks_the_cli_with_a_scrubbed_environment(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-key")
+    calls = fake_cli(monkeypatch, cli_json(CLI_REPORT))
+    assert usage.claude_usage() == [
+        "You are currently using your subscription to power your Claude Code usage",
+        "Current session: 6% used · resets Oct 16 at 10:30pm (America/Los_Angeles)",
+        "Current week (all models): 9% used · resets Oct 19 at 6pm (America/Los_Angeles)",
+    ]
+    ((args, kwargs),) = calls
+    assert args[:3] == ["/bin/claude", "-p", "/usage"]
+    assert "--no-session-persistence" in args
+    # No user or project hooks run, and the CLI never waits on input.
+    assert args[-2:] == ["--setting-sources", ""]
+    assert kwargs["stdin"] is subprocess.DEVNULL
+    # An API key must not answer for the subscription.
+    assert kwargs["env"]["ANTHROPIC_API_KEY"] == ""
+
+
+def test_claude_usage_without_a_subscription_login(monkeypatch):
+    fake_cli(monkeypatch, cli_json("Total cost:            $0.0000\nUsage: 0 input, 0 output"))
+    assert usage.claude_usage() == ["No Claude subscription login; run /login claude."]
 
 
 @pytest.mark.parametrize(
-    ("status", "message"), [(401, "rejected"), (429, "rate limiting"), (500, "HTTP 500")]
+    ("kwargs", "message"),
+    [
+        ({"stdout": "not json", "returncode": 1}, "failed \\(exit 1\\)\\.$"),
+        ({"returncode": 2, "stderr": "boom\nmore"}, "failed \\(exit 2\\): boom\\.$"),
+        ({"stdout": cli_json("Not logged in\nmore", is_error=True)}, "^Not logged in$"),
+        ({"error": subprocess.TimeoutExpired("claude", 30)}, "did not answer"),
+        ({"error": FileNotFoundError()}, "Could not run Claude Code"),
+    ],
 )
-def test_claude_usage_errors(monkeypatch, status, message):
-    fake_claude(monkeypatch, httpx2.Response(status))
+def test_claude_usage_errors(monkeypatch, kwargs, message):
+    fake_cli(monkeypatch, **kwargs)
     with pytest.raises(usage.UsageUnavailable, match=message):
         usage.claude_usage()
 
 
-def test_claude_usage_sends_claude_code_identity(monkeypatch):
-    body = {"limits": [{"kind": "weekly_all", "percent": 66}]}
-    calls = fake_claude(monkeypatch, httpx2.Response(200, json=body), subscriptionType="max")
-    assert usage.claude_usage() == ["Plan: max", "Weekly: 66% used"]
-    assert calls[0]["User-Agent"] == "claude-code/test"
-    assert calls[0]["Authorization"] == "Bearer t"
+def test_claude_usage_needs_the_claude_extra(monkeypatch):
+    monkeypatch.setattr("pcode.models.claude_sdk_installed", lambda: False)
+    with pytest.raises(usage.UsageUnavailable, match="claude` extra"):
+        usage.claude_usage()
 
 
 CODEX_BODY = {

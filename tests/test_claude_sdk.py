@@ -46,7 +46,7 @@ from pcode.claude_sdk import resume as claude_resume
 from pcode.claude_sdk import session as claude_session
 from pcode.claude_sdk import session_pool as claude_pool
 from pcode.diagnostics import transient
-from pcode.meridian_reminders import append_reminder
+from pcode.reminders import append_reminder
 
 MODEL = "claude-test-1"
 # What the CLI's own web tools answer, in its format (verified with 2.1.285).

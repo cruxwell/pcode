@@ -2,29 +2,22 @@
 
 import asyncio
 import json
-import time
 
 import httpx2
 import pytest
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 
-from pcode.anthropic_oauth import AnthropicOAuthModel, OAuthTokens, write_tokens
 from pcode.auth import anthropic_model
 from pcode.live import AgentRuntime, error_message
 
 
-def build_model(source, client, tmp_path):
-    if source == "api-key":
-        return anthropic_model("anthropic:test-model", "synthetic-key", http_client=client)
-    path = tmp_path / "credential.json"
-    write_tokens(path, OAuthTokens("synthetic-access", "synthetic-refresh", time.time() + 3600))
-    return AnthropicOAuthModel("anthropic:test-model", path=path, http_client=client)
+def build_model(client):
+    return anthropic_model("anthropic:test-model", "synthetic-key", http_client=client)
 
 
-@pytest.mark.parametrize("source", ["api-key", "oauth"])
 @pytest.mark.parametrize("status", [400, 429, 500, 529])
-def test_http_errors_surface_without_sdk_backoff(source, status, tmp_path):
+def test_http_errors_surface_without_sdk_backoff(status):
     requests = []
     notices = []
 
@@ -38,7 +31,7 @@ def test_http_errors_surface_without_sdk_backoff(source, status, tmp_path):
 
     async def run():
         async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
-            runtime = AgentRuntime(Agent(build_model(source, client, tmp_path)))
+            runtime = AgentRuntime(Agent(build_model(client)))
             runtime.retry_notice = notices.append
             try:
                 async with asyncio.timeout(2):
@@ -106,17 +99,8 @@ def test_openai_streamed_overload_uses_runtime_retry_budget(monkeypatch, retries
     assert all("Retrying provider request" in notice for notice in notices)
 
 
-def test_meridian_client_leaves_transport_retries_to_the_runtime(monkeypatch):
-    """The SDK default of 2 would retry 429/5xx below the runtime's own budget."""
-    from pcode.meridian import MeridianProvider
-
-    monkeypatch.setenv("PCODE_MERIDIAN_ENDPOINT", "http://localhost:1/v1")
-    assert MeridianProvider().client.max_retries == 0
-
-
-@pytest.mark.parametrize("source", ["api-key", "oauth"])
 @pytest.mark.parametrize("retries", [0, 1])
-def test_transport_retries_are_owned_and_announced_by_runtime(source, retries, tmp_path):
+def test_transport_retries_are_owned_and_announced_by_runtime(retries):
     requests = []
     notices = []
 
@@ -126,7 +110,7 @@ def test_transport_retries_are_owned_and_announced_by_runtime(source, retries, t
 
     async def run():
         async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
-            runtime = AgentRuntime(Agent(build_model(source, client, tmp_path)))
+            runtime = AgentRuntime(Agent(build_model(client)))
             runtime.retry_attempts = retries
             runtime.retry_notice = notices.append
             try:

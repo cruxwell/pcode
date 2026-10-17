@@ -139,11 +139,7 @@ def test_bare_logout_removes_the_codex_login(monkeypatch):
     app.handle("/logout")
     assert app.controller.logout_requested == "openai-codex"
     assert "anthropic" not in app.controller.registry.find("/logout").arguments
-    # An Anthropic sign-in stored while the legacy route was on can still go.
     app.controller.logout_requested = None
-    app.handle("/logout anthropic")
-    assert app.controller.logout_requested is None
-    assert "No stored Anthropic login" in buffer.getvalue()
     app.handle("/logout gemini")
     assert "Usage: /logout [openai-codex]" in buffer.getvalue()
 
@@ -177,13 +173,12 @@ def test_invalid_store_fails_closed(tmp_path, contents):
 
 
 def test_config_directory_precedence(monkeypatch, tmp_path):
-    from pcode.anthropic_oauth import credentials_path as anthropic_path
     from pcode.preferences import preferences_path
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     assert codex_login.credentials_path() == tmp_path / "xdg/pcode/codex-credentials.json"
     monkeypatch.setenv("PCODE_CONFIG_DIR", str(tmp_path / "override"))
-    for path in (preferences_path(), anthropic_path(), codex_login.credentials_path()):
+    for path in (preferences_path(), codex_login.credentials_path()):
         assert path.parent == tmp_path / "override"
 
 

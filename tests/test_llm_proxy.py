@@ -41,21 +41,13 @@ def test_unset_or_blank_preserves_default_provider(monkeypatch, tmp_path, value)
 
 
 @pytest.mark.parametrize("proxy", ["http://127.0.0.1:8080", "not-a-url"])
-@pytest.mark.parametrize("model", ["openai:gpt-4o", "anthropic:claude", "meridian:claude", "test"])
-@pytest.mark.usefixtures("legacy_anthropic_auth")
+@pytest.mark.parametrize("model", ["openai:gpt-4o", "anthropic:claude", "test"])
 def test_other_providers_ignore_codex_proxy(monkeypatch, tmp_path, model, proxy):
-    from pydantic_ai.models.test import TestModel
-
     monkeypatch.setenv("PCODE_LLM_PROXY", proxy)
     monkeypatch.setenv("OPENAI_API_KEY", "synthetic-key")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-key")
-    monkeypatch.setenv("PCODE_ANTHROPIC_AUTH", "api-key")
-    meridian = TestModel()
-    monkeypatch.setattr("pcode.meridian.meridian_model", lambda _: meridian)
     agent = create_agent(model, tmp_path)
     assert not isinstance(getattr(agent.model, "_provider", None), ProxiedCodexProvider)
-    if model.startswith("meridian:"):
-        assert agent.model is meridian
 
     async def close():
         async with agent:

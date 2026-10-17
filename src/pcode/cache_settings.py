@@ -19,8 +19,7 @@ from pydantic_ai.models import ModelRequestContext
 # (confirmed against captured request bodies and saved-session usage records).
 # `anthropic_cache` is the server-side automatic breakpoint, which moves forward as
 # history grows; the two explicit breakpoints keep instructions and tool definitions
-# cached. Meridian is excluded on purpose: its passthrough proxy strips client
-# `cache_control` and drives caching from its own lineage hash.
+# cached.
 ANTHROPIC_CACHE_SETTINGS = {
     "anthropic_cache": "5m",
     "anthropic_cache_instructions": True,

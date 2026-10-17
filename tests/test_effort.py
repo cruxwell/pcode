@@ -33,7 +33,6 @@ def make_app(model="openai-codex:test", runtime=None):
     [
         "openai-codex:test",
         "anthropic:claude-opus-4-5",
-        "meridian:claude-opus-4-5",
         "claude:claude-opus-4-5",
     ],
 )
@@ -159,7 +158,6 @@ def test_real_keybindings_preserve_draft_and_cursor(busy):
     [
         ("openai-codex:gpt-5", "openai_reasoning_effort"),
         ("anthropic:claude-opus-4-5", "anthropic_effort"),
-        ("meridian:claude-opus-4-5", "anthropic_effort"),
     ],
 )
 def test_effort_changes_apply_to_next_turn_not_next_tool_step(name, key):
@@ -199,12 +197,11 @@ def test_effort_changes_apply_to_next_turn_not_next_tool_step(name, key):
     assert app.current_effort() == "medium"
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "meridian"])
 @pytest.mark.parametrize("native_xhigh", [False, True])
-def test_anthropic_effort_settings_and_restore(provider, native_xhigh):
+def test_anthropic_effort_settings_and_restore(native_xhigh):
     from pcode.preferences import apply_effort, effort_for
 
-    app, _ = make_app(f"{provider}:claude-opus-4-5")
+    app, _ = make_app("anthropic:claude-opus-4-5")
     agent = app.runtime.agent
     agent.model = SimpleNamespace(
         profile={
@@ -267,11 +264,10 @@ def anthropic_request_body(model_name, send):
     return requests[0]
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "meridian"])
 @pytest.mark.parametrize("level", ["low", "medium", "high", "xhigh", "default"])
-def test_anthropic_request_payload(provider, level):
+def test_anthropic_request_payload(level):
     async def send(agent):
-        app, _ = make_app(f"{provider}:claude-opus-4-6", AgentRuntime(agent))
+        app, _ = make_app("anthropic:claude-opus-4-6", AgentRuntime(agent))
         app.controller.effort(level)
 
     body = anthropic_request_body("claude-opus-4-6", send)

@@ -10,7 +10,7 @@ from pcode.model_metadata import catalog, refresh_context
 # Anthropic requires max_tokens. Pydantic AI before 2.52 sent 4096, which thinking
 # or one file-writing tool call can exhaust; 2.52 asks for the model's maximum
 # output when its own profile knows it. pcode resolves the serving route's limit
-# (Meridian ids, Claude Code aliases) from its catalog instead, and unknown or
+# (Claude Code aliases, for one) from its catalog instead, and unknown or
 # offline routes cannot safely borrow another endpoint's model limits.
 FALLBACK_OUTPUT_TOKENS = 16_384
 

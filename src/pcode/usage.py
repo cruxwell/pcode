@@ -1,41 +1,30 @@
 """`/usage`: plan limits and spend for the Claude Code and Codex logins, on demand.
 
-Both sources are undocumented endpoints the vendors' own CLIs call, read with
-the logins pcode already runs on, so no admin key is involved:
+Both come from the logins pcode already runs on, so no admin key is involved:
 
-- Claude: `GET api.anthropic.com/api/oauth/usage` with Claude Code's OAuth
-  token. Subscription seats get `limits` (session and weekly percentages);
-  Enterprise seats billed at API rates get `spend` (used of the monthly cap).
-- Codex: `GET chatgpt.com/backend-api/wham/usage` through the Codex provider's
-  auth, which injects the token, refreshes it on a 401, and never writes the
-  Codex CLI's `auth.json`.
-
-Claude Code's token is read, never refreshed: its refresh tokens are single
-use, so rotating one here would sign Claude Code out.
+- Claude: Claude Code's own `/usage`, run headless (`claude -p /usage`). The
+  CLI answers from its own login; pcode never reads Claude Code's token.
+- Codex: `GET chatgpt.com/backend-api/wham/usage`, an undocumented endpoint the
+  Codex CLI calls, through the Codex provider's auth, which injects the token,
+  refreshes it on a 401, and never writes the Codex CLI's `auth.json`.
 """
 
 import asyncio
-import hashlib
 import json
 import os
 import subprocess
-import sys
+import tempfile
 import time
 from collections.abc import Callable
-from pathlib import Path
 
 import httpx2
 
-CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 TIMEOUT = httpx2.Timeout(15, connect=5)
-KEYCHAIN_SERVICE = "Claude Code-credentials"
-
-CLAUDE_LIMIT_LABELS = {
-    "session": "Session (5h)",
-    "weekly_all": "Weekly",
-    "weekly_scoped": "Weekly",
-}
+CLAUDE_USAGE_ARGS = ("-p", "/usage", "--output-format", "json", "--no-session-persistence")
+CLAUDE_USAGE_TIMEOUT = 30
+# The CLI's report continues with a local breakdown of what drove usage.
+CLAUDE_BREAKDOWN_HEADING = "What's contributing"
 CODEX_WINDOW_LABELS = {5 * 3600: "Session (5h)", 7 * 86400: "Weekly"}
 
 
@@ -63,120 +52,62 @@ def usage_report() -> list[str]:
 # Claude Code
 
 
-def keychain_service(config_dir: str | None) -> str:
-    """Claude Code's Keychain item for a config dir.
-
-    Setting `CLAUDE_CONFIG_DIR` suffixes the name with a hash of its value,
-    even when the value is the default `~/.claude`, so the unsuffixed item can
-    belong to a different (often stale) login.
-    """
-    if not config_dir:
-        return KEYCHAIN_SERVICE
-    return f"{KEYCHAIN_SERVICE}-{hashlib.sha256(config_dir.encode()).hexdigest()[:8]}"
-
-
-def claude_login(config_dir: str | None = None) -> dict:
-    """Claude Code's `claudeAiOauth` record: the macOS Keychain, else its credentials file."""
-    if config_dir is None:
-        config_dir = os.environ.get("CLAUDE_CONFIG_DIR", "").strip() or None
-    raw = ""
-    if sys.platform == "darwin":
-        try:
-            raw = subprocess.run(
-                ["security", "find-generic-password", "-s", keychain_service(config_dir), "-w"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            ).stdout
-        except OSError, subprocess.SubprocessError:
-            raw = ""
-    if not raw.strip():
-        path = Path(config_dir).expanduser() if config_dir else Path.home() / ".claude"
-        try:
-            raw = (path / ".credentials.json").read_text()
-        except OSError:
-            raw = ""
-    try:
-        login = json.loads(raw).get("claudeAiOauth") if raw.strip() else None
-    except ValueError, AttributeError:
-        login = None
-    if not isinstance(login, dict) or not login.get("accessToken"):
-        where = f" for {config_dir}" if config_dir else ""
-        raise UsageUnavailable(f"No Claude Code login{where}; run `claude` and sign in.")
-    return login
-
-
 def claude_usage() -> list[str]:
-    from pcode.auth import oauth_user_agent
+    """The plan limits Claude Code's own `/usage` reports, run headless.
 
-    login = claude_login()
-    expires = login.get("expiresAt")
-    if isinstance(expires, int | float) and expires / 1000 < time.time():
-        raise UsageUnavailable(
-            "Claude Code's token has expired; run `claude` (or a claude: model) to refresh it."
-        )
+    `claude -p /usage` answers locally from the CLI's login without a model
+    turn, so pcode never reads Claude Code's token.
+    """
+    from pcode.models import claude_sdk_installed
+
+    if not claude_sdk_installed():
+        from pcode.claude_sdk import MISSING_SDK
+
+        raise UsageUnavailable(MISSING_SDK)
+    from pcode.claude_sdk import LOGIN_ENV, cli_path
+
+    executable = cli_path()
+    if executable is None:
+        raise UsageUnavailable("Claude Code (`claude`) was not found.")
     try:
-        response = httpx2.get(
-            CLAUDE_USAGE_URL,
-            timeout=TIMEOUT,
-            headers={
-                "Authorization": f"Bearer {login['accessToken']}",
-                "anthropic-beta": "oauth-2025-04-20",
-                # A generic client lands in a much stricter rate-limit bucket.
-                "User-Agent": oauth_user_agent(),
-            },
+        result = subprocess.run(
+            # No setting sources: a user or project hook has no business here.
+            [executable, *CLAUDE_USAGE_ARGS, "--setting-sources", ""],
+            capture_output=True,
+            text=True,
+            timeout=CLAUDE_USAGE_TIMEOUT,
+            stdin=subprocess.DEVNULL,
+            cwd=tempfile.gettempdir(),
+            # Scrubbed as `claude:` requests are, so an API key cannot answer for the
+            # plan; and a `claude` found on PATH must not update itself mid-command.
+            env={**os.environ, **LOGIN_ENV, "DISABLE_AUTOUPDATER": "1"},
         )
-    except httpx2.HTTPError as error:
-        raise UsageUnavailable(f"Request failed: {type(error).__name__}") from None
-    if response.status_code in (401, 403):
-        raise UsageUnavailable("Claude Code's login was rejected; run `claude` to sign in again.")
-    if response.status_code == 429:
-        raise UsageUnavailable("The usage endpoint is rate limiting; try again in a minute.")
-    if response.status_code != 200:
-        raise UsageUnavailable(f"The usage endpoint answered HTTP {response.status_code}.")
-    plan = login.get("subscriptionType")
-    return ([f"Plan: {plan}"] if plan else []) + claude_lines(response.json())
+    except subprocess.TimeoutExpired:
+        raise UsageUnavailable("Claude Code did not answer in time.") from None
+    except OSError as error:
+        raise UsageUnavailable(f"Could not run Claude Code ({type(error).__name__}).") from None
+    try:
+        data = json.loads(result.stdout)
+    except ValueError:
+        data = None
+    if not isinstance(data, dict) or not isinstance(data.get("result"), str):
+        detail = (result.stderr or "").strip().splitlines()[:1]
+        reason = f": {detail[0]}" if detail else ""
+        raise UsageUnavailable(f"Claude Code's /usage failed (exit {result.returncode}){reason}.")
+    if data.get("is_error"):
+        first = data["result"].strip().splitlines()[:1]
+        raise UsageUnavailable(first[0] if first else "Claude Code's /usage failed.")
+    return claude_lines(data["result"])
 
 
-def claude_lines(data: dict, now: float | None = None) -> list[str]:
-    now = time.time() if now is None else now
-    lines = []
-    limits = data.get("limits")
-    if limits:
-        for limit in limits:
-            kind = limit.get("kind", "")
-            label = CLAUDE_LIMIT_LABELS.get(kind) or kind.replace("_", " ").capitalize()
-            model = ((limit.get("scope") or {}).get("model") or {}).get("display_name")
-            if model:
-                label = f"{label} ({model})"
-            resets = iso_time(limit.get("resets_at"))
-            lines.append(percent_line(label, limit.get("percent"), resets, now))
-    else:
-        # Older responses carry only the windows, with no `limits` list.
-        for key, label in (("five_hour", "Session (5h)"), ("seven_day", "Weekly")):
-            window = data.get(key)
-            if window:
-                resets = iso_time(window.get("resets_at"))
-                lines.append(percent_line(label, window.get("utilization"), resets, now))
-    spend = data.get("spend") or {}
-    used, limit = money(spend.get("used")), money(spend.get("limit"))
-    if used is not None and limit is not None:
-        line = f"Spend: {used} of {limit}"
-        if spend.get("percent") is not None:
-            line += f" ({spend['percent']:.0f}%)"
-        if not spend.get("enabled"):
-            reason = spend.get("disabled_reason")
-            line += f", off ({reason.replace('_', ' ')})" if reason else ", off"
-        lines.append(line)
+def claude_lines(report: str) -> list[str]:
+    """The limits part of the CLI's report, without its local usage breakdown."""
+    # Without a subscription login the CLI reports this session's cost instead.
+    if report.lstrip().startswith("Total cost:"):
+        return ["No Claude subscription login; run /login claude."]
+    report = report.split(CLAUDE_BREAKDOWN_HEADING, 1)[0]
+    lines = [line.strip() for line in report.splitlines() if line.strip()]
     return lines or ["No limits reported for this login."]
-
-
-def money(amount: dict | None) -> str | None:
-    if not amount or amount.get("amount_minor") is None:
-        return None
-    value = amount["amount_minor"] / 10 ** amount.get("exponent", 2)
-    currency = amount.get("currency", "USD")
-    return f"${value:,.2f}" if currency == "USD" else f"{value:,.2f} {currency}"
 
 
 # Codex
@@ -269,17 +200,6 @@ def percent_line(label: str, percent: float | None, resets: float | None, now: f
     if resets is not None and resets > now:
         line += f", resets in {duration(resets - now)}"
     return line
-
-
-def iso_time(value: str | None) -> float | None:
-    from datetime import datetime
-
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value).timestamp()
-    except ValueError:
-        return None
 
 
 def duration(seconds: float) -> str:
