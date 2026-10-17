@@ -63,10 +63,6 @@ STEPS = [
     # The status row holds its last phase for a moment before naming the call.
     ("sleep", 3),
     ("shot", "activity", "activity panel"),
-    # Ctrl+O hides the whole panel; the status row stays.
-    ("key", "C-o"),
-    ("sleep", 1),
-    ("shot", "activity-hidden", "activity panel hidden"),
 ]
 
 if __name__ == "__main__":
