@@ -14,7 +14,7 @@ import uuid
 import pytest
 from conftest import tmux_socket_dir
 
-from pcode.ui import THOUGHT_ICON, THOUGHT_ROWS
+from pcode.ui import THOUGHT_ICON
 
 pytestmark = pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
 
