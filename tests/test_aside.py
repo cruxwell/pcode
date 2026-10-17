@@ -1072,6 +1072,69 @@ def test_aside_browser_enter_reads_a_thread_without_the_list():
     asyncio.run(run())
 
 
+def test_ctrl_q_closes_the_viewer_and_the_mouse_toggle_moves_to_ctrl_g():
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    from pcode.aside_ui import AsideBrowser
+
+    asides = Asides()
+    for question in ("first?", "second?"):
+        aside = Aside(question=question, answer="Yes.")
+        aside.settle("answered")
+        asides.items.append(aside)
+
+    async def run():
+        with create_pipe_input() as pipe:
+            browser = AsideBrowser(asides, input=pipe, output=DummyOutput())
+            hints = dict(browser.prefix_keys.hint_rows())
+            assert hints["Ctrl+Q"] == "Back to the conversation"
+            assert hints["Ctrl+G"] == "Release mouse"
+            task = asyncio.create_task(browser.run())
+            async with asyncio.timeout(5):
+                while not browser.app.is_running:
+                    await asyncio.sleep(0.01)
+            # From the list, where Esc would only step back, Ctrl+Q leaves at once.
+            assert browser.listing()
+            pipe.send_text("\x11")
+            assert await asyncio.wait_for(task, 2) is None
+
+    asyncio.run(run())
+
+
+def test_ctrl_q_keeps_the_viewer_open_over_a_follow_up_draft():
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    from pcode.aside_ui import AsideBrowser
+
+    asides = Asides()
+    aside = Aside(question="why?", answer="Because.")
+    aside.settle("answered")
+    asides.items.append(aside)
+
+    async def run():
+        with create_pipe_input() as pipe:
+            browser = AsideBrowser(
+                asides, ask=lambda thread, question: None, input=pipe, output=DummyOutput()
+            )
+            task = asyncio.create_task(browser.run())
+            async with asyncio.timeout(5):
+                while not browser.app.is_running:
+                    await asyncio.sleep(0.01)
+            browser.input.open(browser.app)
+            pipe.send_text("half a quest")
+            await asyncio.sleep(0.1)
+            pipe.send_text("\x11")
+            await asyncio.sleep(0.1)
+            assert not task.done() and "draft" in browser.notice
+            assert browser.input.text == "half a quest"
+            pipe.send_text("\x03")  # Ctrl+C still closes.
+            assert await asyncio.wait_for(task, 2) is None
+
+    asyncio.run(run())
+
+
 def test_side_is_an_alias_for_btw():
     app = PreviewApp(
         model="test:local",

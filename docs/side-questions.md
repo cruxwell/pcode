@@ -56,8 +56,13 @@ takes the terminal while it is open and has a follow-up editor of its own.
 - **Escape:** close the popup and restore the editor draft (from a full-width
   thread it first brings the list back). Enter closes it too when there is no
   list to pick from.
+- **Ctrl+Q:** close the popup at once, the same key that opened it. It waits
+  while a follow-up draft is open, so you don't lose it, and does nothing
+  over the copy browser or link picker, where Escape steps back.
+- **Ctrl+G:** hand the mouse to the terminal to select text, and take it back;
+  other popups do this on Ctrl+Q.
 
-The `r`/`y`/`o`/`s`/`t`/`k` actions work from the list, the answer and the
+The `r`/`y`/`o`/`s`/`t`/`k`/`q`/`g` actions work from the list, the answer and the
 follow-up editor alike. By default, hold Ctrl while pressing the letter; a
 configured [shortcut prefix](commands.md#shortcut-prefix) changes these keys.
 Ctrl+/ browses the current popup's help.
@@ -75,12 +80,12 @@ without any frame coming along.
 A running turn carries on while you read. Its spinner stays on the editor's
 border, and what it writes lands in the conversation, in order, when you go
 back. Meanwhile a divider under the thread points up to it and down to the
-conversation, with what Esc and Ctrl+Q do from here, and the conversation's
+conversation, with the keys that go back or on to the next thread, and the conversation's
 newest three lines stream in beneath it, above the turn's own tool rows:
 
 ```text
 because one token of lookahead decides every rule.
-── ↑ btw: why is the parser LL(1)? · ↓ conversation ──── Esc back · Ctrl+Q next thread ─
+── ↑ btw: why is the parser LL(1)? · ↓ conversation ── Ctrl+Q or Esc back · Ctrl+\ next thread (1/2) ─
   Updated parser.py: the lookahead table now comes from the grammar, so a new
   rule needs no edit here. Running the parser tests next to check the error
   messages still name the right token.
@@ -104,13 +109,19 @@ completion, vi mode, `@file`s):
   `/btw QUESTION`, means what it always does. So do a `!command`, which runs in
   the shell, and **Ctrl+Enter**, which interrupts the conversation's turn with
   your message.
-- **Ctrl+Q** shows the newest thread, then each older one, then the
-  conversation again, and from there starts over at the newest. With a single
-  thread it toggles between the thread and the conversation; the divider says
-  which comes next (`Ctrl+Q or Esc back` on the last thread). With a
-  [shortcut prefix](commands.md#shortcut-prefix), it is the prefix and `q`.
+- **Ctrl+Q** toggles: from a thread it goes straight back to the
+  conversation, however many threads there are, and from the conversation it
+  shows the thread you last looked at (the newest the first time). It works
+  the same in every editor mode.
+- **Ctrl+\\** shows the next older thread, and from the oldest wraps to the
+  newest. The divider says which thread of how many is shown
+  (`Ctrl+\ next thread (1/3)`). With a
+  [shortcut prefix](commands.md#shortcut-prefix), these keys are the prefix and
+  `q` or `\`. If your vi leader is `\`, use Ctrl+\ itself, since a second `\`
+  only closes the leader menu.
 - **Escape** goes back to the conversation, keeping your draft. In vi mode,
-  Escape first leaves insert mode as usual, and a second one goes back.
+  Escape first leaves insert mode as usual, and a second one goes back;
+  Ctrl+Q needs no second press.
 
 An answer that opens by itself waits while you have a draft in the editor:
 swapping then would send your half-written message to the thread. A bare

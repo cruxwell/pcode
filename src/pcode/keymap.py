@@ -26,6 +26,7 @@ DEFAULT_ACTIONS = {
     "^": "@previous-session",
     "y": "@copy",
     "q": "@side-threads",
+    "\\": "@next-side-thread",
 }
 # Default keys that run a slash command, much as a `/bind KEY /command` would.
 # Only chords the Emacs editor barely uses: Ctrl+V is unbound there, Ctrl+] is

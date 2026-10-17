@@ -1832,26 +1832,31 @@ class PreviewApp:
         return bool(draft) and self.btw_swaps()
 
     def btw_key(self) -> None:
-        """Ctrl+Q: show the newest thread, then each older one, then the conversation again.
+        """Ctrl+Q: toggle between the conversation and the thread last shown.
 
         With `btw_view popup` it is a bare /btw: the viewer.
         """
-        from pcode.btw_view import current, next_thread, open_thread
+        from pcode.btw_view import current, open_thread, reopen_thread
 
         activity = self.activity
-        if not self.btw_swaps() and not current(activity):
-            self._submit_typed("/btw")
-            return
-        if not current(activity):
-            latest = self.asides.latest()
-            if latest is None:
-                self.transcript.flash("No side questions yet. Ask one with /btw QUESTION.")
-                return
-            open_thread(activity, latest.thread)
-        elif (thread := next_thread(activity)) is not None:
-            open_thread(activity, thread)
-        else:
+        if current(activity):
             self.close_btw()
+        elif not self.btw_swaps():
+            self._submit_typed("/btw")
+        elif (thread := reopen_thread(activity)) is None:
+            self.transcript.flash("No side questions yet. Ask one with /btw QUESTION.")
+        else:
+            open_thread(activity, thread)
+
+    def btw_next(self) -> None:
+        """Ctrl+\\: show the next older thread in place of this one, wrapping to the newest."""
+        from pcode.btw_view import next_thread, open_thread
+
+        thread = next_thread(self.activity)
+        if thread is None:
+            self.transcript.flash("This is the only side thread.")
+        else:
+            open_thread(self.activity, thread)
 
     def asides_seen(self, identities: list[str]) -> None:
         """The thread view showed these answers; a session host hears so (`asides_read`)."""
@@ -2517,6 +2522,7 @@ class PreviewApp:
             on_previous_session=lambda: submit("/switch -"),
             on_copy_response=lambda: submit("/copy"),
             on_btw=self.btw_key,
+            on_btw_next=self.btw_next,
             on_btw_close=self.close_btw,
             bottom_toolbar=self.toolbar,
             # Whichever controller is on screen: /switch replaces it.

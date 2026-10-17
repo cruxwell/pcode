@@ -13,7 +13,16 @@ from rich.text import Text
 
 from pcode.app import PreviewApp
 from pcode.aside import Aside, SideReply
-from pcode.btw_view import ThreadView, close, current, entry, next_thread, open_thread
+from pcode.btw_view import (
+    ThreadView,
+    close,
+    current,
+    entry,
+    next_thread,
+    open_thread,
+    position,
+    reopen_thread,
+)
 from pcode.preferences import save_preferences
 from pcode.ui import Activity, CursorSafeOutput, Handoff, TerminalOutput, Transcript
 
@@ -205,10 +214,11 @@ def test_the_divider_points_both_ways_and_names_the_keys(monkeypatch):
     layout = SimpleNamespace(
         transcript=screen.transcript,
         activity=screen.activity,
-        shortcuts=None,
         render_cache=None,
         size=lambda: Size(rows=40, columns=100),
     )
+    unbound = set()
+    layout.key_name = lambda key: "unbound" if key in unbound else f"Ctrl+{key.upper()}"
     rows = PromptLayout.conversation_rows.__wrapped__
     assert rows(layout) == []  # The conversation is on screen.
     open_thread(screen.activity, aside.thread)
@@ -218,12 +228,20 @@ def test_the_divider_points_both_ways_and_names_the_keys(monkeypatch):
     screen.transcript.message("A link: [docs](https://example.com/docs)")
     divider, *tail = (fragment_list_to_text(row) for row in rows(layout))
     assert "↑ btw: why is the parser LL(1)?" in divider and "↓ conversation" in divider
-    # One thread: Ctrl+Q's next stop is the conversation, as Esc's is.
+    # One thread: nowhere to go but back.
     assert divider.endswith("Ctrl+Q or Esc back ─") and len(divider) == 99
     older = answered("an older one?", "Yes.")
     screen.activity.asides.insert(0, older)
     divider = fragment_list_to_text(rows(layout)[0])
-    assert divider.endswith("Esc back · Ctrl+Q next thread ─") and len(divider) == 99
+    # Too narrow for the whole wording: said more briefly rather than dropped.
+    assert divider.endswith("Ctrl+Q back · Ctrl+\\ next (1/2) ─") and len(divider) == 99
+    layout.size = lambda: Size(rows=40, columns=140)
+    divider = fragment_list_to_text(rows(layout)[0])
+    assert divider.endswith("Ctrl+Q or Esc back · Ctrl+\\ next thread (1/2) ─")
+    # A key /unbind took away is not offered.
+    unbound.update({"q", "\\"})
+    divider = fragment_list_to_text(rows(layout)[0])
+    assert divider.endswith("─ Esc back ─") and "Ctrl+" not in divider
     # A hyperlink's escape never reaches the screen as text.
     assert [row.rstrip() for row in tail] == ["  A link: docs"]
 
@@ -351,24 +369,44 @@ def test_an_error_and_an_empty_answer_say_so():
     assert "failed: no network" in text and "(cancelled; no answer)" in text
 
 
-def test_threads_cycle_newest_first_then_back_to_the_conversation():
+def test_the_heading_lists_ctrl_q_and_ctrl_backslash_once_there_are_two_threads():
     activity = Activity()
-    assert next_thread(activity) is None
+    console = Console(file=StringIO(), width=200, color_system=None, force_terminal=True)
+    view = ThreadView(activity, Transcript(console, activity=activity))
+    first, second = answered("first?", "One."), answered("second?", "Two.")
+
+    def keys() -> str:
+        return view.replay()[1][0][0].plain
+
+    activity.asides = [first]
+    open_thread(activity, first.thread)
+    assert "Ctrl+Q or Esc back to the conversation" in keys() and "Ctrl+\\" not in keys()
+    activity.asides = [first, second]
+    assert "Ctrl+Q or Esc back to the conversation · Ctrl+\\ next thread ·" in keys()
+
+
+def test_threads_cycle_newest_first_and_wrap():
+    activity = Activity()
+    assert next_thread(activity) is None and reopen_thread(activity) is None
     first, second = answered("first?", "One."), answered("second?", "Two.")
     activity.asides = [first, second]
-    assert next_thread(activity) == second.thread
+    # From the conversation: no next thread, but Ctrl+Q reopens the newest.
+    assert next_thread(activity) is None
+    assert reopen_thread(activity) == second.thread
     open_thread(activity, second.thread)
-    assert current(activity) == [second]
+    assert current(activity) == [second] and position(activity) == (1, 2)
     assert next_thread(activity) == first.thread
     open_thread(activity, first.thread)
-    # The oldest thread's next stop is the conversation, then the newest again.
-    assert next_thread(activity) is None
+    # The oldest thread wraps to the newest.
+    assert position(activity) == (2, 2) and next_thread(activity) == second.thread
     close(activity)
-    assert next_thread(activity) == second.thread
-    assert current(activity) == []
+    assert current(activity) == [] and position(activity) == (0, 2)
+    # Ctrl+Q brings back the thread last shown, not the newest.
+    assert reopen_thread(activity) == first.thread
     # A thread dropped from the records shows the conversation in effect.
     open_thread(activity, "gone")
-    assert current(activity) == []
+    assert current(activity) == [] and next_thread(activity) is None
+    assert reopen_thread(activity) == second.thread
 
 
 def test_bare_btw_shows_the_newest_thread():
@@ -398,17 +436,24 @@ def test_an_answer_that_opens_by_itself_never_takes_a_thread_or_a_draft():
     assert app.activity.btw_thread == second.thread
 
 
-def test_the_shortcut_shows_each_thread_newest_first_then_the_conversation():
+def test_ctrl_q_toggles_and_ctrl_backslash_moves_between_threads():
     app, _ = seeded_app()
     first, second = app.controller.asides.items
     app.btw_key()
     assert app.activity.btw_thread == second.thread
     app.btw_key()
-    assert app.activity.btw_thread == first.thread
-    app.btw_key()
-    assert app.activity.btw_thread is None  # Back to the conversation.
+    assert app.activity.btw_thread is None  # Straight back to the conversation.
     app.btw_key()
     assert app.activity.btw_thread == second.thread
+    app.btw_next()
+    assert app.activity.btw_thread == first.thread
+    app.btw_next()
+    assert app.activity.btw_thread == second.thread  # Wrapped to the newest.
+    app.btw_next()
+    app.btw_key()
+    assert app.activity.btw_thread is None
+    app.btw_key()
+    assert app.activity.btw_thread == first.thread  # The thread last shown.
     app.close_btw()
     assert app.activity.btw_thread is None
     app.controller.asides.items.clear()

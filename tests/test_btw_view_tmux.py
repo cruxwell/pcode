@@ -76,20 +76,20 @@ def test_btw_thread_swaps_in_for_the_conversation_and_back(pane):
     screen = capture(pane, "Echo: and the TTL?")
     assert row(screen, "make cache-report") < row(screen, "Echo: and the TTL?")
 
-    # Ctrl+Q shows the older thread, whose next stop is the conversation.
-    pane("send-keys", "-t", "preview:0.0", "C-q")
+    # Ctrl+\ shows the older thread, and the divider says which of how many.
+    pane("send-keys", "-t", "preview:0.0", "C-\\")
     screen = capture(pane, " btw  why is the parser LL(1)?")
     assert "make cache-report" not in screen
     divider = screen.splitlines()[row(screen, "↓ conversation")]
-    assert "Ctrl+Q or Esc back" in divider
-    # Ctrl+Q again comes back to it, the divider gone with the thread.
+    assert "Ctrl+Q" in divider and "(2/2)" in divider
+    # Ctrl+Q goes straight back to the conversation, the divider gone with the thread.
     pane("send-keys", "-t", "preview:0.0", "C-q")
     screen = capture(pane, "first main message")
     assert "↓ conversation" not in screen and "Esc back" not in history(pane)
-    # Ctrl+Q starts over at the newest; Escape comes back as well, and
-    # Enter goes to the conversation again.
+    # Ctrl+Q again brings back the thread last shown; Escape comes back as
+    # well, and Enter goes to the conversation again.
     pane("send-keys", "-t", "preview:0.0", "C-q")
-    capture(pane, " btw  what does the cache key on?")
+    capture(pane, " btw  why is the parser LL(1)?")
     pane("send-keys", "-t", "preview:0.0", "Escape")
     screen = capture(pane, "first main message")
     assert "↓ conversation" not in screen and "Esc back" not in history(pane)

@@ -296,20 +296,21 @@ def _hint_width(lines: list[StyleAndTextTuples]) -> int:
 MOUSE_TOGGLE_KEY = "q"
 
 
-def popup_mouse(shortcuts: PrefixKeys | None = None) -> Filter:
+def popup_mouse(shortcuts: PrefixKeys | None = None, key: str = MOUSE_TOGGLE_KEY) -> Filter:
     """Whether a popup captures the mouse: `popup_mouse`, read as it opens.
 
     Capturing gives clicks and wheel scrolling to the popup, but the terminal
     then stops treating a drag as a text selection. With ``shortcuts``, prefix
     `q` flips it until the popup closes, to select some text and come back;
-    the renderer reads the filter every frame, so it applies at once.
+    the renderer reads the filter every frame, so it applies at once. A popup
+    that gives `q` another job passes another ``key``.
     """
     captured = load_preferences().get("popup_mouse", SETTINGS["popup_mouse"].default) == "on"
     state = {"captured": captured}
     if shortcuts is not None:
 
         @shortcuts.add(
-            MOUSE_TOGGLE_KEY,
+            key,
             lambda: "Release mouse" if state["captured"] else "Capture mouse",
         )
         def toggle(event) -> None:
