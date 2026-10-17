@@ -1138,8 +1138,12 @@ class AgentRuntime:
         messages = self.take_steering()
         if self.session:
             for text in messages:
-                self.session.append("steering", run_id=run_id, prompt=text)
-        return messages
+                # When it was typed, beside the record's own delivery `time`:
+                # the gap is how long the tools ahead of it held it back.
+                sent = {"sent_at": text.sent_at} if hasattr(text, "sent_at") else {}
+                self.session.append("steering", run_id=run_id, prompt=str(text), **sent)
+        # Plain text onward: the stamp is for the journal, not the model request.
+        return [str(text) for text in messages]
 
     def _run_capabilities(self, context: TurnContext, chosen: TurnModel) -> list:
         """Per-run capabilities bind to this turn's context, not to the runtime:

@@ -481,12 +481,16 @@ def test_semantic_shortlist_keeps_distinct_turns(tmp_path, root):
 
 
 def test_consumed_steering_is_journaled_and_recallable(tmp_path, root):
+    from pcode.controller import Steer
     from pcode.live import AgentRuntime
 
     saved = SavedSession.create("test", tmp_path, root)
-    pending = ["Use a bounded queue instead"]
+    sent_at = "2026-10-16T12:00:00+00:00"
+    pending = [Steer("Use a bounded queue instead", sent_at)]
+    requests = []
 
     async def respond(messages, info):
+        requests.append(messages)
         yield "Acknowledged."
 
     async def run():
@@ -498,6 +502,15 @@ def test_consumed_steering_is_journaled_and_recallable(tmp_path, root):
             start = next(r for r in records if r["kind"] == "turn_started")
             steering = next(r for r in records if r["kind"] == "steering")
             assert steering["run_id"] == start["run_id"]
+            # Sent and delivered times both kept: the gap is the wait on tools.
+            assert steering["sent_at"] == sent_at and steering["time"] != sent_at
+            # The model gets plain text, not the stamped string.
+            [part] = [
+                part
+                for part in requests[0][-1].parts
+                if getattr(part, "content", None) == "Use a bounded queue instead"
+            ]
+            assert type(part.content) is str
             saved.append(
                 "compaction_checkpoint",
                 node_id="compact",

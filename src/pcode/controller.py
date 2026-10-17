@@ -11,6 +11,7 @@ import threading
 from collections.abc import Callable
 from contextlib import aclosing, suppress
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
@@ -200,8 +201,33 @@ class MessageOwner(Protocol):
 
 # One queued message: the queue generation it was sent in, its text, how it is
 # sent ("steering", "queue", "interrupt", "shell", "resend", "wake"), and its
-# owner, if anyone waits on it.
-Item = tuple[int, str, str, MessageOwner | None]
+# owner, if anyone waits on it, and when it was sent (ISO 8601, UTC).
+Item = tuple[int, str, str, MessageOwner | None, str]
+
+
+class Steer(str):
+    """A steering message's text, carrying when the user sent it.
+
+    The journal's `steering` record is written when the message is delivered,
+    after the tools ahead of it finish; `sent_at` lets it say how long that
+    took. A `str` so `take_steering` hooks keep returning plain text.
+    """
+
+    sent_at: str
+
+    def __new__(cls, text: str, sent_at: str) -> "Steer":
+        steer = super().__new__(cls, text)
+        steer.sent_at = sent_at
+        return steer
+
+    def __getnewargs__(self) -> tuple[str, str]:
+        # A guard: `copy` and `pickle` rebuild through `__new__`, which needs
+        # both. The view is handed plain text, so nothing copies one today.
+        return str(self), self.sent_at
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 class PromptQueue:
@@ -230,13 +256,13 @@ class PromptQueue:
         """Queue `text`; `first` puts it ahead of everything already waiting."""
         if first:
             waiting = self._drain()
-            self._items.put_nowait((self.generation, text, mode, owner))
+            self._items.put_nowait((self.generation, text, mode, owner, _now()))
             for item in waiting:
                 self._items.put_nowait(item)
             self.activity.queued_prompts.insert(0, text)
             self.activity.queued_modes.insert(0, mode)
         else:
-            self._items.put_nowait((self.generation, text, mode, owner))
+            self._items.put_nowait((self.generation, text, mode, owner, _now()))
             self.activity.queued_prompts.append(text)
             self.activity.queued_modes.append(mode)
         self._sync()
@@ -260,7 +286,7 @@ class PromptQueue:
         """Drop everything waiting and start a new generation. Returns how many were dropped."""
         self.generation += 1
         count = len(self.activity.queued_prompts)
-        for *_, owner in self._drain():
+        for _generation, _text, _mode, owner, _sent_at in self._drain():
             if owner is not None:
                 owner.dropped()
         self.activity.queued_prompts.clear()
@@ -275,22 +301,22 @@ class PromptQueue:
             self._items.put_nowait(item)
         return sum(
             1
-            for generation, _text, mode, _owner in items
+            for generation, _text, mode, _owner, _sent_at in items
             if generation == self.generation and mode == "steering"
         )
 
-    def take_steering(self, limit: int | None = None) -> list[str]:
+    def take_steering(self, limit: int | None = None) -> list[Steer]:
         """Remove and return the current steering messages, the first `limit` of
         them if given; everything else keeps its place."""
         messages = []
         for item in self._drain():
-            generation, text, mode, _owner = item
+            generation, text, mode, _owner, sent_at = item
             if (
                 generation == self.generation
                 and mode == "steering"
                 and (limit is None or len(messages) < limit)
             ):
-                messages.append(text)
+                messages.append(Steer(text, sent_at))
                 index = next(
                     i
                     for i, queued in enumerate(
@@ -318,7 +344,7 @@ class PromptQueue:
         self.generation += 1
         return [
             (text, mode)
-            for generation, text, mode, _owner in items
+            for generation, text, mode, _owner, _sent_at in items
             if generation == self.generation - 1
         ]
 
@@ -1109,12 +1135,14 @@ class SessionController:
         limit = self._steering_limit()
         return self.prompts.steering() > 0 and (limit is None or limit > 0)
 
-    def take_steering(self) -> list[str]:
+    def take_steering(self) -> list[Steer]:
         """The runtime's hook: steering messages for the next model request."""
         limit = self._steering_limit()
         messages = self.prompts.take_steering(limit)
         self.steering_before_mcp = None if limit is None else limit - len(messages)
-        for text in messages:
+        for steer in messages:
+            # The send time is for the runtime's journal; the view gets text.
+            text = str(steer)
             self.activity.start_prompt(text)
             self.view.user(text)
         if messages:
@@ -1274,7 +1302,7 @@ class SessionController:
         while self.running:
             await self.idle()
             item = await self.prompts.get()
-            _generation, text, mode, owner = item
+            _generation, text, mode, owner, _sent_at = item
             if self.startup_error is not None:
                 self.clear_queue()
                 if owner is not None:
