@@ -29,14 +29,18 @@ DEFAULT_ACTIONS = {
     "\\": "@next-side-thread",
 }
 # Default keys that run a slash command, much as a `/bind KEY /command` would.
-# Only chords the Emacs editor barely uses: Ctrl+V is unbound there, Ctrl+] is
-# character search. Vi loses Ctrl+V (quoted insert, visual block) to it.
+# Only chords the Emacs editor barely uses. Ctrl+V pastes an image, the key
+# Claude Code and Codex use (vi loses quoted insert and visual block to it);
+# Ctrl+Z otherwise inserts a literal ^Z, since pcode never suspends; Ctrl+] is
+# character search.
 DEFAULT_COMMANDS = {
-    "v": "/show-edits",
+    "v": "/paste-image",
+    "z": "/show-edits",
     "]": "/group-tools",
 }
 # How the help overlay names these targets, on whichever key they sit.
 COMMAND_LABELS = {
+    "/paste-image": "Paste an image from the clipboard",
     "/show-edits": "Show / hide edit diffs",
     "/group-tools": "Group / ungroup tool calls",
 }

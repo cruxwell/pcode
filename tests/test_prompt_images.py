@@ -293,6 +293,17 @@ def test_paste_image_names_the_saved_picture_in_the_draft(tmp_path, monkeypatch)
     assert picture.data == PNG and named in notes[0]
 
 
+def test_ctrl_v_pastes_an_image_and_runs_even_before_the_agent_is_ready():
+    from pcode.controller import FRONTEND_COMMANDS, TERMINAL_COMMANDS
+    from pcode.keymap import default_target
+
+    # As in Claude Code and Codex; edit diffs moved to Ctrl+Z.
+    assert default_target("v") == "/paste-image"
+    assert default_target("z") == "/show-edits"
+    # Pasting only fills the draft: it must not wait on a starting (or failed) agent.
+    assert "/paste-image" in FRONTEND_COMMANDS and "/paste-image" in TERMINAL_COMMANDS
+
+
 def test_paste_image_says_why_when_there_is_nothing_to_paste(monkeypatch):
     text, notes, warnings = run_paste(monkeypatch, (None, "There is no image on the clipboard"))
     assert text == "look at" and notes == []
@@ -356,6 +367,7 @@ def test_a_paste_is_saved_once_and_old_ones_are_cleared(tmp_path, monkeypatch):
     first = save_paste(PNG)
     assert save_paste(PNG) == first and first.parent == pastes_path()
     assert first.read_bytes() == PNG and first.name.startswith("paste-")
+    assert first.stat().st_mode & 0o777 == 0o600
     stale = pastes_path() / "paste-000000000000.png"
     stale.write_bytes(PNG)
     old = time.time() - (PASTE_DAYS + 1) * 24 * 60 * 60

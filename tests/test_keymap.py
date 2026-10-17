@@ -204,23 +204,28 @@ async def test_default_command_keys_run_only_where_the_command_exists(keymap_fac
         await surface.press("draft\x16")
         await surface.press("\x1dx")
         assert view.executed == [] and view.reports == []
-        assert all(shortcut.key not in "v]" for shortcut in view.shortcuts.available())
-        for name in ("/show-edits", "/group-tools"):
+        assert all(shortcut.key not in "vz]" for shortcut in view.shortcuts.available())
+        for name in ("/paste-image", "/show-edits", "/group-tools"):
             view.registry.register(Command(name, name, lambda arg: None, ("on", "off")))
         labels = {shortcut.key: shortcut.label for shortcut in view.shortcuts.available()}
-        assert labels["v"] == "Show / hide edit diffs"
-        await surface.press("\x16\x1d")
-        assert view.executed == ["/show-edits", "/group-tools"]
+        # Ctrl+V pastes an image, as in Claude Code and Codex; edit diffs moved to Ctrl+Z.
+        assert labels["v"] == "Paste an image from the clipboard"
+        assert labels["z"] == "Show / hide edit diffs"
+        await surface.press("\x16\x1a\x1d")
+        assert view.executed == ["/paste-image", "/show-edits", "/group-tools"]
         assert surface.editor.text == "draft"
-        assert "/show-edits" in view.manager.manage("v") and "[default]" in view.manager.manage("v")
+        assert "/paste-image" in view.manager.manage("v") and "[default]" in view.manager.manage(
+            "v"
+        )
         assert view.manager.action_label("v") == "Ctrl+V"
+        assert view.manager.action_label("z") == "Ctrl+Z"
         view.manager.manage("v", unbind=True)
         await surface.press("\x16")
-        assert view.executed == ["/show-edits", "/group-tools"]
+        assert view.executed == ["/paste-image", "/show-edits", "/group-tools"]
         assert view.manager.action_label("v") == "unbound"
         view.manager.manage("reset v")
         await surface.press("\x16")
-        assert view.executed[-1] == "/show-edits"
+        assert view.executed[-1] == "/paste-image"
 
 
 @pytest.mark.parametrize(

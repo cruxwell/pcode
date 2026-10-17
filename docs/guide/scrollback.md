@@ -43,7 +43,7 @@ The toggles, each saved as your default:
 | Toggle | Shows or hides |
 | --- | --- |
 | Ctrl+G, `/show-commands scrollback` | Each shell command and its output |
-| Ctrl+V, `/show-edits` | The diff of each file edit |
+| Ctrl+Z, `/show-edits` | The diff of each file edit |
 | `/show-thinking scrollback` | The model's readable reasoning |
 | Ctrl+], `/group-tools` | One line per run of tool calls (the default) or one per call |
 | Ctrl+O, `/show-activity` | The activity panel in the editor box: thinking, tool calls and tasks |

@@ -97,7 +97,10 @@ def save_paste(data: bytes) -> Path:
         except OSError:
             pass
     path = folder / f"paste-{hashlib.sha256(data).hexdigest()[:12]}.png"
-    path.write_bytes(data)
+    # A screenshot can hold anything that was on screen: readable by you only.
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "wb") as file:
+        file.write(data)
     return path
 
 

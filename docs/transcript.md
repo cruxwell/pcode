@@ -40,7 +40,7 @@ on` turns it on at once; `/show-edits off` hides it along with completed diffs.
 ```text
 /show-edits off   Hide edit blocks and previews, and redraw retained scrollback
 /show-edits on    Show them again, including previously hidden completed diffs
-/show-edits       Toggle visibility (also Ctrl+V)
+/show-edits       Toggle visibility (also Ctrl+Z)
 ```
 
 The choice is saved for the next launch; `pcode config set show_edits on|off`
@@ -370,7 +370,7 @@ falls back to the default.
 ## Regenerating the terminal transcript
 
 `/redraw` rebuilds the retained transcript at the current terminal width with
-the current display settings. Ctrl+G, Ctrl+V, Ctrl+], `/show-commands`,
+the current display settings. Ctrl+G, Ctrl+Z, Ctrl+], `/show-commands`,
 `/show-edits`, `/show-thinking`, `/group-tools`, `/theme`, and `/syntax` rebuild it the same
 way. Your draft, the live tool panel, and unfinished model text are kept; a
 rebuild never calls tools or changes model history.

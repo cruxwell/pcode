@@ -229,14 +229,14 @@ Any way of putting the path in the prompt works:
   `~/` works.
 - **Drop the file on the terminal.** Terminals type a dropped file's path, quoted
   or with its spaces escaped, and pcode reads both.
-- **Paste a copied image** with `/paste-image`. A terminal only pastes text, so
-  pcode reads the image from the system clipboard, saves it under
-  `~/.local/state/pcode/pastes/`, and adds that path to your draft. A terminal
-  that sends an empty paste when the clipboard holds only an image (kitty and
-  Ghostty are reported to) runs it from your usual paste key. Elsewhere, give it a
-  key: `/bind v /paste-image` puts it on Ctrl+V, the key Claude Code and Codex
-  use, in place of `/show-edits` (see
-  [managing bindings](keybindings.md#managing-bindings)).
+- **Paste a copied image** with **Ctrl+V**, as in Claude Code and Codex (or
+  `/paste-image`). A terminal only pastes text, so pcode reads the image from
+  the system clipboard, saves it under `~/.local/state/pcode/pastes/`, and adds
+  that path to your draft. Cmd+V on macOS is the terminal's own text paste and
+  carries no image; a terminal that answers it with an empty paste when the
+  clipboard holds only an image (kitty and Ghostty are reported to) runs
+  `/paste-image` from there too. A screenshot taken with Cmd+Ctrl+Shift+4 goes
+  straight to the clipboard, ready for Ctrl+V.
 
 When the turn starts, a note lists what was attached
 (`Attached 1 image: ./tmp/shots/tools.png`), and a warning says why a named file
@@ -284,7 +284,8 @@ it is open. Enter, the arrows, Ctrl+J, Ctrl+C, and Ctrl+D never change.
 | Ctrl+T | Choose where thinking shows: `o` off, `a` activity panel, `b` scrollback (saves the default) |
 | Ctrl+Y | Copy the current draft to the system clipboard; with an empty editor, `/copy` chooses a response |
 | Ctrl+G | Cycle where shell command output shows: off, live in the activity panel, also mirrored to scrollback (`/show-commands`, saves the default) |
-| Ctrl+V | Show/hide edit diffs in scrollback (`/show-edits`, saves the default) |
+| Ctrl+V | Paste an image from the system clipboard (`/paste-image`): see [images in a prompt](#images-in-a-prompt) |
+| Ctrl+Z | Show/hide edit diffs in scrollback (`/show-edits`, saves the default) |
 | Ctrl+] | Group/ungroup runs of tool calls (`/group-tools`, saves the default) |
 | Ctrl+C | Discard input; cancels the running turn only when the prompt is empty |
 | Ctrl+D | Exit on empty idle input (stopping a background session's host); cancel during generation |

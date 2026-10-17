@@ -552,8 +552,10 @@ bracketed paste carries text only. Researched 2026-10-17, the options were:
   terminals ship it.
 - kitty and Ghostty are reported (anomalyco/opencode#25806, not verified here)
   to send an empty bracketed paste for an image-only clipboard, which pcode
-  takes as `/paste-image`. Ctrl+V stays `/show-edits` by default;
-  `/bind v /paste-image` is one command away.
+  takes as `/paste-image`. Ctrl+V runs `/paste-image` by default, as in
+  Claude Code and Codex; `/show-edits` moved to Ctrl+Z. In raw mode Ctrl+Z
+  reaches the prompt as a key (prompt_toolkit's default inserts a literal ^Z),
+  and pressing it in tmux toggled edits without stopping pcode.
 
 ### Reasoning effort
 

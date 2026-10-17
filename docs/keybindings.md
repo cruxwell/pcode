@@ -147,19 +147,22 @@ targets you can reuse on another key.
 | `q` | `@side-threads` | Open the [`/btw` viewer](side-questions.md#the-popup) (with `btw_view swap`: [swap in](side-questions.md#swapping-a-thread-in) the thread last shown, or go back to the conversation from one) |
 | `\` | `@next-side-thread` | While a [swapped-in thread](side-questions.md#swapping-a-thread-in) is shown, show the next older one, wrapping to the newest |
 
-Two more defaults run a slash command, much as if you had bound them yourself;
+Three more defaults run a slash command, much as if you had bound them yourself;
 `/unbind KEY` disables them and `/bind reset KEY` restores them:
 
 | Key | Command | Action |
 | --- | --- | --- |
-| `v` | `/show-edits` | Show or hide edit diffs in scrollback |
+| `v` | `/paste-image` | Paste an image from the clipboard into the prompt, as Ctrl+V does in Claude Code and Codex |
+| `z` | `/show-edits` | Show or hide edit diffs in scrollback |
 | `]` | `/group-tools` | Fold runs of tool calls into one line, or expand them |
 
-They take Ctrl+V and Ctrl+], which the Emacs-style editor leaves unbound or
-uses only for character search. With vi editing, Ctrl+V is also quoted insert
-and visual-block selection; run `/unbind v` to get those back. Terminals that
-paste on Ctrl+V never send it to pcode, so there use `/bind` to put
-`/show-edits` on another key.
+They take Ctrl+V, Ctrl+Z and Ctrl+], which the Emacs-style editor leaves
+unbound, uses only to insert a literal `^Z` (pcode never suspends), or uses
+for character search. With vi editing, Ctrl+V is also quoted insert and
+visual-block selection; run `/unbind v` to get those back. Terminals that paste
+text on Ctrl+V never send it to pcode, so there use `/bind` to put
+`/paste-image` on another key. Edit diffs were on Ctrl+V before images were; to
+put them back, run `/bind v /show-edits`.
 
 `@copy` is different from binding
 `/copy`, which operates on responses rather than choosing between the draft and

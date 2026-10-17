@@ -196,7 +196,7 @@ Every key works with `pcode config set KEY VALUE` and `/config set KEY VALUE`.
 | `tool_spinner` | `arc` | The same, for a running tool call's row and the terminal's own waits, so they look different from the model's |
 | `show_thinking` | `activity-panel` | `off`, `activity-panel`, `scrollback` (where the model's readable reasoning shows; `/show-thinking`. `status-line` is still read as `activity-panel`) |
 | `thinking_max_lines` | `10` | Max rows of thinking in the activity panel in `activity-panel` mode, or a share of the screen (`0.2`). A row count is also capped at a quarter of the pane, so a short pane gets fewer. Applies on next launch |
-| `show_edits` | `on` | `on`, `off` (show a diff of each file edit; Ctrl+V or `/show-edits`) |
+| `show_edits` | `on` | `on`, `off` (show a diff of each file edit; Ctrl+Z or `/show-edits`) |
 | `live_edits` | `off` | `on`, `off` (preview an edit or `run_code` snippet at the bottom while the model writes it) |
 | `diff_renderer` | `delta` | `delta`, `rich` (draw diffs in scrollback and `/diffs` with [delta](https://dandavison.github.io/delta/) when it's installed, falling back to Rich; see [diffs with delta](transcript.md#diffs-with-delta)) |
 | `delta_args` | empty | delta's arguments, quoted as in a shell, such as `--line-numbers`; the only delta configuration pcode reads (git config is ignored), and they override pcode's own choices |

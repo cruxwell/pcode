@@ -253,6 +253,7 @@ class PreviewApp:
         self.reviewed_checkpoint = None
         self.links_requested = False
         self.copy_requested = False
+        self.paste_requested = False
         self.config_requested = False
         # Unsaved conversations have no journal to re-read, so keep their changes.
         self.edits: list[EditCompleted] = []
@@ -893,7 +894,7 @@ class PreviewApp:
             self.transcript.output.app.invalidate()
         self.transcript.flash(
             f"Show edits: {'on' if shown else 'off'}. Usage: /show-edits [on|off] "
-            f"({self.shortcut('v')})"
+            f"({self.shortcut('z')})"
         )
 
     def group_tools(self, argument: str) -> None:
@@ -1136,11 +1137,12 @@ class PreviewApp:
         """
         if argument:
             raise ValueError("Usage: /paste-image")
-        # Reading the clipboard runs helper processes that can take seconds on
-        # a large image; the prompt stays live meanwhile.
-        self._paste_task = asyncio.get_running_loop().create_task(self._paste_image())
+        # Done by `run_command`, which awaits it and then flushes what it wrote.
+        self.paste_requested = True
 
     async def _paste_image(self) -> None:
+        """Read the clipboard off the loop: helpers can take seconds on a large image."""
+        self.paste_requested = False
         from pcode.clipboard import image
         from pcode.prompt_images import paste, reference
 
@@ -2379,6 +2381,8 @@ class PreviewApp:
                 await self.choose_link(output, session)
             if self.copy_requested:
                 await self.choose_copy(output, session)
+            if self.paste_requested:
+                await self._paste_image()
         except _PopupSuperseded:
             pass
         finally:

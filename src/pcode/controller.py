@@ -180,6 +180,8 @@ FRONTEND_COMMANDS = frozenset(
         "/config",
         "/bind",
         "/unbind",
+        # Only fills the draft; pasting while the agent starts must work too.
+        "/paste-image",
     }
 )
 

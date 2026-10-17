@@ -43,7 +43,7 @@ next.
 | Toggle | What it does |
 | --- | --- |
 | Ctrl+G, `/show-commands` | Show running commands' output in the activity panel, also mirror it into scrollback, or hide it |
-| Ctrl+V, `/show-edits` | Show or hide the diff of every file edit |
+| Ctrl+Z, `/show-edits` | Show or hide the diff of every file edit |
 | Ctrl+T, `/show-thinking` | Show the model's reasoning on the status line, in scrollback, or not at all |
 | Ctrl+], `/group-tools` | Fold each run of tool calls into one line (on by default): `✓ 15 ✗ 1 tools · Edit file ✓ 10 · Run shell ✓ 5 ✗ 1` |
 | Ctrl+O, `/show-activity` | Show or hide the activity panel: thinking, tool calls and tasks |
