@@ -489,7 +489,6 @@ class PreviewApp:
     session_dir = _controller_attribute("session_dir")
     save_sessions = _controller_attribute("save_sessions")
     resuming = _controller_attribute("resuming")
-    pending_model = _controller_attribute("pending_model")
     extensions = _controller_attribute("extensions")
     asides = _controller_attribute("asides")
     running = _controller_attribute("running")
@@ -2200,9 +2199,6 @@ class PreviewApp:
         width = get_app().output.get_size().columns
         location = plain(location_label(self.workspace, self.branch), limit=None)
         model = self.model if self.model else "preview"
-        if self.pending_model:
-            # The running turn keeps its model; show what the next one will use.
-            model += f" → {self.pending_model}"
         if self.model:
             model += f" ({self.current_effort()})"
         # Read left to right and cut from the right: the path leads, then send

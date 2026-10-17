@@ -108,10 +108,12 @@ instead. Selecting the current model does nothing, and a failed switch leaves th
 conversation intact. Switching from the offline preview starts a live
 conversation without restarting pcode.
 
-The picker also works while a run or queued messages are active. As with
-`/effort`, the new model applies from the next request: the turn in flight
-finishes on its model, and the footer shows `current → next` until the switch.
-Ctrl+C on the running turn keeps the pending selection.
+The picker also works while a run or queued messages are active. Like
+steering, the switch lands at the running turn's next request: the request in
+flight finishes on the old model, and everything after it, including the rest of
+that turn, uses the new one. `/effort` mid-run works the same way. A turn started
+with `$PROVIDER:MODEL` or `+EFFORT` stays on its own model to the end. To switch
+without waiting for the request in flight, cancel it with Ctrl+C and send again.
 
 ## Saved model and effort defaults
 

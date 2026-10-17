@@ -9,6 +9,7 @@ from pydantic_ai import Agent
 from rich.console import Console
 
 from pcode.app import PreviewApp
+from pcode.aside import SideTarget
 from pcode.live import AgentRuntime
 from pcode.model_ui import ModelPicker
 from pcode.sessions import SavedSession
@@ -332,51 +333,72 @@ def test_failed_switch_and_same_model_keep_runtime(monkeypatch, tmp_path):
     asyncio.run(run())
 
 
-def test_selection_while_working_is_deferred_to_the_next_request(monkeypatch, tmp_path):
+def test_selection_during_a_turn_is_adopted_at_once(monkeypatch, tmp_path):
+    """The running turn's next request uses it; see `test_model_switch` for the run itself."""
     runtime = AgentRuntime(Agent("test"))
     buffer = StringIO()
-    app = PreviewApp(model=MODELS[0], runtime=runtime, console=Console(file=buffer))
+    app = PreviewApp(model=MODELS[0], runtime=runtime, console=Console(file=buffer, width=200))
     created = Mock(return_value=Agent("test"))
     monkeypatch.setattr("pcode.agent.create_agent", created)
     monkeypatch.setattr(app.controller, "persist_defaults", Mock())
 
     async def run():
         app.activity.busy = True
-        await app.switch_model(MODELS[1])
-        created.assert_not_called()
-        assert app.pending_model == MODELS[1]
-        assert app.model == MODELS[0]
-        assert "next request" in buffer.getvalue()
-        app.activity.busy = False
-        await app.controller.apply_pending_model()
+        app.controller.live_task = asyncio.create_task(asyncio.Event().wait())
+        try:
+            await app.switch_model(MODELS[1])
+        finally:
+            app.controller.live_task.cancel()
         created.assert_called_once()
-        assert app.pending_model is None
         assert app.model == MODELS[1]
+        assert runtime.agent is created.return_value
         app.controller.persist_defaults.assert_called_once_with(model=MODELS[1])
+        assert (
+            f"The request in flight finishes on {MODELS[0]}; the next one uses {MODELS[1]}."
+            in buffer.getvalue()
+        )
 
     asyncio.run(run())
 
 
-def test_deferred_selection_that_fails_keeps_the_current_model(monkeypatch):
+def test_selection_during_a_turn_on_another_model_says_that_turn_keeps_it(monkeypatch):
     runtime = AgentRuntime(Agent("test"))
     buffer = StringIO()
-    app = PreviewApp(model=MODELS[0], runtime=runtime, console=Console(file=buffer))
+    app = PreviewApp(model=MODELS[0], runtime=runtime, console=Console(file=buffer, width=200))
+    monkeypatch.setattr("pcode.agent.create_agent", Mock(return_value=Agent("test")))
+    monkeypatch.setattr(app.controller, "persist_defaults", Mock())
+
+    async def run():
+        app.controller.borrowed_turn = SideTarget("openai:gpt-5")
+        app.controller.live_task = asyncio.create_task(asyncio.Event().wait())
+        try:
+            await app.switch_model(MODELS[1])
+        finally:
+            app.controller.live_task.cancel()
+        assert f"This turn stays on openai:gpt-5; the next one uses {MODELS[1]}." in (
+            buffer.getvalue()
+        )
+
+    asyncio.run(run())
+
+
+def test_selection_during_a_turn_that_fails_keeps_the_current_model(monkeypatch):
+    runtime = AgentRuntime(Agent("test"))
+    app = PreviewApp(model=MODELS[0], runtime=runtime, console=Console(file=StringIO()))
+    agent = runtime.agent
     monkeypatch.setattr("pcode.agent.create_agent", Mock(side_effect=ValueError("bad provider")))
 
     async def run():
         app.activity.busy = True
-        await app.switch_model(MODELS[1])
-        app.activity.busy = False
-        await app.controller.apply_pending_model()  # Reported, not raised: the turn already ended.
-        assert app.pending_model is None
+        with pytest.raises(ValueError, match="bad provider"):
+            await app.switch_model(MODELS[1])
         assert app.model == MODELS[0]
-        assert runtime.agent is not None
-        assert "Model unchanged" in buffer.getvalue()
+        assert runtime.agent is agent
 
     asyncio.run(run())
 
 
-def test_selecting_the_current_model_while_working_clears_nothing(monkeypatch):
+def test_selecting_the_current_model_while_working_changes_nothing(monkeypatch):
     buffer = StringIO()
     runtime = AgentRuntime(Agent("test"))
     app = PreviewApp(model=MODELS[0], runtime=runtime, console=Console(file=buffer))
@@ -385,9 +407,7 @@ def test_selecting_the_current_model_while_working_clears_nothing(monkeypatch):
     async def run():
         app.activity.busy = True
         await app.switch_model(MODELS[0])
-        assert app.pending_model is None
         assert "Already using" in buffer.getvalue()
-        await app.controller.apply_pending_model()
         assert app.model == MODELS[0]
 
     asyncio.run(run())
@@ -433,8 +453,8 @@ def test_picker_shortcut_uses_serialized_command_flow(command, busy, monkeypatch
 
 
 @pytest.mark.in_process("stubs the controller's activate_model with one setting the terminal's")
-def test_model_chosen_mid_run_applies_before_the_next_request(monkeypatch):
-    """The turn in flight keeps its model; the queued prompt uses the new one."""
+def test_model_chosen_mid_run_is_adopted_without_waiting_for_the_turn(monkeypatch):
+    """The switch lands while the turn runs; a queued prompt starts on the new model."""
     monkeypatch.setattr("pcode.models.active_providers", lambda _: PROVIDERS)
 
     async def run():
@@ -459,7 +479,6 @@ def test_model_chosen_mid_run_applies_before_the_next_request(monkeypatch):
 
         async def activate(model):
             app.model = model
-            app.pending_model = None
 
         async def choose(*_):
             return MODELS[1]
@@ -481,15 +500,14 @@ def test_model_chosen_mid_run_applies_before_the_next_request(monkeypatch):
                     pipe.send_text("first\r")
                     await asyncio.wait_for(started.wait(), 5)
                     pipe.send_text("/model\r")
-                    await wait_for(lambda: app.pending_model == MODELS[1])
-                    assert app.model == MODELS[0]
+                    await wait_for(lambda: app.model == MODELS[1])
+                    assert app.controller.turn_running()
                     started.clear()
                     pipe.send_text("second\r")
                     await wait_for(lambda: app.activity.queued_prompts == ["second"])
                     finish.set()
                     await asyncio.wait_for(started.wait(), 5)
                     assert models == [MODELS[0], MODELS[1]]
-                    assert app.pending_model is None
                     pipe.send_text("/quit\r")
                     await asyncio.wait_for(task, 5)
                 finally:

@@ -25,7 +25,7 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   `/logout [openai-codex]` removes pcode's stored Codex login, leaving CLI credentials
   untouched. Both require an idle conversation.
 - `/model`: searchable model picker for configured providers. Keeps the conversation;
-  chosen mid-run, it applies from the next request. To switch for one prompt only, start
+  chosen mid-run, the running turn's next request already uses it. To switch for one prompt only, start
   it with `$PROVIDER:MODEL` (optionally `+EFFORT`, as in `$openai:gpt-5+high fix this`)
   or a bare `+EFFORT` word; that turn runs there and the next prompt is back on the
   conversation's model. `$` completes model names as it does in `/btw`. A `$` word
@@ -646,8 +646,8 @@ Set the default with `pcode config set send_mode steering` (or `queue` /
 Input sent while idle starts a normal turn in every mode.
 
 Slash commands run separately from the model, so help, inspection, theme,
-context, and effort commands work while it's busy. `/model` also works and
-applies from the next request. `/new`, `/resume`, `/login`, and `/logout` need
+context, and effort commands work while it's busy. `/model` and `/effort` also work and
+apply from the running turn's next request. `/new`, `/resume`, `/login`, and `/logout` need
 an idle conversation: cancel or wait, then retry.
 
 Cancelling:
