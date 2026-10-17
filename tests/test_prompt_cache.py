@@ -16,8 +16,6 @@ from pcode.preferences import apply_effort, apply_thinking
     [
         ("anthropic:claude-opus-5", ANTHROPIC_CACHE_SETTINGS),
         ("openai-codex:gpt-6", {"openai_reasoning_summary": "detailed"}),
-        # Meridian's passthrough proxy strips client cache_control and owns caching.
-        ("meridian:claude-opus-5", None),
         ("test", None),
     ],
 )

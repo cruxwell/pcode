@@ -38,7 +38,6 @@ from pcode.controller import (
     SessionController,
     delivered_job,
     mcp_enable,
-    meridian_thinking_note,
 )
 from pcode.error_report import error_message
 from pcode.preferences import (
@@ -903,8 +902,6 @@ class PreviewApp:
                     lines.append("This model only thinks when asked: more latency and tokens.")
             elif wanted:
                 lines.append("An unverified OpenAI organisation is refused summaries; use off.")
-        if argument != "off" and model.startswith("meridian:"):
-            lines.append(meridian_thinking_note(*self.controller.meridian_thinking_state()))
         self.transcript.flash("\n".join(lines))
 
     @property
@@ -2201,7 +2198,6 @@ class PreviewApp:
                 await self._initialize_runtime()
                 controller.show_startup_context()
                 controller.warn_without_credentials()
-                await controller.warn_meridian_thinking()
                 saved = getattr(self.runtime, "session", None)
                 if self.model and saved:
                     self.transcript.retained_note(f"Saving session: {saved.info.id}")
@@ -2678,17 +2674,6 @@ def main() -> None:
     # spelling working for scripts and the Homebrew smoke test, out of --help.
     parser.add_argument("--demo", dest="theme_preview", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--sessions", action="store_true", help="List saved sessions and exit")
-    from pcode.models import LEGACY_ANTHROPIC_AUTH
-
-    parser.add_argument(
-        "--upgrade-meridian",
-        action="store_true",
-        help=(
-            "Install or upgrade the Meridian proxy with npm, then exit"
-            if LEGACY_ANTHROPIC_AUTH
-            else argparse.SUPPRESS
-        ),
-    )
     parser.add_argument(
         "--compact",
         action="store_true",
@@ -2805,10 +2790,6 @@ def main() -> None:
         print(render(parser, args.completions), end="")
         print(f"# Install: {install_hint(args.completions)}")
         return
-    if args.upgrade_meridian:
-        from pcode.meridian_setup import upgrade_meridian
-
-        sys.exit(upgrade_meridian())
     args.command = None
     if args.resume is not None:
         from pcode.sessions import is_session_selector

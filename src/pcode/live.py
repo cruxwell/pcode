@@ -402,9 +402,7 @@ class AgentRuntime:
         `model` runs the question on another model instead. It keeps the same
         agent, tools and history but has no cache to share, so it takes that
         model's own settings rather than the conversation's, and a conversation
-        id of its own: Meridian keys its session on the id, and a request from
-        another model under the conversation's id would move that session and
-        force the conversation's next turn to replay cold.
+        id of its own (see `pcode.conversation_ids`).
 
         `settings` replaces the conversation's model settings for this question
         alone, which is how `/btw +EFFORT` asks the conversation's own model at
@@ -1285,10 +1283,9 @@ def error_message(error: Exception, *, unexpected: str | None = None) -> str:
             "Check it with `/mcp list`, or turn it off with `/mcp disable NAME`. "
             "See the saved session diagnostics."
         )
-    from pcode.claude_sdk import failure_hint as claude_hint
-    from pcode.meridian import failure_hint
+    from pcode.claude_sdk import failure_hint
 
-    if (hint := failure_hint(error) or claude_hint(error)) is not None:
+    if (hint := failure_hint(error)) is not None:
         return hint
     if name == "UserError" and "Codex CLI credentials" in str(error):
         return f"Provider login missing or invalid. {CODEX_LOGIN_HINT}"

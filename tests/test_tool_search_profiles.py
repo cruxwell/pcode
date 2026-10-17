@@ -19,7 +19,6 @@ from pydantic_ai.native_tools._tool_search import ToolSearchTool
 
 from pcode.agent import codex_model
 from pcode.anthropic_oauth import AnthropicOAuthModel, OAuthTokens, write_tokens
-from pcode.meridian import meridian_model
 
 # Construction-only placeholders: nothing here makes a request.
 PLACEHOLDER_ENV = (
@@ -52,7 +51,6 @@ def placeholder_credentials(monkeypatch, tmp_path):
     for name in PLACEHOLDER_ENV:
         monkeypatch.setenv(name, "placeholder")
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
-    monkeypatch.setenv("PCODE_MERIDIAN_ENDPOINT", "http://localhost:1/v1")
     monkeypatch.delenv("PCODE_LLM_PROXY", raising=False)
     # codex_model loads the CLI's auth.json without a pcode store; never a real one.
     codex_home = tmp_path / "codex"
@@ -91,6 +89,5 @@ def test_pcode_built_models_never_offer_search_without_deferral(placeholder_cred
     write_tokens(credential, OAuthTokens("a", "r", time.time() + 3600))
     anthropic_names = [name for name in known_names() if name.startswith("anthropic:")]
     models += [AnthropicOAuthModel(name, path=credential) for name in anthropic_names]
-    models += [meridian_model(name.replace("anthropic:", "meridian:")) for name in anthropic_names]
 
     assert [m.model_name for m in models if unpaired(m)] == []

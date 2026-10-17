@@ -524,7 +524,6 @@ def test_stored_login_enables_the_anthropic_picker_without_reading_it(store, mon
     from pcode.models import ENV_PROVIDERS, active_providers
 
     monkeypatch.setattr("pcode.models.shutil.which", lambda _: None)
-    monkeypatch.delenv("PCODE_MERIDIAN_BASE_URL", raising=False)
     # A machine that has used Claude Code has ~/.claude, which enables `claude:`.
     monkeypatch.setattr("pcode.models.claude_code_configured", lambda: False)
     # The developer's shell may hold real provider keys (AWS_PROFILE, etc.).

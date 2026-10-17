@@ -179,9 +179,6 @@ def isolated_preferences(monkeypatch, tmp_path, request):
     monkeypatch.delenv("PCODE_CREDENTIALS_FILE", raising=False)
     monkeypatch.delenv("PCODE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("PCODE_OAUTH_CALLBACK_PORT", raising=False)
-    # meridian_managed defaults to auto, which probes the developer's proxy and
-    # can start a real Meridian. Tests of that lifecycle clear this themselves.
-    monkeypatch.setenv("PCODE_MERIDIAN_MANAGED", "0")
     # A clean release build would otherwise ask PyPI from every startup test.
     monkeypatch.setenv("PCODE_NO_UPDATE_CHECK", "1")
     # skill_dirs defaults to ~/.agents/skills, so a developer's own skills would
@@ -275,7 +272,7 @@ def shipped_key_prefix():
 
 @pytest.fixture
 def legacy_anthropic_auth(monkeypatch):
-    """Turn Meridian and pcode's own Anthropic sign-in back on for one test."""
+    """Turn pcode's own Anthropic sign-in back on for one test."""
     monkeypatch.setattr("pcode.models.LEGACY_ANTHROPIC_AUTH", True)
 
 

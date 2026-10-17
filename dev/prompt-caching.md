@@ -119,8 +119,8 @@ Regression coverage checks request structure, not simulated cache-hit counts:
 
 - [`test_prompt_cache.py`](../tests/test_prompt_cache.py) checks Anthropic cache
   controls reach the wire.
-- [`test_meridian_reminders.py`](../tests/test_meridian_reminders.py) checks
-  Anthropic and Meridian message-prefix stability across plan changes, clearing,
+- [`test_reminders.py`](../tests/test_reminders.py) checks
+  Anthropic message-prefix stability across plan changes, clearing,
   and saved resume. Separate warning cases preserve the existing route-specific
   behavior.
 - [`test_planning_cache.py`](../tests/test_planning_cache.py) checks native Codex
@@ -141,8 +141,8 @@ agent, not the model. A delegated Anthropic run therefore asked for no caching
 at all. `ProviderCacheSettings` in [`cache_settings.py`](../src/pcode/cache_settings.py)
 applies them per request instead, for the parent's sub-agents and across a
 mid-session model switch, deferring to any setting already on the request.
-Only Anthropic needs this: Codex caches server-side and Meridian strips client
-markers, so both pass through untouched.
+Only Anthropic needs this: Codex caches server-side, so it passes through
+untouched.
 
 Three things about delegation are easy to get backwards, and each has a test:
 

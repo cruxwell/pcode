@@ -497,12 +497,6 @@ class RemoteController:
     def model_suggestions(self) -> list[str]:
         return self.state.get("models") or []
 
-    def meridian_thinking_state(self) -> tuple[None, None]:
-        return None, None  # Probed in the host, where the proxy is configured.
-
-    async def warn_meridian_thinking(self) -> None:
-        pass  # The host warns at startup.
-
     def check_bridge(self, thread: str):
         """What the side-answer viewer checks before offering to merge; the host checks again."""
         if self.activity.busy or self.activity.queued:

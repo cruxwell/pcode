@@ -246,7 +246,7 @@ def test_switch_uses_current_visibility_not_saved_default(monkeypatch, tmp_path)
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("model", ["meridian:claude-opus-4-7", "openai-codex:test", "google:test"])
+@pytest.mark.parametrize("model", ["openai-codex:test", "google:test"])
 def test_other_routes_are_untouched(model):
     settings = {"existing": "setting"}
     agent = SimpleNamespace(model_settings=settings)

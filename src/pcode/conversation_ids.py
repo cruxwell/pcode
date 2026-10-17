@@ -1,10 +1,11 @@
 """Conversation ids for runs on a model other than the conversation's.
 
-Meridian keys its session on the conversation id, so a request from another
-model under the conversation's id would move that session and force the
-conversation's next turn to replay cold. A run on another model (`/btw $MODEL`,
-a `$MODEL` prompt) carries an id of its own, derived from the conversation's so
-anything that needs the session it belongs to can still find it.
+Per-conversation state is keyed on the conversation id (Harness's cache-bust
+marks, for one), so a request from another model under the conversation's id
+would be compared against the conversation's own cache. A run on another model
+(`/btw $MODEL`, a `$MODEL` prompt) carries an id of its own, derived from the
+conversation's so anything that needs the session it belongs to can still find
+it.
 """
 
 import re

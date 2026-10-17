@@ -25,7 +25,6 @@ PROVIDERS = {
     "google-cloud": "Google Cloud",
     "groq": "Groq",
     "heroku": "Heroku",
-    "meridian": "Meridian",
     "moonshotai": "Moonshot",
     "nebius": "Nebius",
     "ollama": "Ollama",
@@ -80,9 +79,9 @@ ENV_PROVIDERS: dict[str, tuple[tuple[str, ...], ...]] = {
     "zai": (("ZAI_API_KEY",),),
 }
 
-# The subscription routes that predate `claude:` models (the Claude Agent SDK):
-# `meridian:` models and pcode's own Anthropic browser sign-in. Off while
-# `claude:` is tried as the way forward; True restores both unchanged.
+# The subscription route that predates `claude:` models (the Claude Agent SDK):
+# pcode's own Anthropic browser sign-in. Off while `claude:` is tried as the
+# way forward; True restores it unchanged.
 # `anthropic:` models on ANTHROPIC_API_KEY work either way.
 LEGACY_ANTHROPIC_AUTH = False
 
@@ -90,7 +89,7 @@ LEGACY_ANTHROPIC_AUTH = False
 def login_sources() -> tuple[str, ...]:
     """What `/login` accepts; the first is what a bare `/login` signs in to."""
     if LEGACY_ANTHROPIC_AUTH:
-        return ("anthropic", "openai-codex", "claude", "meridian")
+        return ("anthropic", "openai-codex", "claude")
     return ("claude", "openai-codex")
 
 
@@ -114,8 +113,8 @@ def anthropic_credential_hint() -> str:
 
 # Catalog prefix -> KnownModelName prefixes whose IDs it accepts. Codex has no
 # separate SDK catalog, so expose every OpenAI model ID and let the provider
-# enforce account access; Meridian and Claude Code front Anthropic models.
-CATALOG_SOURCES = {"openai-codex": "openai", "meridian": "anthropic", "claude": "anthropic"}
+# enforce account access; Claude Code fronts Anthropic models.
+CATALOG_SOURCES = {"openai-codex": "openai", "claude": "anthropic"}
 
 
 def claude_code_configured() -> bool:
@@ -148,8 +147,6 @@ def active_providers(current: str | None) -> set[str]:
     active = set()
     if current and current.partition(":")[0] in PROVIDERS:
         active.add(current.partition(":")[0])
-    if os.environ.get("PCODE_MERIDIAN_BASE_URL", "").strip() or shutil.which("meridian"):
-        active.add("meridian")
     if claude_sdk_installed() and claude_code_configured():
         active.add("claude")
     active.update(name for name, needs in ENV_PROVIDERS.items() if _configured(needs))
@@ -176,9 +173,6 @@ def active_providers(current: str | None) -> set[str]:
     allowed = load_preferences().get("model_providers", "")
     if allowed:
         active.intersection_update(name.strip() for name in allowed.split(","))
-    if not LEGACY_ANTHROPIC_AUTH:
-        # Even when the current model is a saved `meridian:` one.
-        active.discard("meridian")
     return active
 
 

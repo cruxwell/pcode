@@ -16,7 +16,7 @@ from contextvars import ContextVar
 
 from pydantic_ai.capabilities import AbstractCapability
 
-from pcode.meridian_reminders import append_reminder, last_reminder
+from pcode.reminders import append_reminder, last_reminder
 
 TAG = "<mcp-servers>"
 

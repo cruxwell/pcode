@@ -144,20 +144,6 @@ def parse_codex(data, name: str, fetched_at: float) -> ModelLimits | None:
     return None
 
 
-def parse_meridian(data, name: str, fetched_at: float) -> ModelLimits | None:
-    """Meridian's account-aware /v1/models list (not Anthropic model detail)."""
-    models = data.get("data") if isinstance(data, dict) else None
-    if not isinstance(models, list):
-        return None
-    for model in models:
-        if not isinstance(model, dict) or model.get("id") != name:
-            continue
-        context = positive_int(model.get("context_window"))
-        if context:
-            return ModelLimits(context=context, source="meridian", fetched_at=fetched_at)
-    return None
-
-
 def parse_anthropic(data, fetched_at: float) -> ModelLimits | None:
     if not isinstance(data, dict):
         return None
@@ -371,7 +357,7 @@ class ContextCatalog:
 
     async def refresh_native(self, model: Model) -> None:
         provider = model.provider
-        if provider is None or provider.name not in {"openai-codex", "anthropic", "meridian"}:
+        if provider is None or provider.name not in {"openai-codex", "anthropic"}:
             return
         state = self.state(model)
         async with state.lock:
@@ -388,12 +374,7 @@ class ContextCatalog:
                 async with asyncio.timeout(REQUEST_TIMEOUT), model:
                     client = provider.client
                     options = {"max_retries": 0, "timeout": REQUEST_TIMEOUT}
-                    if provider.name == "meridian":
-                        data = await client.get(
-                            "/v1/models", cast_to=dict[str, Any], options=options
-                        )
-                        limits = parse_meridian(data, model.model_name, now)
-                    elif provider.name == "openai-codex":
+                    if provider.name == "openai-codex":
                         version = await asyncio.to_thread(codex_catalog_version)
                         data = await client.get(
                             "/models",

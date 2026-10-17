@@ -79,64 +79,28 @@ class Logins:
     async def perform_login(self, source: str | None) -> None:
         if source == "openai-codex":
             await self.login_codex()
-        elif source == "meridian":
-            await self.login_meridian()
         elif source == "claude":
             await self.login_claude()
         else:
             await self.login_anthropic()
 
-    async def login_meridian(self) -> None:
-        """Run Claude Code's own sign-in for the Meridian this session uses."""
-        from pcode.auth import LoginError
-        from pcode.meridian_setup import claude_login, login_target
-
-        try:
-            target = await asyncio.to_thread(login_target)
-            self.view.note(
-                f"Signing in to Claude for Meridian ({target.label}) with `claude auth login`. "
-                "Finish in the browser (Ctrl+C cancels)."
-            )
-            status = await claude_login(self.view.note, target)
-            plan = status.get("subscriptionType")
-            self.view.note(
-                f"Signed in to Claude ({target.label}"
-                + (f", {plan} plan" if plan else "")
-                + "). Meridian uses it from its next request; pcode stores nothing."
-            )
-        except asyncio.CancelledError:
-            self.view.note("Claude sign-in cancelled.")
-            raise
-        except LoginError as error:
-            self.view.error(str(error))
-        except Exception:
-            self.view.error("Claude sign-in failed. No credential details were logged.")
-
     async def login_claude(self) -> None:
         """Run Claude Code's own sign-in for `claude:` models, with the CLI they run."""
         from pcode.auth import LoginError
         from pcode.claude_sdk import LOGIN_ENV, MISSING_SDK, cli_path
-        from pcode.meridian_setup import LoginTarget, claude_login
+        from pcode.claude_sdk.login import claude_login
         from pcode.models import claude_sdk_installed
 
         if not claude_sdk_installed():
             self.view.error(MISSING_SDK)
             return
-        target = LoginTarget(os.environ.get("CLAUDE_CONFIG_DIR") or None, "Claude Code's login")
         try:
             self.view.note(
                 "Signing in to Claude Code with `claude auth login`. "
                 "Finish in the browser (Ctrl+C cancels)."
             )
             # Scrubbed as the requests are, so an API key cannot pass for the login.
-            status = await claude_login(
-                self.view.note,
-                target,
-                executable=cli_path(),
-                retry="/login claude",
-                extra_env=LOGIN_ENV,
-                for_meridian=False,
-            )
+            status = await claude_login(self.view.note, cli_path(), extra_env=LOGIN_ENV)
             plan = status.get("subscriptionType")
             self.view.note(
                 "Signed in to Claude Code"
@@ -212,7 +176,7 @@ class Logins:
         try:
             await login(notify=self.view.note)
             # Only an Anthropic conversation adopts the new credential; a Codex
-            # or Meridian session keeps its own model and provider.
+            # or Claude Code session keeps its own model and provider.
             if controller.model and controller.model.startswith("anthropic:"):
                 controller.runtime.agent.model = await asyncio.to_thread(
                     AnthropicOAuthModel, controller.model

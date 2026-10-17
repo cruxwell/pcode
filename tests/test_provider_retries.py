@@ -106,14 +106,6 @@ def test_openai_streamed_overload_uses_runtime_retry_budget(monkeypatch, retries
     assert all("Retrying provider request" in notice for notice in notices)
 
 
-def test_meridian_client_leaves_transport_retries_to_the_runtime(monkeypatch):
-    """The SDK default of 2 would retry 429/5xx below the runtime's own budget."""
-    from pcode.meridian import MeridianProvider
-
-    monkeypatch.setenv("PCODE_MERIDIAN_ENDPOINT", "http://localhost:1/v1")
-    assert MeridianProvider().client.max_retries == 0
-
-
 @pytest.mark.parametrize("source", ["api-key", "oauth"])
 @pytest.mark.parametrize("retries", [0, 1])
 def test_transport_retries_are_owned_and_announced_by_runtime(source, retries, tmp_path):

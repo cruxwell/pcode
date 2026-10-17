@@ -74,8 +74,7 @@ class ClaudeModel(AnthropicModel):
     def profile(self):
         # No Anthropic server tool reaches the model through the CLI, but the
         # CLI's own WebSearch and WebFetch stand in for those two (`web.py`).
-        # Like Meridian, wire tool deferral is off: hidden tools are withheld
-        # until found.
+        # Wire tool deferral is off: hidden tools are withheld until found.
         from pydantic_ai.native_tools import WebFetchTool, WebSearchTool
         from pydantic_ai.profiles import merge_profile
         from pydantic_ai.profiles.anthropic import AnthropicModelProfile

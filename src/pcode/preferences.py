@@ -50,7 +50,7 @@ EFFORTS = ("low", "medium", "high", "xhigh", "default")
 THINKING_MODES = ("off", "status-line", "scrollback")
 OPENAI_PROVIDERS = ("openai", "openai-chat", "openai-responses", "openai-codex")
 # Routes that reach a Claude model and so take Anthropic's own effort setting.
-ANTHROPIC_PROVIDERS = ("anthropic", "meridian", "claude")
+ANTHROPIC_PROVIDERS = ("anthropic", "claude")
 
 
 @dataclass(frozen=True)
@@ -270,14 +270,6 @@ SETTINGS = {
         None,
         ANTHROPIC_AUTH_SOURCES,
         description="Anthropic credential /login selected; env PCODE_ANTHROPIC_AUTH overrides",
-    ),
-    "meridian_managed": Setting(
-        "auto",
-        ("auto", "on", "off"),
-        description=(
-            "Meridian: auto uses a running proxy, else starts a private one; "
-            "on always starts one; off uses the shared proxy only"
-        ),
     ),
     "repo_context_walk_up": Setting(
         "on",
@@ -815,7 +807,6 @@ USER_ONLY = frozenset(
         "extension_dirs",
         "extensions_off",
         "extensions_on",
-        "meridian_managed",
         "anthropic_auth",
         *(key for key in SETTINGS if key.startswith("email_")),
     }
@@ -1058,12 +1049,7 @@ def effort_unavailable(model: str | None) -> str:
             f"{model} has no effort control; Anthropic gates it to "
             "Opus 4.5+ and Sonnet 4.6+ models."
         )
-    from pcode.models import LEGACY_ANTHROPIC_AUTH
-
-    providers = "OpenAI/Codex, Anthropic, Claude, or Meridian"
-    if not LEGACY_ANTHROPIC_AUTH:
-        providers = "OpenAI/Codex, Anthropic, or Claude"
-    base = f"Effort control requires an {providers} model"
+    base = "Effort control requires an OpenAI/Codex, Anthropic, or Claude model"
     return f"{base}; {model} is not one." if model else f"{base}."
 
 

@@ -100,22 +100,6 @@ WORKTREE_ACTIONS = {
 }
 
 
-def meridian_thinking_note(base: str | None, passthrough: bool | None) -> str:
-    if passthrough:
-        return "Meridian forwards readable thinking, so it appears in scrollback."
-    if passthrough is False:
-        return (
-            f"The Meridian proxy at {base} is not forwarding thinking, so none will appear. "
-            f"Turn on passthrough → Thinking Passthrough at {base}/settings "
-            "(this changes it for every client of that proxy)."
-        )
-    return (
-        "Meridian must forward readable thinking for scrollback. Managed Meridian does; "
-        "for an external proxy, check passthrough → Thinking Passthrough in its /settings "
-        "page. This toggle only changes pcode's display."
-    )
-
-
 # The fields of `Activity` the session sets. Everything else in it is derived
 # from the events the terminal renders (tools, workers, plan, previews).
 SESSION_FIELDS = (
@@ -153,7 +137,6 @@ INTENTS = frozenset(
 QUERIES = frozenset(
     {
         "session_overview",
-        "meridian_thinking_state",
         "follow_up_aside",
         "check_bridge",
         "navigate_tree",
@@ -508,7 +491,6 @@ class SessionController:
         self.extension_command_names: list[str] = []
         self.skill_command_names: list[str] = []
         self._startup_context_shown: set[str] = set()
-        self._meridian_thinking_warned = False
         # Whether commands run through the command loop (a terminal or a host),
         # so slow ones can show a row; without one, a job runs inline.
         self.interactive = False
@@ -618,7 +600,7 @@ class SessionController:
         from pcode.models import LEGACY_ANTHROPIC_AUTH, login_sources, logout_sources
 
         login_targets = (
-            "Anthropic, OpenAI Codex, or Claude Code (claude/meridian)"
+            "Anthropic, OpenAI Codex, or Claude Code (claude)"
             if LEGACY_ANTHROPIC_AUTH
             else "Claude Code or OpenAI Codex"
         )
@@ -2528,27 +2510,6 @@ class SessionController:
             model or self.model, self.workspace, self.session_dir, identity=identity
         )
 
-    def meridian_thinking_state(self) -> tuple[str | None, bool | None]:
-        """(proxy URL, whether it forwards thinking) for the current Meridian model."""
-        model = getattr(getattr(self.runtime, "agent", None), "model", None)
-        if getattr(model, "system", None) != "meridian":
-            return None, None
-        from pcode.meridian import thinking_passthrough
-
-        base = str(model.base_url).rstrip("/")
-        return base, thinking_passthrough(base, getattr(model.client, "api_key", None))
-
-    async def warn_meridian_thinking(self) -> None:
-        """Say once when thinking display is on but the proxy drops thinking."""
-        if self._meridian_thinking_warned or self.activity.thinking_mode == "off":
-            return
-        if not (self.model or "").startswith("meridian:"):
-            return
-        base, passthrough = await asyncio.to_thread(self.meridian_thinking_state)
-        if passthrough is False:
-            self._meridian_thinking_warned = True
-            self.view.warning(meridian_thinking_note(base, passthrough))
-
     async def warn_outdated(self) -> None:
         """Warn when PyPI has a newer release. Run as a background task: it may hit the network."""
         from pcode.update_check import check_in_background
@@ -2636,7 +2597,6 @@ class SessionController:
         self.view.note(f"Model: {model}. Continuing the current conversation.")
         self.show_startup_context()
         self.warn_without_credentials()
-        await self.warn_meridian_thinking()
 
     # --- Effort ---
 

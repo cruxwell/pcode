@@ -79,9 +79,8 @@ def test_login_signs_in_to_claude_code_while_legacy_auth_is_off():
     app.handle("/login")
     assert app.controller.login_requested == "claude"
     app.controller.login_requested = None
-    for source in ("anthropic", "meridian"):
-        app.handle(f"/login {source}")
-        assert app.controller.login_requested is None
+    app.handle("/login anthropic")
+    assert app.controller.login_requested is None
     assert "Usage: /login [claude|openai-codex]" in buffer.getvalue()
 
 

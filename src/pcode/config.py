@@ -55,9 +55,9 @@ _RESET_NOTICE = {
 }
 
 
-# Settings for the legacy Anthropic sign-in and Meridian routes: still readable
-# and settable, so an old preferences file keeps working, but not advertised.
-_LEGACY_KEYS = frozenset({"anthropic_auth", "meridian_managed"})
+# Settings for the legacy Anthropic sign-in route: still readable and
+# settable, so an old preferences file keeps working, but not advertised.
+_LEGACY_KEYS = frozenset({"anthropic_auth"})
 
 
 def listed_settings() -> list[str]:
