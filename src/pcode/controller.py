@@ -672,8 +672,7 @@ class SessionController:
             ),
             Command(
                 "/rename",
-                "Name this conversation for /resume: NAME sets, - clears, "
-                "bare asks the model for one",
+                "Name this conversation for /resume: NAME | ask model",
                 self.rename,
                 free_arguments=True,
                 group="Session",
