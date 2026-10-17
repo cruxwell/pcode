@@ -46,8 +46,8 @@ test("the session comes from front matter", () => {
 });
 
 test("prompts name the note and quote the selection", () => {
-	const prompt = askPrompt("/v/briefs/Plan.md", " Why this? ", "line one\n\nline two\n");
-	assert.equal(prompt, "About the note `/v/briefs/Plan.md` (I'm asking from Obsidian):\n\n> line one\n>\n> line two\n\nWhy this?");
+	const prompt = askPrompt("/v/plans/Plan.md", " Why this? ", "line one\n\nline two\n");
+	assert.equal(prompt, "About the note `/v/plans/Plan.md` (I'm asking from Obsidian):\n\n> line one\n>\n> line two\n\nWhy this?");
 	assert.ok(!askPrompt("/n.md", "Q").includes(">"));
 	assert.match(reviewPrompt("/n.md"), /\[!comment\]/);
 	assert.equal(quote("a\nb"), "> a\n> b");

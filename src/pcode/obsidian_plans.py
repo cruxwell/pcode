@@ -32,6 +32,10 @@ EDITED = (
 )
 
 
+class LegacyConfig(ValueError):
+    """Only the pre-rename config exists."""
+
+
 @dataclass(frozen=True)
 class Org:
     name: str
@@ -65,7 +69,7 @@ def read_config(path: Path) -> dict:
         if legacy.exists():
             # Falling back to the shared default vault would put an org's plans
             # in the wrong vault, so make the rename explicit instead.
-            raise ValueError(f"rename {legacy} to {path.name}") from None
+            raise LegacyConfig(f"rename {legacy} to {path.name}") from None
         return {}
     except (OSError, tomllib.TOMLDecodeError) as error:
         raise ValueError(f"{path}: {error}") from None
@@ -161,6 +165,8 @@ def plan_location(workspace: Path) -> PlanLocation:
         with tempfile.NamedTemporaryFile(dir=directory, prefix=".pcode-plan-") as probe:
             probe.write(b"plan write probe\n")
             probe.flush()
+    except LegacyConfig as error:
+        raise ValueError(f"/plan --obsidian: {error}, then retry.") from None
     except (OSError, ValueError) as error:
         raise ValueError(
             f"/plan --obsidian: {error}. Fix {path} (orgs and vault_root) or make "

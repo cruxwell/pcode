@@ -49,7 +49,9 @@ vault = "~/Documents/acme-vault"   # optional
 ```
 
 The file lives in your config directory, never in a repository, so org names
-stay on your machine. A broken config or an unwritable vault is an error, not a
+stay on your machine. If you used project briefs before, rename your old
+`memory.toml` to `obsidian.toml`; until you do, `/plan --obsidian` stops with
+an error rather than using the shared vault. A broken config or an unwritable vault is an error, not a
 silent fallback to another vault.
 
 ### Answering in the note

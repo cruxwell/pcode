@@ -244,9 +244,25 @@ def test_leftover_memory_config_is_not_silently_ignored(configured_vault, tmp_pa
     config.rename(tmp_path / "memory.toml")
     api = FakeAPI(workspace)
     plan_mode.setup(api)
-    with pytest.raises(ValueError, match="rename .*memory.toml to obsidian.toml"):
+    with pytest.raises(ValueError, match="rename .*memory.toml to obsidian.toml") as error:
         api.commands["/plan"]("--obsidian Topic")
+    assert "writable" not in str(error.value)
     assert not vault.exists()
+
+
+def test_config_lives_in_the_config_dir():
+    from pcode.preferences import config_dir
+
+    assert op.config_path() == config_dir() / "obsidian.toml"
+
+
+def test_plan_at_the_org_root_is_named_after_the_org(configured_vault):
+    workspace, vault, _ = configured_vault
+    api = FakeAPI(workspace.parent)
+    plan_mode.setup(api)
+    api.commands["/plan"]("--obsidian Topic")
+    path = Path(marker(api.workspace).read_text().strip())
+    assert path == vault / "plans" / "Plan — personal — Topic.md"
 
 
 def test_explicit_reports_invalid_vault(configured_vault):

@@ -210,11 +210,10 @@ def setup(pcode) -> None:
             return "Plan mode was not on; carry on."
         marker.unlink(missing_ok=True)
         pcode.ui.notify("Plan approved; plan mode off.")
-        result = (
+        return (
             f"Plan mode off. Implement the plan in {relative(current)} now, "
             "tracking progress with write_plan, and update the file if the plan changes."
         )
-        return result
 
     @pcode.hooks.on.before_tool_execute
     async def workers_cannot_exit(ctx, *, call, tool_def, args):
