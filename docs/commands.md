@@ -76,6 +76,9 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   to send, in a quote. **Ctrl+Y** with an empty editor does the same.
 
   ![/copy with a code block selected: the Conversation pane highlights the block Enter copies](assets/screenshots/copy.svg)
+- `/paste-image`: save the image on the system clipboard to a file and add its
+  path to your draft, so the prompt sends the picture. See
+  [images in a prompt](#images-in-a-prompt).
 - `/status`: current model, workspace, session storage path, completed turns, token usage,
   and a breakdown of the prompt overhead re-sent with every request (see
   [Where the fixed prompt goes](context.md#where-the-fixed-prompt-goes)). Opens a popup in
@@ -204,12 +207,56 @@ take (names with spaces are quoted). References are underlined in the editor.
 
 Only the path is sent. pcode never reads the file for you, so the model decides
 whether reading it is worth a call; the size in the menu shows that cost up front.
+Images are the exception: see the next section.
 
 In a Git checkout, candidates are tracked plus untracked files, honoring
 `.gitignore`. Elsewhere they come from ripgrep (skipping hidden entries, honoring
 `.ignore`, and excluding build directories such as `node_modules`), or a plain
 directory walk when ripgrep isn't installed. The list refreshes at most every ten
 seconds, so a brand-new file can take a moment to appear.
+
+### Images in a prompt
+
+A prompt that names a PNG, JPEG, GIF or WebP file sends the picture with it:
+
+```text
+the header in ./tmp/shots/tools.png is clipped, why?
+```
+
+Any way of putting the path in the prompt works:
+
+- **Type it**, or pick it with `@`. Relative paths start at the workspace, and
+  `~/` works.
+- **Drop the file on the terminal.** Terminals type a dropped file's path, quoted
+  or with its spaces escaped, and pcode reads both.
+- **Paste a copied image** with `/paste-image`. A terminal only pastes text, so
+  pcode reads the image from the system clipboard, saves it under
+  `~/.local/state/pcode/pastes/`, and adds that path to your draft. A terminal
+  that sends an empty paste when the clipboard holds only an image (kitty and
+  Ghostty are reported to) runs it from your usual paste key. Elsewhere, give it a
+  key: `/bind v /paste-image` puts it on Ctrl+V, the key Claude Code and Codex
+  use, in place of `/show-edits` (see
+  [managing bindings](keybindings.md#managing-bindings)).
+
+When the turn starts, a note lists what was attached
+(`Attached 1 image: ./tmp/shots/tools.png`), and a warning says why a named file
+was not: not really an image, or too large for any provider to accept (3.75 MB,
+or 8000 pixels on a side). A pasted image that large is shrunk to 2000 pixels on
+its longest side on macOS (with the built-in `sips`); elsewhere you are told when
+you paste it. Up to 10 images go with one prompt. Messages you send while the
+agent works bring their images the same way; side questions (`/btw`) send the
+path only. File names inside a fenced code block, such as pasted `ls` output,
+are not attached.
+
+The prompt itself stays text, so the path is what history, `/resend` and the
+session journal keep, and the file is read again each time the prompt is sent.
+Pasted images are kept for 30 days. Reading the clipboard over ssh would read the
+remote machine's, so `/paste-image` refuses there: copy the file across and name
+it instead. On Linux it needs `wl-paste` (Wayland) or `xclip` (X11); on macOS it
+uses `pngpaste` when installed, and AppleScript otherwise.
+
+Whether the model can see the picture is the same question as for `read_file`:
+see [images](context.md#images).
 
 ## Keys and layout
 

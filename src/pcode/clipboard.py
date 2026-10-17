@@ -1,4 +1,5 @@
-"""Best-effort system clipboard for popups; never raises at the call site.
+"""Best-effort system clipboard: copying text, and reading an image for
+`/paste-image`. Never raises at the call site.
 
 A local helper (`pbcopy`, `wl-copy`, `xclip`) is tried first because it needs no
 cooperation from the terminal emulator. OSC 52 is the fallback, and goes first
@@ -9,8 +10,10 @@ is enough.
 
 import base64
 import os
+import re
 import shutil
 import subprocess
+import sys
 
 _HELPERS = (
     ("pbcopy",),
@@ -60,6 +63,50 @@ def _terminal(text: str, output) -> bool:
         return True
     except Exception:
         return False
+
+
+def _run(command: tuple[str, ...]) -> bytes | None:
+    try:
+        done = subprocess.run(command, capture_output=True, timeout=5, check=False)
+    except OSError, subprocess.SubprocessError:
+        return None
+    return done.stdout if done.returncode == 0 and done.stdout else None
+
+
+def _mac_image() -> bytes | None:
+    if shutil.which("pngpaste") and (data := _run(("pngpaste", "-"))):
+        return data
+    # AppleScript hands the clipboard's PNG flavor back as «data PNGf89504E47…»
+    # (the guillemets are UTF-8). A screenshot copied with Cmd+Ctrl+Shift+4 has
+    # one; so do most apps' images.
+    out = _run(("osascript", "-e", "the clipboard as «class PNGf»"))
+    found = re.search(rb"PNGf([0-9A-Fa-f]+)", out or b"")
+    return bytes.fromhex(found[1].decode()) if found and len(found[1]) % 2 == 0 else None
+
+
+def image() -> tuple[bytes | None, str]:
+    """The clipboard's image as PNG bytes, or None and why there is none.
+
+    Terminals paste text, so an image never arrives as keystrokes: it is read
+    from the system clipboard here. Over ssh that clipboard belongs to the wrong
+    machine, so it is not read at all.
+    """
+    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
+        return None, "Over ssh, the clipboard pcode can read is the remote machine's"
+    if sys.platform == "darwin":
+        data = _mac_image()
+    else:
+        commands = (
+            ("wl-paste", "--no-newline", "--type", "image/png"),
+            ("xclip", "-selection", "clipboard", "-target", "image/png", "-out"),
+        )
+        found = [c for c in commands if shutil.which(c[0])]
+        if not found:
+            return None, "Reading an image from the clipboard needs wl-paste or xclip"
+        data = next((d for c in found if (d := _run(c))), None)
+    if not data or not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None, "There is no image on the clipboard"
+    return data, ""
 
 
 def copy(text: str, output=None) -> tuple[bool, bool]:

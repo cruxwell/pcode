@@ -72,6 +72,7 @@ from pcode.plan_preview import StreamingPlanPreview
 from pcode.planning import SizedPlanItem
 from pcode.preferences import SETTINGS, load_preferences, parse_token_count
 from pcode.profiling import activity as profiled_activity
+from pcode.prompt_images import attach
 from pcode.retries import RequestCheckpoint
 from pcode.runtime import (
     ChildPlan,
@@ -161,6 +162,10 @@ class AgentRuntime:
         self.compaction_notice = lambda text: None
         self.retry_notice = lambda text: None
         self.warning_notice = lambda text: None
+        # A plain transcript note, such as the images a prompt brought along.
+        self.notice = lambda text: None
+        # Prompts whose images were reported this turn; see `_with_images`.
+        self._images_reported: set[str] = set()
         # Shell jobs outlive both the run and the conversation, so the registry
         # is not reset by `_clear`, `/new`, or conversation checkout.
         self.jobs = job_registry()
@@ -901,6 +906,7 @@ class AgentRuntime:
         attempt = 0
         repaired = False
         undeferred = False
+        self._images_reported.clear()
         chosen = None
         if model is not None or settings is not None:
             chosen = TurnModel(model, settings, self._model_conversation(model, "turn"))
@@ -1134,6 +1140,33 @@ class AgentRuntime:
                 return node
         return None
 
+    async def _with_images(self, prompt: str | None, model) -> str | list | None:
+        """`prompt` with the images it names, saying what came along and what could not."""
+        if prompt is None:
+            return None
+        attached = await asyncio.to_thread(attach, prompt, self._workspace_dir())
+        # A retried attempt that sends the prompt again reads its images again,
+        # but the user heard about them the first time.
+        if prompt not in self._images_reported:
+            self._images_reported.add(prompt)
+            self._report_images(attached, model)
+        return attached.content
+
+    def _report_images(self, attached, model) -> None:
+        from pcode.images import image_support
+
+        if attached.names:
+            count = len(attached.names)
+            self.notice(f"Attached {count} image{'s' * (count != 1)}: {', '.join(attached.names)}")
+            if image_support(model) is not True:
+                name = model if isinstance(model, str) else model.model_id
+                self.warning_notice(
+                    f"{name} may not see images, so it gets a note in their place. "
+                    "The conversation keeps them for a model that can."
+                )
+        for problem in attached.problems:
+            self.warning_notice(f"Image not attached: {problem}.")
+
     def _consume_steering(self, run_id: str) -> list[str]:
         messages = self.take_steering()
         if self.session:
@@ -1152,7 +1185,12 @@ class AgentRuntime:
         return (
             ([StepPersistence(store=self.session.store)] if self.session else [])
             + [
-                Steering(lambda: self._consume_steering(run_id), lambda: self.has_steering()),
+                Steering(
+                    lambda: self._consume_steering(run_id),
+                    lambda: self.has_steering(),
+                    # A message naming images brings them, as a prompt does.
+                    prepare=lambda text: self._with_images(text, self.agent.model),
+                ),
                 # Finished jobs reach the model here rather than by
                 # being polled for; see `pcode.job_notices`. Ahead of the
                 # checkpoint, so a saved request carries the notices it
@@ -1190,11 +1228,14 @@ class AgentRuntime:
         await self.refresh_context()
         self._persist_child_runs()
         translator = await self._translator(context)
+        chosen = chosen or TurnModel(None, None, self.conversation_id)
+        content = await self._with_images(
+            prompt, chosen.model.model if chosen.model is not None else self.agent.model
+        )
         # Unlike run_stream(), this completes the tool loop even when the model
         # sends explanatory text alongside its tool calls.
         # Enter the agent too: a run alone does not own a statically supplied
         # model's HTTP client. Exit closes it on success, failure, or cancellation.
-        chosen = chosen or TurnModel(None, None, self.conversation_id)
         async with (
             chosen.applied(self.agent),
             self.agent,
@@ -1202,7 +1243,7 @@ class AgentRuntime:
             worker_toolsets([self.mcp.live()]),
             enabled_servers(self.mcp.servers, self.mcp.unavailable),
             self.agent.run_stream_events(
-                prompt,
+                content,
                 message_history=context.messages(),
                 workspace=self._run_workspace(self.agent),
                 toolsets=[self.mcp.live()],

@@ -532,6 +532,29 @@ Traps found while building it:
 - A `claude:` alias (`claude:opus`) is in no catalog, so the provider prefix, not
   the name, says it sees.
 
+Prompt images (`pcode.prompt_images`) keep the prompt a string end to end: the
+queue, steering, `/resend`, the conversation tree, history recall and the host
+protocol all carry text, and `AgentRuntime._stream` and `_consume_steering`
+turn a prompt into `[text, label, image, …]` as it is sent. Steering that
+reaches `RunContext.enqueue` (background delegation) is flattened, since
+`enqueue` takes content items, not lists. Terminals cannot paste an image:
+bracketed paste carries text only. Researched 2026-10-17, the options were:
+
+- A dropped file arrives as its path, shell-escaped (iTerm2, Terminal.app) or
+  quoted, so path detection covers drag and drop with no terminal support.
+- Reading the OS clipboard from the process: `pngpaste` or AppleScript's
+  `«class PNGf»` on macOS (its output is UTF-8, `«data PNGf…»`, not ASCII),
+  `wl-paste` or `xclip` on Linux. Claude Code and Codex do this on Ctrl+V. It
+  reads the wrong machine's clipboard over ssh, so pcode refuses there.
+- kitty's OSC 5522 clipboard protocol carries images in band, ssh included,
+  but only kitty ships it (Ghostty is adding it) and kitty asks permission on
+  every read unless `clipboard_control` allows it. Worth adding when more
+  terminals ship it.
+- kitty and Ghostty are reported (anomalyco/opencode#25806, not verified here)
+  to send an empty bracketed paste for an image-only clipboard, which pcode
+  takes as `/paste-image`. Ctrl+V stays `/show-edits` by default;
+  `/bind v /paste-image` is one command away.
+
 ### Reasoning effort
 
 `preferences.apply_effort` uses `openai_reasoning_effort` for OpenAI/Codex and

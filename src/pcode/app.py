@@ -337,6 +337,12 @@ class PreviewApp:
                 group="Inspect",
             ),
             Command(
+                "/paste-image",
+                "Save the clipboard's image and add its path to the prompt",
+                self.paste_image,
+                group="Inspect",
+            ),
+            Command(
                 "/tree",
                 "Browse the conversation tree and fork from any point",
                 self.select_tree,
@@ -1121,6 +1127,41 @@ class PreviewApp:
         if argument:
             raise ValueError("Usage: /copy")
         self.copy_requested = True
+
+    def paste_image(self, argument: str) -> None:
+        """Save the clipboard's image and name it in the draft, which sends it along.
+
+        Terminals paste text only, so the picture is read from the system
+        clipboard and kept as a file; the prompt carries its path like any other.
+        """
+        if argument:
+            raise ValueError("Usage: /paste-image")
+        # Reading the clipboard runs helper processes that can take seconds on
+        # a large image; the prompt stays live meanwhile.
+        self._paste_task = asyncio.get_running_loop().create_task(self._paste_image())
+
+    async def _paste_image(self) -> None:
+        from pcode.clipboard import image
+        from pcode.prompt_images import paste, reference
+
+        data, why = await asyncio.to_thread(image)
+        if data is None:
+            self.transcript.warning(
+                f"{why}. Save the image to a file and put its path in the prompt."
+            )
+            return
+        path, unsendable = await asyncio.to_thread(paste, data)
+        if unsendable:
+            # Said now, not when the turn starts and finds it cannot be sent.
+            self.transcript.warning(f"The pasted image is too large to send: {unsendable}.")
+            return
+        if self.prompt_session is not None:
+            buffer = self.prompt_session.default_buffer
+            before = buffer.text[: buffer.cursor_position]
+            space = "" if not before or before[-1].isspace() else " "
+            buffer.insert_text(f"{space}{reference(path)} ")
+            self.prompt_session.app.invalidate()
+        self.transcript.note(f"Pasted an image: {reference(path)}")
 
     async def choose_copy(self, output: TerminalOutput, session) -> None:
         from pcode.clipboard import copy as copy_to_clipboard
@@ -2559,6 +2600,7 @@ class PreviewApp:
             on_model=lambda: submit("/model"),
             on_previous_session=lambda: submit("/switch -"),
             on_copy_response=lambda: submit("/copy"),
+            on_paste_image=lambda: submit("/paste-image"),
             on_btw=self.btw_key,
             on_btw_next=self.btw_next,
             on_btw_close=self.close_btw,
@@ -2795,6 +2837,8 @@ class PreviewApp:
                 self.runtime.retry_notice = retry_notice
             if hasattr(self.runtime, "warning_notice"):
                 self.runtime.warning_notice = self.transcript.warning
+            if hasattr(self.runtime, "notice"):
+                self.runtime.notice = self.transcript.note
             try:
                 async with aclosing(self.runtime.stream(prompt)) as stream:
                     async for event in stream:

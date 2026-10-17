@@ -25,13 +25,7 @@ from pydantic_ai_harness.filesystem._toolset import (
 )
 
 from pcode.edits import MAX_SOURCE, completed_change
-from pcode.images import (
-    IMAGE_SUFFIXES,
-    MAX_IMAGE_BYTES,
-    MAX_IMAGE_SIDE,
-    image_pixels,
-    image_type,
-)
+from pcode.images import IMAGE_SUFFIXES, MAX_IMAGE_BYTES, image_type, unsendable
 from pcode.runtime import EditCompleted
 from pcode.workspace_filesystem import WorkspaceFileSystem
 
@@ -169,14 +163,8 @@ class DisplayFileSystemToolset(FileSystemToolset):
         if media_type is None:
             return text
         header = f"[{path} | {media_type} | {len(raw)} bytes]\n"
-        if len(raw) > MAX_IMAGE_BYTES:
-            return header + too_large(f"the limit is {MAX_IMAGE_BYTES} bytes")
-        pixels = image_pixels(raw)
-        if pixels and max(pixels) > MAX_IMAGE_SIDE:
-            width, height = pixels
-            return header + too_large(
-                f"{width}x{height} pixels, and the limit is {MAX_IMAGE_SIDE} on a side"
-            )
+        if why := unsendable(raw):
+            return header + too_large(why)
         # The type a saved history comes back as, so reopening a session finds it equal.
         return [header, BinaryImage(data=raw, media_type=media_type)]
 

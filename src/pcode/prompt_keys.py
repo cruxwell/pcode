@@ -36,6 +36,8 @@ class PromptCallbacks:
     on_interrupt_submit: Callable[[str], None] | None = None
     on_previous_session: Callable | None = None
     on_copy_response: Callable | None = None
+    # A paste that brought no text: the clipboard may hold an image instead.
+    on_paste_image: Callable | None = None
     # The /btw thread view (`pcode.btw_view`): toggle between a thread and the
     # conversation, show the next thread, and go back to the conversation.
     on_btw: Callable | None = None
@@ -339,6 +341,16 @@ def _editing_keys(
                 buffer.validate_and_handle()
             finally:
                 buffer.accept_handler = accept_handler
+
+    @keys.add(Keys.BracketedPaste, filter=Condition(lambda: callbacks.on_paste_image is not None))
+    def paste(event: KeyPressEvent) -> None:
+        # Some terminals (kitty and Ghostty, by reports) answer their paste key
+        # with an empty paste when the clipboard holds only an image. Anything
+        # else is prompt_toolkit's own paste, line endings normalized as it does.
+        if not event.data:
+            callbacks.on_paste_image()
+            return
+        event.current_buffer.insert_text(event.data.replace("\r\n", "\n").replace("\r", "\n"))
 
     on_btw_close = callbacks.on_btw_close
 

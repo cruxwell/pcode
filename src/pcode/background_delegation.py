@@ -263,7 +263,7 @@ class BackgroundDelegation(BackgroundTools):
         with anyio.move_on_after(POLL_SECONDS):
             _deliver(ctx, await self._outcomes.receive())
             return True
-        if steering_pending(ctx) and (messages := take_steering(ctx)):
+        if steering_pending(ctx) and (messages := await take_steering(ctx)):
             ctx.enqueue(*messages)
             return True
         if not self._live:

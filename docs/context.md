@@ -108,7 +108,9 @@ for unrelated work.
 ## Images
 
 An image reaches the model when it opens an image file with
-[`read_file`](tools.md#images). Whether it can see one comes from the model
+[`read_file`](tools.md#images), or when your prompt names one
+([images in a prompt](commands.md#images-in-a-prompt)). Whether it can see one
+comes from the model
 catalog, the same source as the context window, with Codex's and Anthropic's own
 model metadata taking precedence. Claude Code (`claude:`) models always count as
 seeing, including aliases such as `claude:opus`.

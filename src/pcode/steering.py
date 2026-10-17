@@ -17,16 +17,26 @@ def run_request(ctx, request_context) -> ModelRequest:
 
 
 class Steering(AbstractCapability):
-    def __init__(self, take_messages, has_messages=lambda: False):
+    def __init__(self, take_messages, has_messages=lambda: False, prepare=None):
         self.take_messages = take_messages
         # A peek that consumes nothing, for waits that should hand back early.
         self.has_messages = has_messages
+        # Turns a message's text into what the model is sent (the text and the
+        # images it names); awaited, since that reads files.
+        self.prepare = prepare
+
+    async def take(self) -> list:
+        """The pending messages, consumed, each as the model is to be sent it."""
+        messages = self.take_messages()
+        if self.prepare is None:
+            return messages
+        return [await self.prepare(message) for message in messages]
 
     async def before_model_request(self, ctx, request_context):
         # Append to the framework's request so tool results remain ahead of the
         # new user input and the input is included in persisted message history.
-        for text in self.take_messages():
-            run_request(ctx, request_context).parts.append(UserPromptPart(text))
+        for content in await self.take():
+            run_request(ctx, request_context).parts.append(UserPromptPart(content))
         return request_context
 
 
@@ -39,6 +49,15 @@ def steering_pending(ctx) -> bool:
     return any(capability.has_messages() for capability in _steering(ctx))
 
 
-def take_steering(ctx) -> list[str]:
-    """Consume this run's steering now, for a hook with no model request to append to."""
-    return [text for capability in _steering(ctx) for text in capability.take_messages()]
+async def take_steering(ctx) -> list:
+    """Consume this run's steering now, for a hook with no model request to append to.
+
+    One flat list of user content, as `RunContext.enqueue` takes it: a message
+    that brought images is its text followed by them.
+    """
+    return [
+        item
+        for capability in _steering(ctx)
+        for message in await capability.take()
+        for item in ([message] if isinstance(message, str) else message)
+    ]

@@ -91,6 +91,16 @@ def image_pixels(data: bytes) -> tuple[int, int] | None:
     return None
 
 
+def unsendable(raw: bytes) -> str | None:
+    """Why no provider would take the image in `raw`, or None when one would."""
+    if len(raw) > MAX_IMAGE_BYTES:
+        return f"{len(raw)} bytes, and the limit is {MAX_IMAGE_BYTES}"
+    pixels = image_pixels(raw)
+    if pixels and max(pixels) > MAX_IMAGE_SIDE:
+        return f"{pixels[0]}x{pixels[1]} pixels, and the limit is {MAX_IMAGE_SIDE} on a side"
+    return None
+
+
 def image_support(model: str | Model) -> bool | None:
     """Whether the model takes images, or None when nothing says."""
     setting = os.environ.get("PCODE_IMAGE_INPUT", "").strip().lower()

@@ -72,6 +72,7 @@ TERMINAL_COMMANDS = frozenset(
         "/diffs",
         "/links",
         "/copy",
+        "/paste-image",
         "/tree",
         "/agents",
         "/resume",
@@ -1452,6 +1453,8 @@ class SessionController:
             runtime.retry_notice = retry_notice
         if hasattr(runtime, "warning_notice"):
             runtime.warning_notice = self.view.warning
+        if hasattr(runtime, "notice"):
+            runtime.notice = self.view.note
         failure = None
         cancelled = False
         chosen, prompt = (None, text) if resend or wake else prompt_target(text)

@@ -3,7 +3,8 @@
 Completing `@ui.py` inserts `./src/pcode/ui.py`, the same workspace-relative
 form the file tools accept, so the model can read or search it without guessing
 where the file lives. The path is all pcode sends; whether the file is worth
-reading is the model's call.
+reading is the model's call. An image is the exception: `pcode.prompt_images`
+sends the picture of any image file a prompt names, however the path got there.
 """
 
 import os

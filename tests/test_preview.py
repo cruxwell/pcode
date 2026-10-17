@@ -37,6 +37,7 @@ def make_app(width=80, workspace=None):
                 "/diffs",
                 "/links",
                 "/copy",
+                "/paste-image",
                 "/tree",
                 "/btw",
                 "/agents",
