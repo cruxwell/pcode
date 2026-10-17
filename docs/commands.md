@@ -126,8 +126,9 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
 - `/switch [HOST | - | new [PROMPT] | fork [PROMPT]]`: pick another running
   [background session](sessions.md#background-sessions) and show it here, or start a new
   one; the session you leave keeps working if it runs in a host, and ends if it runs in
-  this terminal (`/resume` brings it back). `fork` starts a copy of this conversation
-  in a worktree of its own ([details](sessions.md#forking-a-session-on-purpose)).
+  this terminal (`/resume` brings it back). `fork` starts a copy of this conversation,
+  in a git repository in a worktree of its own
+  ([details](sessions.md#forking-a-session-on-purpose)).
 - `/restart`: restart this background session's host on the pcode installed now, keeping
   the conversation.
 - `/stop`: end this background session's host and quit. Quitting any other way (Ctrl+D,

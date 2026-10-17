@@ -1423,9 +1423,15 @@ class PreviewApp:
             raise ValueError("/switch needs a model; this is a local UI preview.")
         if argument.strip() == "-" and self.previous_host is None:
             raise ValueError("No previous session in this terminal yet; /switch lists them all.")
+        start = _session_start(argument)
+        if start is not None and start[0] == "fork" and self.active_session_id() is None:
+            raise ValueError(
+                "Nothing to fork yet: a session is saved with its first prompt. "
+                "/switch new starts an empty one."
+            )
         # With a prompt, `new` and `fork` leave the new session working in the
         # background, and this terminal stays where it is.
-        stays = re.match(r"(new|fork)\s+\S", argument.strip()) is not None
+        stays = start is not None and bool(start[1])
         if not stays and not self.hosted and (self.activity.busy or self.activity.queued_prompts):
             raise ValueError(
                 "This session runs in this terminal, so leaving it stops its turn. "
@@ -1604,11 +1610,12 @@ class PreviewApp:
         previous = argument == "-"
         if previous:
             argument = self.previous_host or ""
-        if argument == "new" or argument.startswith("new "):
-            await self.start_host_session(argument[3:].strip())
-            return
-        if argument == "fork" or argument.startswith("fork "):
-            await self.fork_session(argument[4:].strip())
+        if start := _session_start(argument):
+            action, prompt = start
+            if action == "fork":
+                await self.fork_session(prompt)
+            else:
+                await self.start_host_session(prompt)
             return
         current = getattr(self.runtime, "id", None) if self.hosted else None
         if argument:
@@ -1730,17 +1737,13 @@ class PreviewApp:
         from pcode import worktree
 
         identity = self.active_session_id()
-        if identity is None:
-            raise ValueError(
-                "Nothing to fork yet: a session is saved with its first prompt. "
-                "/switch new starts an empty one."
-            )
-        # The session's own checkout: a hosted one is the host's, not this terminal's.
-        workspace = self.controller.workspace
-        if worktree.head_commit(workspace) is None:
-            self.transcript.note(
-                f"{workspace} is not a git checkout, so the fork shares it with this session."
-            )
+        if identity is None:  # `switch` checked; the session cannot go unsaved since.
+            return
+        workspace = self.workspace
+        if await asyncio.to_thread(worktree.head_commit, workspace) is None:
+            outside = await asyncio.to_thread(worktree.main_checkout, workspace) is None
+            why = "is not a git checkout" if outside else "has no commit to branch from"
+            self.transcript.note(f"{workspace} {why}, so the fork shares it with this session.")
         elif await asyncio.to_thread(worktree.is_dirty, workspace):
             self.transcript.note(
                 "Uncommitted changes here stay behind: the fork's worktree starts from HEAD."
@@ -3225,6 +3228,14 @@ async def _stopping_provider_processes(main):
         return await main
     finally:
         await shutdown()
+
+
+def _session_start(argument: str) -> tuple[str, str] | None:
+    """`/switch new [PROMPT]` or `fork [PROMPT]` as (action, prompt); None for a host."""
+    words = argument.split(maxsplit=1)
+    if words and words[0] in ("new", "fork"):
+        return words[0], words[1] if len(words) > 1 else ""
+    return None
 
 
 def forked_note(saved) -> str:

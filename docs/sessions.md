@@ -316,8 +316,15 @@ a new `pcode-<id>` worktree started from the commit this session's checkout is
 on. Uncommitted changes stay behind, and pcode says so. Run mid-turn, the copy
 starts from the turn's last settled step, as any copy of a running session does.
 With a prompt, `/switch fork PROMPT` sets the copy working on it and this terminal
-stays where it is; bare, the terminal switches to the copy. Its worktree merges
-into the mainline like any session's, so the two can merge in either order.
+stays where it is, even if this session runs in the terminal and is mid-turn; bare,
+the terminal switches to the copy. Outside git, or before the first commit, the
+copy shares this session's directory instead.
+
+The fork's worktree merges into the mainline like any session's. Its branch
+starts with every commit this session had made when you forked, so merging the
+fork lands those too. A fork that never committed anything past that point is
+removed on exit like any untouched worktree, and this session's commits stay
+where they were.
 
 Every copy records the session it came from: `/resume` lists it under that
 session and its header says `forked from <id>`.

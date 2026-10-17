@@ -836,7 +836,16 @@ def fork_worktree(saved, workspace: Path) -> Path:
     created, _ = _enter_worktree(workspace, saved.info.id[:8], always=True, base=base)
     created = created.resolve()
     saved.info.workspace = str(created)
-    saved.save_info(touch=False)
+    # Its own work starts here: /diffs and tidying on exit measure from it.
+    saved.info.start_commit = base
+    try:
+        saved.save_info(touch=False)
+    except BaseException:
+        linked = worktree.describe(created)
+        if linked is not None:
+            worktree.remove(linked, force=True)
+            worktree.delete_branch(linked, force=True)
+        raise
     return created
 
 
