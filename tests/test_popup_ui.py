@@ -276,7 +276,11 @@ POPUPS = ["links", "session info", "edits", "tree", "asides", "sessions", "tools
 
 @pytest.mark.parametrize("name", [name for name in POPUPS if name != "session info"])
 def test_every_popup_hands_the_mouse_to_the_terminal_and_back(tmp_path, name):
-    """Ctrl+Q flips mouse capture while the popup stays open, for a native text selection."""
+    """Ctrl+Q flips mouse capture while the popup stays open, for a native text selection.
+
+    The /btw viewer's Ctrl+Q goes back to the conversation, so it flips on Ctrl+G.
+    """
+    toggle = "\x07" if name == "asides" else "\x11"
 
     async def run():
         with create_pipe_input() as pipe:
@@ -286,7 +290,7 @@ def test_every_popup_hands_the_mouse_to_the_terminal_and_back(tmp_path, name):
                 await asyncio.sleep(0.05)
                 assert app.renderer.mouse_support()
                 for captured in (False, True):
-                    pipe.send_text("\x11")  # Ctrl+Q.
+                    pipe.send_text(toggle)
                     await asyncio.sleep(0.05)
                     assert app.renderer.mouse_support() is captured
                     assert not task.done()

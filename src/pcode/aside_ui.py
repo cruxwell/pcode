@@ -329,6 +329,16 @@ class AsideBrowser:
         def stop_running(event):
             self.stop()
 
+        # The key that opened the viewer closes it, as it leaves a swapped-in
+        # thread; the mouse toggle that other popups keep on `q` moves to `g`.
+        # Never over a half-written follow-up, which closing would lose.
+        @shortcuts.add("q", "Back to the conversation", filter=idle)
+        def close_viewer(event):
+            if self.input is not None and (self.input.text.strip() or self.input.prompting):
+                self.notice = "A follow-up draft is open: send or clear it, or Ctrl+C to close"
+                return
+            event.app.exit(result=None)
+
         keys.add("tab")(focus_next)
         keys.add("s-tab")(focus_previous)
 
@@ -401,7 +411,7 @@ class AsideBrowser:
             ),
             key_bindings=shortcuts.key_bindings(keys),
             full_screen=True,
-            mouse_support=popup_mouse(shortcuts),
+            mouse_support=popup_mouse(shortcuts, key="g"),
             style=popup_style(app_options.pop("style", None)),
             **app_options,
         )

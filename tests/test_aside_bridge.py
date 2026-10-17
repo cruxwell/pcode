@@ -604,6 +604,7 @@ def test_the_viewer_asks_for_optional_summary_instructions_and_merges(prefix):
                 "s",
                 "t",
                 "q",
+                "g",
             ]
 
         def restored(browser):
@@ -642,8 +643,8 @@ def test_the_viewer_without_bridging_has_no_bridge_keys():
     asides.items.append(answered("why?", "because"))
     browser = AsideBrowser(asides, output=None, input=None)
     assert browser.input is None
-    assert [shortcut.key for shortcut in browser.prefix_keys.shortcuts] == ["y", "o", "k", "q"]
-    assert [shortcut.key for shortcut in browser.prefix_keys.available()] == ["y", "o", "q"]
+    assert [shortcut.key for shortcut in browser.prefix_keys.shortcuts] == ["y", "o", "k", "q", "g"]
+    assert [shortcut.key for shortcut in browser.prefix_keys.available()] == ["y", "o", "q", "g"]
     assert browser.prefix_keys.summary() == "Ctrl+/ Keys"
     assert not any(
         label in {"Summarize", "Merge into conversation"}

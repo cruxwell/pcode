@@ -724,7 +724,8 @@ tmux under the same conditions.
 
 (The terminal's own selection is still there if you need it, though it ignores
 pane borders and wrapping: hold Shift, or Option in iTerm2, while you drag, or
-press **Ctrl+Q** to hand the mouse to the terminal until you press it again.
+press **Ctrl+Q** to hand the mouse to the terminal until you press it again
+(**Ctrl+G** in the `/btw` viewer, where Ctrl+Q closes it).
 `pcode config set popup_mouse off` does that for every popup.)
 
 ## Diff browser

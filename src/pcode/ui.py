@@ -928,6 +928,8 @@ class Activity:
     # which the editor then sends to; None while the conversation is shown.
     # This terminal's own, never synced from the host.
     btw_thread: str | None = None
+    # The thread last shown, which Ctrl+Q brings back from the conversation.
+    btw_last: str | None = None
     # What this terminal is waiting on (the session host starting, a command
     # it has not finished): its own state, never synced from the host.
     waits: list[Wait] = field(default_factory=list)
@@ -2481,13 +2483,17 @@ class PromptLayout:
         from pcode.btw_view import ThreadView
 
         # A /btw thread in the conversation's place, while one is open.
-        self.btw = (
-            ThreadView(activity, transcript, shortcuts.label)
-            if shortcuts is not None
-            else ThreadView(activity, transcript)
-        )
+        self.btw = ThreadView(activity, transcript, self.key_name)
         # Whether the open menu made the layout taller than the measured rows.
         self.menu_overflowed = False
+
+    def key_name(self, key: str) -> str:
+        """Where the prompt's shortcut ``key`` sits now, after any /bind; or "unbound"."""
+        bindings = getattr(self.session, "command_bindings", None)
+        if bindings is not None:
+            return bindings.action_label(key)
+        shortcuts = self.shortcuts
+        return shortcuts.label(key) if shortcuts is not None else f"Ctrl+{key.upper()}"
 
     def size(self):
         size = self.session.app.output.get_size()
@@ -2775,7 +2781,7 @@ class PromptLayout:
         # Not before the thread is drawn, nor over the conversation it hides.
         if transcript is None or not getattr(transcript.output, "view_drawn", False):
             return []
-        from pcode.btw_view import current, next_thread
+        from pcode.btw_view import current, position
         from pcode.conversation_tree import excerpt
 
         thread = current(self.activity)
@@ -2789,29 +2795,30 @@ class PromptLayout:
             ("class:frame.border", "·"),
             ("class:btw.conversation", " ↓ conversation "),
         ]
-        key = self.shortcuts.label("q") if self.shortcuts is not None else "Ctrl+Q"
-        if next_thread(self.activity) is None:
-            # The last stop of Ctrl+Q's cycle is the conversation, as Esc is.
-            keys = [
-                ("class:btw.key", f" {key}"),
-                ("class:btw.conversation", " or "),
-                ("class:btw.key", "Esc"),
-                ("class:btw.conversation", " back "),
-            ]
-        else:
-            keys = [
-                ("class:btw.key", " Esc"),
-                ("class:btw.conversation", " back · "),
-                ("class:btw.key", key),
-                ("class:btw.conversation", " next thread "),
-            ]
 
         def cells(fragments) -> int:
             return sum(get_cwidth(text) for _, text in fragments)
 
-        # The keys are dropped first when the row is too narrow for both.
-        if cells(label) + cells(keys) + 4 > columns:
-            keys = []
+        # The keys as /bind left them: one unbound is not offered.
+        back_key, next_key = self.key_name("q"), self.key_name("\\")
+        number, count = position(self.activity)
+        if back_key == "unbound":
+            full_back = back = [("class:btw.key", " Esc")]
+        else:
+            back = [("class:btw.key", f" {back_key}")]
+            full_back = [*back, ("class:btw.conversation", " or "), ("class:btw.key", "Esc")]
+        if count > 1 and next_key != "unbound":
+            more = [("class:btw.conversation", " back · "), ("class:btw.key", next_key)]
+            where = f"({number}/{count}) "
+            full = [*full_back, *more, ("class:btw.conversation", f" next thread {where}")]
+            short = [*back, *more, ("class:btw.conversation", f" next {where}")]
+        else:
+            full = [*full_back, ("class:btw.conversation", " back ")]
+            short = [*back, ("class:btw.conversation", " back ")]
+        # A narrow row says it more briefly, then drops the keys before the label.
+        keys = next(
+            (keys for keys in (full, short) if cells(label) + cells(keys) + 4 <= columns), []
+        )
         fill = max(0, columns - 2 - cells(label) - cells(keys) - (1 if keys else 0))
         divider = [("class:frame.border", "──"), *label, ("class:frame.border", "─" * fill)]
         if keys:
@@ -3388,6 +3395,7 @@ def create_prompt(
     on_previous_session=None,
     on_copy_response=None,
     on_btw=None,
+    on_btw_next=None,
     on_btw_close=None,
     key_prefix: str | None = None,
     session_title: Callable[[], str] = lambda: "",
@@ -3408,6 +3416,7 @@ def create_prompt(
         on_previous_session=on_previous_session,
         on_copy_response=on_copy_response,
         on_btw=on_btw,
+        on_btw_next=on_btw_next,
         on_btw_close=on_btw_close,
     )
     keys, shortcuts = prompt_key_bindings(

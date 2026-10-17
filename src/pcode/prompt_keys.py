@@ -36,9 +36,10 @@ class PromptCallbacks:
     on_interrupt_submit: Callable[[str], None] | None = None
     on_previous_session: Callable | None = None
     on_copy_response: Callable | None = None
-    # The /btw thread view (`pcode.btw_view`): show a thread, or the next one;
-    # and go back to the conversation.
+    # The /btw thread view (`pcode.btw_view`): toggle between a thread and the
+    # conversation, show the next thread, and go back to the conversation.
     on_btw: Callable | None = None
+    on_btw_next: Callable | None = None
     on_btw_close: Callable | None = None
 
 
@@ -88,17 +89,31 @@ def _add_shortcuts(shortcuts: PrefixKeys, activity, transcript, callbacks: Promp
     on_previous_session = callbacks.on_previous_session
     on_copy_response = callbacks.on_copy_response
     on_btw = callbacks.on_btw
+    on_btw_next = callbacks.on_btw_next
 
-    def btw_label() -> str:
-        from pcode.btw_view import current, next_thread
+    def thread_shown() -> bool:
+        from pcode.btw_view import current
 
-        if not current(activity):
-            return "Open side threads (/btw)"
-        return "Next side thread" if next_thread(activity) else "Back to the conversation"
+        return bool(current(activity))
 
-    @shortcuts.add("q", btw_label, filter=on_btw is not None)
+    @shortcuts.add(
+        "q",
+        lambda: "Back to the conversation" if thread_shown() else "Open side threads (/btw)",
+        filter=on_btw is not None,
+    )
     def side_threads(event: KeyPressEvent) -> None:
         on_btw()
+        event.app.invalidate()
+
+    # Listed only while a thread is shown, where it acts. Ctrl+] would read
+    # better, but it is /group-tools by default.
+    @shortcuts.add(
+        "\\",
+        "Next side thread",
+        filter=Condition(lambda: on_btw_next is not None and thread_shown()),
+    )
+    def next_side_thread(event: KeyPressEvent) -> None:
+        on_btw_next()
         event.app.invalidate()
 
     @shortcuts.add("s", "Cycle send mode", filter=on_send_mode is not None)

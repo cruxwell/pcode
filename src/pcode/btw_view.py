@@ -45,23 +45,41 @@ def current(activity) -> list[Aside]:
 
 
 def open_thread(activity, thread: str) -> None:
-    activity.btw_thread = thread
+    activity.btw_thread = activity.btw_last = thread
 
 
 def close(activity) -> None:
     activity.btw_thread = None
 
 
-def next_thread(activity) -> str | None:
-    """Where Ctrl+Q goes: the newest thread, then each older one, then the conversation.
+def _ordered(activity) -> list[str]:
+    return [thread[0].thread for thread in threads(activity)]
 
-    None is the conversation; from there the cycle starts again at the newest.
+
+def reopen_thread(activity) -> str | None:
+    """Where Ctrl+Q goes from the conversation: the thread last shown, else the newest."""
+    ordered = _ordered(activity)
+    if activity.btw_last in ordered:
+        return activity.btw_last
+    return ordered[-1] if ordered else None
+
+
+def position(activity) -> tuple[int, int]:
+    """The thread on screen as (number, of), newest first; (0, n) while none is."""
+    ordered = _ordered(activity)[::-1]
+    shown = activity.btw_thread
+    return (ordered.index(shown) + 1 if shown in ordered else 0), len(ordered)
+
+
+def next_thread(activity) -> str | None:
+    """Where Ctrl+\\ goes: the next older thread, wrapping from the oldest to the newest.
+
+    None while no thread is shown, or the one shown is the only one.
     """
-    ordered = [thread[0].thread for thread in threads(activity)]
-    if activity.btw_thread not in ordered:
-        return ordered[-1] if ordered else None
-    index = ordered.index(activity.btw_thread)
-    return ordered[index - 1] if index else None
+    number, count = position(activity)
+    if not number or count < 2:
+        return None
+    return _ordered(activity)[::-1][number % count]
 
 
 def entry(*objects) -> Entry:
@@ -132,14 +150,15 @@ class ThreadView:
             (f" {excerpt(first.question)[:80]}", "pcode.btw"),
             (model, "pcode.muted"),
         )
-        key = self.key_label("q")
-        # Written once, so it says what Ctrl+Q does now; the divider above the
-        # editor keeps up as threads come and go.
-        cycle = (
-            f"{key} or Esc back to the conversation"
-            if next_thread(self.activity) is None
-            else f"{key} next thread · Esc back to the conversation"
-        )
+        # Written once, so it names no position and offers Ctrl+\ only if
+        # there was another thread then; the divider above the editor keeps up
+        # as threads come and go. A key /unbind took away is not offered.
+        back, after = self.key_label("q"), self.key_label("\\")
+        cycle = "Esc back to the conversation"
+        if back != "unbound":
+            cycle = f"{back} or {cycle}"
+        if position(self.activity)[1] > 1 and after != "unbound":
+            cycle += f" · {after} next thread"
         keys = f"Enter replies here · {cycle} · /merge /summarize /copy /links /stop"
         return [entry(title), entry(Text(keys, style="pcode.muted")), entry()]
 
