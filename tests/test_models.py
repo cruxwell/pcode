@@ -18,7 +18,6 @@ from pcode.models import (
 @pytest.fixture(autouse=True)
 def isolated_providers(monkeypatch, tmp_path):
     for name in (
-        "PCODE_ANTHROPIC_AUTH",
         "ANTHROPIC_API_KEY",
         "PCODE_LLM_PROXY",
         "CODEX_HOME",
@@ -82,12 +81,9 @@ def test_current_provider_stays_visible():
     assert active_providers("test:local") == set()
 
 
-@pytest.mark.parametrize("source", ["api-key", "oauth"])
-@pytest.mark.usefixtures("legacy_anthropic_auth")
-def test_anthropic_configuration(monkeypatch, source):
-    monkeypatch.setenv("PCODE_ANTHROPIC_AUTH", source)
-    if source == "api-key":
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-key")
+def test_anthropic_configuration(monkeypatch):
+    assert active_providers(None) == set()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-key")
     assert active_providers(None) == {"anthropic"}
 
 
@@ -111,23 +107,16 @@ def test_codex_presence_not_contents(monkeypatch, tmp_path):
     forbidden.assert_not_called()
 
 
-@pytest.mark.usefixtures("legacy_anthropic_auth")
 def test_proxy_does_not_limit_providers(monkeypatch):
     monkeypatch.setenv("PCODE_LLM_PROXY", "http://localhost:8080")
-    monkeypatch.setenv("PCODE_ANTHROPIC_AUTH", "oauth")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-key")
     assert active_providers("openai-codex:custom") == {"openai-codex", "anthropic"}
 
 
-def test_legacy_anthropic_routes_are_off_by_default(monkeypatch, tmp_path):
+def test_anthropic_model_without_a_key_stays_unresolved():
     from pcode.agent import resolve_model
 
-    monkeypatch.setenv("PCODE_ANTHROPIC_AUTH", "oauth")
-    credentials = tmp_path / "credentials.json"
-    credentials.write_text("{}")
-    monkeypatch.setenv("PCODE_CREDENTIALS_FILE", str(credentials))
-    # A stored sign-in offers no model.
-    assert active_providers(None) == set()
-    # Without a key an Anthropic model stays unresolved, not signed in.
+    # Unresolved, so the terminal opens and the first prompt explains the key.
     assert resolve_model("anthropic:claude-opus-5") == "anthropic:claude-opus-5"
 
 

@@ -71,7 +71,6 @@ bundled extensions, `web_research.py` and `session_history.py`, register plain
 | --- | --- | --- | --- |
 | `ClaudeModel` | `claude_sdk/model.py` | `AnthropicModel` | `claude:` models: requests go through a long-lived Claude Code CLI process instead of HTTP, reusing Pydantic AI's Anthropic message mapping. |
 | `ClaudeProvider` | `claude_sdk/model.py` | `AnthropicProvider` | Names responses `claude`; its client is never called. |
-| `AnthropicOAuthModel` | `anthropic_oauth.py` | `SubscriptionOAuthWire`, `AnthropicModel` | Anthropic over pcode's own stored subscription login. |
 | `ProxiedCodexProvider` | `llm_proxy.py` | `OpenAICodexProvider` | Codex through a proxy on a dedicated HTTP client, without touching process-wide HTTP settings. |
 | `DisplayFileSystemToolset` | `filesystem.py` | Harness `FileSystemToolset` | Snapshots a file under Harness's write lock to build before/after diffs. |
 | `JobShellToolset` | `shell_tools.py` | Harness `ShellToolset` | Replaces the persistent shell tool with `shell`, `wait_for_job`, `job_output`, `stop_job`, `list_jobs`. |

@@ -208,24 +208,10 @@ def test_reset_clears_known_settings_and_keeps_unknown_keys():
 
 
 def test_reset_names_the_settings_whose_loss_needs_action():
-    save_preferences(anthropic_auth="oauth", trusted_projects="/repo")
+    save_preferences(trusted_projects="/repo")
     message = configure(["reset"])
-    assert "/login" in message and "trusted again" in message
+    assert "trusted again" in message
     assert read_preferences() == {}
-
-
-def test_legacy_auth_settings_are_unlisted_but_still_work(monkeypatch):
-    assert "anthropic_auth" not in json.loads(configure(["list"]))
-    assert not [arg for arg in config_arguments() if "anthropic_auth" in arg]
-    with pytest.raises(ValueError) as error:
-        configure(["get", "unknown"])
-    assert "anthropic_auth" not in str(error.value)
-    configure(["set", "anthropic_auth", "api-key"])
-    assert configure(["get", "anthropic_auth"]) == "api-key"
-
-    monkeypatch.setattr("pcode.models.LEGACY_ANTHROPIC_AUTH", True)
-    assert "anthropic_auth" in json.loads(configure(["list"]))
-    assert "set anthropic_auth oauth" in config_arguments()
 
 
 def test_reset_without_a_file_writes_nothing():
@@ -238,7 +224,6 @@ def test_reset_without_a_file_writes_nothing():
     [
         ["set", "repo_context_walk_up", "true"],
         ["set", "repo_context_nested", "on"],
-        ["set", "anthropic_auth", "true"],
         ["set", "unknown", "value"],
         ["get", "unknown"],
         ["unset", "unknown"],
@@ -317,7 +302,7 @@ def test_invalid_saved_values_report_builtin_defaults():
     path.write_text(json.dumps({"theme": [], "effort": 42, "autocompact": True, "model": ""}))
     listed = json.loads(configure([]))
     assert listed == {key: SETTINGS[key].default for key in listed}
-    assert set(SETTINGS) - set(listed) == {"anthropic_auth"}
+    assert set(listed) == set(SETTINGS)
 
 
 def test_failed_atomic_write_keeps_old_file_and_cleans_temporary_file():

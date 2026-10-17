@@ -332,51 +332,6 @@ rotated tokens. The CLI credential loader remains the fallback when pcode's
 file is absent, including when `PCODE_LLM_PROXY` is configured. The stores stay
 separate and pcode never writes or deletes the CLI's file.
 
-### Anthropic subscription sign-in
-
-`src/pcode/anthropic_oauth.py` owns pcode's own `/login`: PKCE (S256)
-authorization code, loopback callback, token exchange/refresh, an owner-only
-credential file, and the `AnthropicOAuthModel` transport. `src/pcode/auth.py`
-holds the Claude Code wire markers (`SubscriptionOAuthWire`,
-`_subscription_oauth`).
-
-The flow parameters are not published API. They were verified against
-independent implementations rather than copied from a blog post, including
-[modelbridge's `oauth/claude.rs`](https://docs.rs/modelbridge/latest/src/modelbridge/oauth/claude.rs.html).
-
-They use the public Claude Code `client_id`, `https://claude.ai/oauth/authorize`
-with `code=true` and `code_challenge_method=S256`, and echo the PKCE verifier
-back as `state` (the callback and the token exchange both compare against it).
-Their differing loopback ports (53692 vs 54545) are the evidence that the
-redirect port is not fixed; pcode defaults to 54545 with
-`PCODE_OAUTH_CALLBACK_PORT` as the override. Use the current token endpoint,
-`https://platform.claude.com/v1/oauth/token`: `console.anthropic.com` is the
-older host still present in third-party code. Re-verify on upgrades;
-entitlements and server behavior can change without notice.
-
-Installed Anthropic SDK 1.6.0 provides a **public** async credentials hook, so no
-private client override is needed: `AsyncAnthropic(credentials=provider)` where
-`provider` is `async def (*, force_refresh: bool = False) -> AccessToken`
-(`anthropic/lib/credentials/`). Its `TokenCache` caches in memory, refreshes
-proactively with single-flight semantics, and `_should_retry` invalidates plus
-replays once on a 401 with `force_refresh=True`; `AccessTokenAuth` sets
-`Authorization: Bearer` and the `oauth-2025-04-20` beta per request. Passing
-`credentials=` also suppresses credential environment lookups, but `base_url`
-must still be passed explicitly so `ANTHROPIC_BASE_URL` cannot redirect
-subscription traffic. Recheck this hook on SDK upgrades; if it disappears,
-`custom_auth` plus `_validate_headers` is the private fallback. Blocking file and
-token-endpoint work runs in `asyncio.to_thread`, and cross-process refreshes are
-serialized with `filelock` (already used by preferences).
-
-`tests/test_anthropic_oauth.py` must keep: the authorization-request assertions,
-real loopback callback success, state-mismatch/error/wrong-path rejection,
-timeout and busy-port errors, stored-file validation, 0600 permissions, refresh
-with and without a rotated refresh token, single-flight refresh, failure messages
-that never contain bodies or tokens, and the end-to-end 401 → forced refresh →
-retry path through the real SDK. Tests must never open a browser, reach a real
-endpoint, or read the developer's credential file; `tests/conftest.py` redirects
-`XDG_CONFIG_HOME` and clears `PCODE_CREDENTIALS_FILE`.
-
 ## Verification workflow and known pitfalls
 
 1. Check the installed version against `uv.lock`.

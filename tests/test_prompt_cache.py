@@ -24,7 +24,6 @@ def test_cache_settings_only_on_anthropic(model, expected):
 
 
 def test_agent_requests_caching_without_sharing_mutable_defaults(tmp_path, monkeypatch):
-    monkeypatch.setenv("PCODE_ANTHROPIC_AUTH", "api-key")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     agent = create_agent("anthropic:claude-opus-5", tmp_path)
     assert agent.model_settings == ANTHROPIC_CACHE_SETTINGS
@@ -33,7 +32,6 @@ def test_agent_requests_caching_without_sharing_mutable_defaults(tmp_path, monke
 
 
 def test_effort_and_thinking_preserve_cache_settings(tmp_path, monkeypatch):
-    monkeypatch.setenv("PCODE_ANTHROPIC_AUTH", "api-key")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     agent = create_agent("anthropic:claude-opus-5", tmp_path)
     apply_effort(agent, "anthropic:claude-opus-5", "high")
@@ -92,7 +90,6 @@ def test_cache_control_reaches_the_wire(tmp_path, monkeypatch):
             ),
         )
 
-    monkeypatch.setenv("PCODE_ANTHROPIC_AUTH", "api-key")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     agent = create_agent("anthropic:claude-opus-5", Path(tmp_path))
     agent.model = AnthropicModel(

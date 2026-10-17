@@ -10,7 +10,6 @@ than trusting whichever provider happened to be fixed last.
 """
 
 import json
-import time
 from typing import get_args
 
 import pytest
@@ -18,7 +17,7 @@ from pydantic_ai.models import KnownModelName, infer_model
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 
 from pcode.agent import codex_model
-from pcode.anthropic_oauth import AnthropicOAuthModel, OAuthTokens, write_tokens
+from pcode.auth import anthropic_model
 
 # Construction-only placeholders: nothing here makes a request.
 PLACEHOLDER_ENV = (
@@ -85,9 +84,7 @@ def test_pcode_built_models_never_offer_search_without_deferral(placeholder_cred
     models = [codex_model(f"openai-codex:{name}") for name in openai_names]
     assert any(ToolSearchTool in m.profile["supported_native_tools"] for m in models)
 
-    credential = placeholder_credentials / "anthropic.json"
-    write_tokens(credential, OAuthTokens("a", "r", time.time() + 3600))
     anthropic_names = [name for name in known_names() if name.startswith("anthropic:")]
-    models += [AnthropicOAuthModel(name, path=credential) for name in anthropic_names]
+    models += [anthropic_model(name, "placeholder") for name in anthropic_names]
 
     assert [m.model_name for m in models if unpaired(m)] == []

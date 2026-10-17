@@ -597,13 +597,9 @@ class SessionController:
 
     def _model_commands(self) -> tuple[Command, ...]:
         """Commands for the model, its sign-ins, and the extensions it runs with."""
-        from pcode.models import LEGACY_ANTHROPIC_AUTH, login_sources, logout_sources
+        from pcode.models import login_sources, logout_sources
 
-        login_targets = (
-            "Anthropic, OpenAI Codex, or Claude Code (claude)"
-            if LEGACY_ANTHROPIC_AUTH
-            else "Claude Code or OpenAI Codex"
-        )
+        login_targets = "Claude Code or OpenAI Codex"
         return (
             Command(
                 "/model",

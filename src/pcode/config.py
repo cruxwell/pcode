@@ -13,7 +13,6 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
-from pcode import models
 from pcode.preferences import (
     MODEL_EFFORTS_KEY,
     SETTINGS,
@@ -47,22 +46,16 @@ IMMEDIATE_SETTINGS = frozenset(
     }
 )
 
-# Resetting clears the recorded /login choice and every per-repository extension
-# grant, so say so rather than leaving the next launch to re-prompt unexplained.
+# Resetting clears every per-repository extension grant, so say so rather than
+# leaving the next launch to re-prompt unexplained.
 _RESET_NOTICE = {
-    "anthropic_auth": "re-run /login to choose a credential",
     "trusted_projects": "repositories must be trusted again",
 }
 
 
-# Settings for the legacy Anthropic sign-in route: still readable and
-# settable, so an old preferences file keeps working, but not advertised.
-_LEGACY_KEYS = frozenset({"anthropic_auth"})
-
-
 def listed_settings() -> list[str]:
     """The settings `list` and completion show."""
-    return [key for key in SETTINGS if models.LEGACY_ANTHROPIC_AUTH or key not in _LEGACY_KEYS]
+    return list(SETTINGS)
 
 
 def _setting(key: str) -> Setting:

@@ -209,9 +209,6 @@ def catalog_key(model: str | Model, routes: dict[str, str] | None = None) -> str
         except ValueError:
             return None
         provider = endpoint.name
-        # OAuth subscription access is not the ordinary Anthropic API catalog.
-        if getattr(model, "_subscription_oauth", False):
-            return None
     provider = {"openai-responses": "openai", "openai-chat": "openai"}.get(provider, provider)
     # In particular, openai-codex NEVER maps to openai.
     return f"{provider}:{name}"
@@ -386,20 +383,11 @@ class ContextCatalog:
                         )
                         limits = parse_codex(data, model.model_name, now)
                     else:
-                        headers = {}
-                        if getattr(model, "_subscription_oauth", False):
-                            from pcode.auth import OAUTH_BETAS, oauth_user_agent
-
-                            headers = {
-                                "anthropic-beta": ",".join(sorted(OAUTH_BETAS)),
-                                "User-Agent": oauth_user_agent(),
-                                "x-app": "cli",
-                            }
                         # Raw JSON works with installed SDKs predating these fields.
                         data = await client.get(
                             f"/v1/models/{quote(model.model_name, safe='')}",
                             cast_to=dict[str, Any],
-                            options={**options, "headers": headers},
+                            options=options,
                         )
                         limits = parse_anthropic(data, now)
                 if limits is not None:

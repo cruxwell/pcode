@@ -22,8 +22,8 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   `claude auth login` for the login `claude:` models use ([details](providers.md#signing-in));
   `openai-codex` uses Pydantic AI's OAuth flow (no CLI required). `anthropic:` models use
   `ANTHROPIC_API_KEY` and have no sign-in.
-  `/logout [openai-codex]` removes pcode's stored Codex login (`/logout anthropic`
-  clears one left by an earlier version), leaving CLI credentials untouched. Both require an idle conversation.
+  `/logout [openai-codex]` removes pcode's stored Codex login, leaving CLI credentials
+  untouched. Both require an idle conversation.
 - `/model`: searchable model picker for configured providers. Keeps the conversation;
   chosen mid-run, it applies from the next request. To switch for one prompt only, start
   it with `$PROVIDER:MODEL` (optionally `+EFFORT`, as in `$openai:gpt-5+high fix this`)
@@ -567,8 +567,7 @@ The working window is the same one compaction uses. pcode takes it from the
 serving provider when it can (Codex's models endpoint or Anthropic's Models
 API), otherwise from an exact provider/model match on
 [Models.dev](https://models.dev/). Codex never borrows ordinary OpenAI API
-limits, and custom proxies or Anthropic subscription logins don't inherit
-direct-API limits. When separate input and total-context limits are known, the
+limits, and custom proxies don't inherit direct-API limits. When separate input and total-context limits are known, the
 smaller one is used. Public metadata is cached for 24 hours in
 `$XDG_CACHE_HOME/pcode/model-context-v1.json` (default `~/.cache/pcode/`).
 Unknown limits show `?`, so a first run offline can show `?`, and Codex needs a

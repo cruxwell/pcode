@@ -482,18 +482,10 @@ def resolve_model(model: str) -> Model | str:
         return claude_model(model)
     if not model.startswith("anthropic:"):
         return model
-    from pcode.anthropic_oauth import anthropic_auth_source
     from pcode.auth import anthropic_model
 
-    auth_source = anthropic_auth_source()
-    if auth_source == "oauth":
-        from pcode.anthropic_oauth import AnthropicOAuthModel
-
-        return AnthropicOAuthModel(model)
-    if auth_source == "api-key":
-        key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-        return anthropic_model(model, key) if key else model
-    raise ValueError("PCODE_ANTHROPIC_AUTH must be api-key or oauth.")
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    return anthropic_model(model, key) if key else model
 
 
 @dataclass(frozen=True)

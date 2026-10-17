@@ -203,7 +203,6 @@ def test_invalid_saved_prefix_falls_back_to_ctrl():
 
 
 def test_config_dir_override_moves_every_config_file(monkeypatch, tmp_path):
-    from pcode.anthropic_oauth import credentials_path
     from pcode.ext import user_extension_dir
     from pcode.mcp import config_path as mcp_config_path
 
@@ -211,7 +210,6 @@ def test_config_dir_override_moves_every_config_file(monkeypatch, tmp_path):
     monkeypatch.setenv("PCODE_CONFIG_DIR", str(instance))
 
     assert preferences_path() == instance / "preferences.json"
-    assert credentials_path() == instance / "credentials.json"
     assert mcp_config_path() == instance / "mcp.json"
     assert user_extension_dir() == instance / "extensions"
 

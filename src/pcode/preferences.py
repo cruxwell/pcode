@@ -246,7 +246,6 @@ def parse_key_prefix(value: str) -> tuple[str, ...]:
 
 
 SEND_MODES = ("steering", "queue", "interrupt")
-ANTHROPIC_AUTH_SOURCES = ("api-key", "oauth")
 
 # A user-level directory shared across workspaces, plus the workspace's own
 # `.agents/skills`, which the asset-root scan already covers but which belongs in
@@ -264,12 +263,6 @@ SETTINGS = {
         "steering",
         SEND_MODES,
         description="Enter mid-turn: steer the running turn, queue for after, or interrupt",
-    ),
-    # PCODE_ANTHROPIC_AUTH still wins over the saved choice.
-    "anthropic_auth": Setting(
-        None,
-        ANTHROPIC_AUTH_SOURCES,
-        description="Anthropic credential /login selected; env PCODE_ANTHROPIC_AUTH overrides",
     ),
     "repo_context_walk_up": Setting(
         "on",
@@ -807,7 +800,6 @@ USER_ONLY = frozenset(
         "extension_dirs",
         "extensions_off",
         "extensions_on",
-        "anthropic_auth",
         *(key for key in SETTINGS if key.startswith("email_")),
     }
 )

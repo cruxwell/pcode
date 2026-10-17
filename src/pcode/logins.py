@@ -9,10 +9,7 @@ loop runs the browser flow once the handler returns.
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import TYPE_CHECKING
-
-from pcode.preferences import load_preferences
 
 if TYPE_CHECKING:
     from pcode.controller import SessionController
@@ -29,8 +26,8 @@ class Logins:
         return self.controller.view
 
     def login(self, argument: str) -> None:
-        # Signing in stores a credential; it does not require the conversation to
-        # already be on Anthropic. A non-Anthropic session keeps its own model.
+        # Signing in does not require the conversation to already be on that
+        # provider; a session on another provider keeps its own model.
         from pcode.models import login_sources
 
         sources = login_sources()
@@ -45,44 +42,16 @@ class Logins:
 
         sources = logout_sources()
         source = argument.strip() or sources[0]
-        if source == "openai-codex":
-            self.controller.logout_requested = source
-            return
-        if source != "anthropic":
+        if source not in sources:
             self.view.note(f"Usage: /logout [{'|'.join(sources)}]")
             return
-        self.logout_anthropic()
-
-    def logout_anthropic(self) -> None:
-        from pcode.anthropic_oauth import credentials_path, delete_tokens
-        from pcode.auth import LoginError
-
-        try:
-            removed = delete_tokens(credentials_path())
-        except LoginError as error:
-            self.view.error(str(error))
-            return
-        if os.environ.get("PCODE_ANTHROPIC_AUTH", "").strip() == "oauth":
-            del os.environ["PCODE_ANTHROPIC_AUTH"]
-        # The stored sign-in is gone; a saved "oauth" choice would now resolve
-        # to a credential that no longer exists.
-        if load_preferences().get("anthropic_auth") == "oauth":
-            self.controller.forget_defaults("anthropic_auth")
-        if not removed:
-            self.view.note("No stored Anthropic login to remove.")
-            return
-        self.view.note(
-            "Removed pcode's stored Anthropic login. This conversation keeps its current "
-            "model until the token expires; use /login again or set ANTHROPIC_API_KEY."
-        )
+        self.controller.logout_requested = source
 
     async def perform_login(self, source: str | None) -> None:
         if source == "openai-codex":
             await self.login_codex()
-        elif source == "claude":
-            await self.login_claude()
         else:
-            await self.login_anthropic()
+            await self.login_claude()
 
     async def login_claude(self) -> None:
         """Run Claude Code's own sign-in for `claude:` models, with the CLI they run."""
@@ -163,38 +132,3 @@ class Logins:
             if removed
             else "No stored pcode OpenAI Codex login to remove. CLI login is unchanged."
         )
-
-    async def login_anthropic(self) -> None:
-        from pcode.anthropic_oauth import AnthropicOAuthModel, credentials_path, login
-        from pcode.auth import LoginError
-
-        controller = self.controller
-        self.view.note(
-            "Opening claude.ai to sign in with your Anthropic account. "
-            "If no browser opens, visit this URL (Ctrl+C cancels):"
-        )
-        try:
-            await login(notify=self.view.note)
-            # Only an Anthropic conversation adopts the new credential; a Codex
-            # or Claude Code session keeps its own model and provider.
-            if controller.model and controller.model.startswith("anthropic:"):
-                controller.runtime.agent.model = await asyncio.to_thread(
-                    AnthropicOAuthModel, controller.model
-                )
-            os.environ["PCODE_ANTHROPIC_AUTH"] = "oauth"
-            controller.persist_defaults(anthropic_auth="oauth")
-            self.view.note(
-                f"Signed in to Anthropic. Credentials are stored in {credentials_path()} "
-                "(owner-only) and refreshed automatically; /logout removes them."
-            )
-            self.view.note(
-                "Future launches use this login automatically. "
-                "Set PCODE_ANTHROPIC_AUTH=api-key to use ANTHROPIC_API_KEY instead."
-            )
-        except asyncio.CancelledError:
-            self.view.note("Anthropic sign-in cancelled.")
-            raise
-        except LoginError as error:
-            self.view.error(str(error))
-        except Exception:
-            self.view.error("Anthropic sign-in failed. No credential details were logged.")

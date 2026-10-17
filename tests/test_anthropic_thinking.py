@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import time
 from io import StringIO
 from types import SimpleNamespace
 
@@ -14,7 +13,6 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from rich.console import Console
 
-from pcode.anthropic_oauth import AnthropicOAuthModel, OAuthTokens, write_tokens
 from pcode.app import PreviewApp
 from pcode.live import AgentRuntime
 from pcode.preferences import apply_effort, apply_thinking, save_preferences
@@ -36,10 +34,7 @@ UPDATES = {"type": "adaptive", "display": "updates"}
         ("claude-opus-5-5", SUMMARIZED, UPDATES),
     ],
 )
-@pytest.mark.parametrize("auth", ["api-key", "oauth"])
-def test_thinking_stream_request_and_persistable_events(
-    name, expected, status_line, auth, tmp_path
-):
+def test_thinking_stream_request_and_persistable_events(name, expected, status_line, tmp_path):
     requests = []
     betas = []
 
@@ -143,15 +138,7 @@ def test_thinking_stream_request_and_persistable_events(
                     http_client=client,
                 )
             )
-            if auth == "oauth":
-                path = tmp_path / "credential.json"
-                write_tokens(
-                    path,
-                    OAuthTokens("synthetic-access", "synthetic-refresh", time.time() + 3600),
-                )
-                model = AnthropicOAuthModel(f"anthropic:{name}", path=path, http_client=client)
-            else:
-                model = AnthropicModel(name, provider=provider)
+            model = AnthropicModel(name, provider=provider)
             agent = Agent(model)
             runtime = AgentRuntime(agent)
             app = PreviewApp(
@@ -211,7 +198,6 @@ def test_startup_and_toggle_preserve_effort_and_replace_settings():
 
 def test_thinking_on_can_open_anthropic_without_credentials(monkeypatch, tmp_path):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("PCODE_ANTHROPIC_AUTH", raising=False)
     save_preferences(show_thinking="scrollback")
     app = PreviewApp(
         model="anthropic:claude-opus-4-7", workspace=tmp_path, console=Console(file=StringIO())

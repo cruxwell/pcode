@@ -154,7 +154,7 @@ def test_native_anthropic_preserves_auth_base_url_and_input_limit(tmp_path):
     asyncio.run(run())
 
 
-def test_public_api_limits_do_not_leak_to_proxies_or_subscription_oauth():
+def test_public_api_limits_do_not_leak_to_proxies():
     async def run():
         async with httpx2.AsyncClient() as client:
             direct = OpenAIResponsesModel(
@@ -174,8 +174,6 @@ def test_public_api_limits_do_not_leak_to_proxies_or_subscription_oauth():
             assert service.window(direct) == 922_000
             assert service.window(proxy) is None
             assert service.window(anthropic) == 200_000
-            anthropic._subscription_oauth = True
-            assert service.window(anthropic) is None
             assert catalog_key("openai-responses:example") == "openai:example"
             assert catalog_key("unknown:example") == "unknown:example"
             assert catalog_key("unqualified") is None
@@ -348,38 +346,6 @@ def test_codex_metadata_reuses_provider_refresh_and_replays_401():
                 ("POST", "auth.openai.com"),
                 ("GET", "chatgpt.com"),
             ]
-
-    asyncio.run(run())
-
-
-def test_oauth_metadata_preserves_headers_and_rotated_credential(tmp_path):
-    from pcode.anthropic_oauth import AnthropicOAuthModel, OAuthTokens, write_tokens
-    from pcode.auth import OAUTH_BETAS
-
-    path = tmp_path / "credential.json"
-
-    def credentials(token):
-        write_tokens(path, OAuthTokens(token, "synthetic-refresh", time.time() + 3600))
-
-    async def run():
-        requests = []
-
-        def handler(request):
-            requests.append(request)
-            assert request.url.path == "/v1/models/example"
-            assert request.headers["authorization"] == "Bearer rotated-synthetic"
-            assert "x-api-key" not in request.headers
-            assert set(request.headers["anthropic-beta"].split(",")) == set(OAUTH_BETAS)
-            return httpx2.Response(200, json={"max_input_tokens": 150_000, "max_tokens": 32_000})
-
-        credentials("initial-synthetic")
-        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
-            model = AnthropicOAuthModel("anthropic:example", path=path, http_client=client)
-            credentials("rotated-synthetic")
-            service = ContextCatalog()
-            await service.refresh_native(model)
-            assert len(requests) == 1
-            assert service.window(model) == 150_000
 
     asyncio.run(run())
 

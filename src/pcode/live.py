@@ -1290,8 +1290,8 @@ def error_message(error: Exception, *, unexpected: str | None = None) -> str:
     if name == "UserError" and "Codex CLI credentials" in str(error):
         return f"Provider login missing or invalid. {CODEX_LOGIN_HINT}"
     if name == "UserError" and "ANTHROPIC_API_KEY" in str(error):
-        # pcode defers the model check so /login stays reachable without a
-        # credential; the failure then surfaces here, on the first prompt.
+        # pcode defers the model check so the terminal opens without a key;
+        # the failure then surfaces here, on the first prompt.
         from pcode.models import anthropic_credential_hint
 
         return f"No Anthropic credential is selected. {anthropic_credential_hint()}"

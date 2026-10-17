@@ -174,11 +174,6 @@ def isolated_preferences(monkeypatch, tmp_path, request):
     # An always-on profile default plus a real PCODE_PROFILE_DIR would otherwise
     # have the suite writing captures into the developer's own directory.
     monkeypatch.delenv("PCODE_PROFILE_DIR", raising=False)
-    # A developer's real Anthropic sign-in must never be read, refreshed, or
-    # removed by the suite; XDG_CONFIG_HOME above already redirects the default.
-    monkeypatch.delenv("PCODE_CREDENTIALS_FILE", raising=False)
-    monkeypatch.delenv("PCODE_CONFIG_DIR", raising=False)
-    monkeypatch.delenv("PCODE_OAUTH_CALLBACK_PORT", raising=False)
     # A clean release build would otherwise ask PyPI from every startup test.
     monkeypatch.setenv("PCODE_NO_UPDATE_CHECK", "1")
     # skill_dirs defaults to ~/.agents/skills, so a developer's own skills would
@@ -268,12 +263,6 @@ def isolated_preferences(monkeypatch, tmp_path, request):
 @pytest.fixture
 def shipped_key_prefix():
     """Opt out of the suite's legacy chord default without replacing the real one."""
-
-
-@pytest.fixture
-def legacy_anthropic_auth(monkeypatch):
-    """Turn pcode's own Anthropic sign-in back on for one test."""
-    monkeypatch.setattr("pcode.models.LEGACY_ANTHROPIC_AUTH", True)
 
 
 @pytest.fixture(autouse=True)
