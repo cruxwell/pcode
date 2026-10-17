@@ -23,7 +23,7 @@ from pydantic_ai import (
     ThinkingPartDelta,
     ToolReturn,
 )
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -118,6 +118,11 @@ class TurnModel:
     settings: dict | None
     conversation_id: str
 
+    @property
+    def borrowed(self) -> bool:
+        """Whether this turn runs on something other than the conversation's agent."""
+        return self.model is not None or self.settings is not None
+
     @asynccontextmanager
     async def applied(self, agent):
         settings = self.model.settings if self.model is not None else self.settings
@@ -126,6 +131,30 @@ class TurnModel:
             return
         with agent.override(model_settings=settings):
             yield
+
+
+class FollowAgent(AbstractCapability):
+    """Send each request of a run to the runtime's current agent's model.
+
+    `/model` replaces the agent while a turn runs, and the turn's next request
+    goes to the new model, as steering reaches it. The request in flight keeps
+    its model. Pydantic AI evaluates the selector before every request step and
+    enters a newly selected model for the rest of the run. Its settings follow
+    through `AgentRuntime._following`. Only the model and settings follow: the
+    run keeps the agent it started with for tools, instructions and sub-agents,
+    which pcode builds the same way for every model.
+    """
+
+    def __init__(self, agent: Callable[[], Agent], context: TurnContext) -> None:
+        self.agent = agent
+        self.context = context
+
+    def get_model(self):
+        return lambda ctx: self.agent().model
+
+    async def before_model_request(self, ctx, request_context):
+        self.context.model = request_context.model
+        return request_context
 
 
 class AgentRuntime:
@@ -188,7 +217,7 @@ class AgentRuntime:
             if isinstance(capability, Planning):
                 capability.store_resolver = lambda ctx: self.plan_store
 
-    def _persist_child_runs(self) -> None:
+    def _persist_child_runs(self, agent: Agent) -> None:
         """Record delegated runs in the current session's store.
 
         Sub-agents receive `shared_capabilities`, not the per-run capabilities the
@@ -199,7 +228,7 @@ class AgentRuntime:
         shared capability serves every sub-agent, and `parent_run_id` already
         marks a run as delegated.
         """
-        for capability in self.agent.root_capability.capabilities:
+        for capability in agent.root_capability.capabilities:
             if not isinstance(capability, SubAgents):
                 continue
             shared = [
@@ -1037,7 +1066,7 @@ class AgentRuntime:
         except BaseException as error:
             resend_blocked = tools_started and context.checkpoint.messages is None
             # The model the failed request went to, which a `$MODEL` turn chose.
-            ran_on = chosen.model.model if chosen and chosen.model else self.agent.model
+            ran_on = context.model or self.agent.model
             if saved:
                 self._save_totals(saved.info)
             self.inspections.settle(
@@ -1167,6 +1196,18 @@ class AgentRuntime:
         for problem in attached.problems:
             self.warning_notice(f"Image not attached: {problem}.")
 
+    @asynccontextmanager
+    async def _following(self, agent: Agent):
+        """Layer the current agent's settings on each request, as `FollowAgent` does its model.
+
+        A run otherwise captures its agent's settings when it starts, so a
+        mid-turn `/model` or `/effort` would reach the next turn only. Read per
+        request, the new agent's settings replace the old ones outright: none of
+        the old model's keys carry over to the new one.
+        """
+        with agent.override(model_settings=lambda ctx: self.agent.model_settings):
+            yield
+
     def _consume_steering(self, run_id: str) -> list[str]:
         messages = self.take_steering()
         if self.session:
@@ -1207,10 +1248,18 @@ class AgentRuntime:
             # decide what the conversation keeps from then on.
             # Installed whatever `auto_compact` says; it checks that per request.
             + ([AutoCompaction(self, context)] if chosen.model is None else [])
+            # A borrowed turn keeps its model and settings to the end. Pydantic
+            # AI refuses to resume a suspended response under a model selector,
+            # so a turn continuing one stays on its model too.
+            + (
+                []
+                if chosen.borrowed or ends_suspended(context.messages())
+                else [FollowAgent(lambda: self.agent, context)]
+            )
         )
 
-    async def _translator(self, context: TurnContext) -> EventTranslator:
-        capabilities = self.agent.root_capability.capabilities
+    async def _translator(self, context: TurnContext, agent: Agent) -> EventTranslator:
+        capabilities = agent.root_capability.capabilities
         plan_items = [item.model_dump(mode="json") for item in await context.plan_store.get_items()]
         plan_preview = (
             StreamingPlanPreview() if any(isinstance(c, Planning) for c in capabilities) else None
@@ -1225,27 +1274,30 @@ class AgentRuntime:
     async def _stream(
         self, prompt: str | None, context: TurnContext, chosen: TurnModel | None = None
     ) -> AsyncIterator[Event]:
+        context.model = None
         await self.refresh_context()
-        self._persist_child_runs()
-        translator = await self._translator(context)
+        # One agent for the whole entry: a `/model` landing at one of these
+        # awaits must not set up one agent and run another.
+        agent = self.agent
+        self._persist_child_runs(agent)
+        translator = await self._translator(context, agent)
         chosen = chosen or TurnModel(None, None, self.conversation_id)
-        content = await self._with_images(
-            prompt, chosen.model.model if chosen.model is not None else self.agent.model
-        )
+        context.model = chosen.model.model if chosen.model is not None else agent.model
+        content = await self._with_images(prompt, context.model)
         # Unlike run_stream(), this completes the tool loop even when the model
         # sends explanatory text alongside its tool calls.
         # Enter the agent too: a run alone does not own a statically supplied
         # model's HTTP client. Exit closes it on success, failure, or cancellation.
         async with (
-            chosen.applied(self.agent),
-            self.agent,
+            chosen.applied(agent) if chosen.borrowed else self._following(agent),
+            agent,
             chosen.model.model if chosen.model is not None else nullcontext(),
             worker_toolsets([self.mcp.live()]),
             enabled_servers(self.mcp.servers, self.mcp.unavailable),
-            self.agent.run_stream_events(
+            agent.run_stream_events(
                 content,
                 message_history=context.messages(),
-                workspace=self._run_workspace(self.agent),
+                workspace=self._run_workspace(agent),
                 toolsets=[self.mcp.live()],
                 conversation_id=chosen.conversation_id,
                 run_id=context.run_id,
@@ -1260,6 +1312,12 @@ class AgentRuntime:
                 async with aclosing(translator.translate(event)) as outputs:
                     async for out in outputs:
                         yield out
+
+
+def ends_suspended(history: list[ModelMessage]) -> bool:
+    """Whether `history` ends in a response a provider paused, which the next run resumes."""
+    last = history[-1] if history else None
+    return isinstance(last, ModelResponse) and last.state == "suspended"
 
 
 CANCELLED_MARKER = "[Request interrupted by user]"

@@ -160,7 +160,7 @@ def test_real_keybindings_preserve_draft_and_cursor(busy):
         ("anthropic:claude-opus-4-5", "anthropic_effort"),
     ],
 )
-def test_effort_changes_apply_to_next_turn_not_next_tool_step(name, key):
+def test_effort_changes_apply_from_the_running_turns_next_request(name, key):
     requests = []
 
     async def model(messages, info):
@@ -192,7 +192,8 @@ def test_effort_changes_apply_to_next_turn_not_next_tool_step(name, key):
         _ = [event async for event in runtime.stream("second")]
 
     asyncio.run(run())
-    assert [request[key] for request in requests] == ["low", "low", "medium"]
+    # The request in flight keeps its effort; the tool step after it has the new one.
+    assert [request[key] for request in requests] == ["low", "medium", "medium"]
     runtime.reset()
     assert app.current_effort() == "medium"
 

@@ -298,11 +298,7 @@ def tool_lines(screen):
     lines = screen.splitlines()
     status = next(i for i, line in enumerate(lines) if line.startswith(SPINNER_ROW))
     end = next(i for i, line in enumerate(lines[status:], status) if line.startswith(("├", "└")))
-    return [
-        line.strip("│ ")
-        for line in lines[status + 1 : end]
-        if line.startswith("│    ") and line[5:].startswith(TOOL_MARKS)
-    ]
+    return [line.strip("│ ") for line in lines[status + 1 : end] if line[1:].startswith(TOOL_MARKS)]
 
 
 def without_status_row(text):

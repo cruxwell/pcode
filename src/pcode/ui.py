@@ -603,9 +603,6 @@ THOUGHT_ICON = "∴"
 # Where the editor box's band sets a thought's later rows and the tool rows:
 # under the thought's text, a level in from the column of icons.
 BAND_INDENT = " " * (cell_len(THOUGHT_ICON) + 1)
-# The band's tool rows: a level further in than the thought's text, so each
-# reads as a step the thought took rather than more of its prose.
-TOOL_INDENT = BAND_INDENT * 2
 # The tool row's stand-ins for common verbs (`tool_display.LABELS`), so it
 # says `$ make test` rather than `Run shell · make test`. A tool not listed
 # keeps its verb spelled out. Each is one cell wide, ambiguous-width or not.
@@ -2838,13 +2835,11 @@ class PromptLayout:
             if budget < 1:
                 return []
             limit = min(limit, budget)
-        rows = self.activity.tool_rows(
-            self.status_line(),
-            self.band_width() - len(TOOL_INDENT),
-            limit,
-            self.tool_spinner_frame(),
+        # Flush with the thought's marker, the task icons and the prompt: the
+        # well's shade, not an indent, sets them apart from the thought.
+        return self.activity.tool_rows(
+            self.status_line(), self.band_width(), limit, self.tool_spinner_frame()
         )
-        return [[("", TOOL_INDENT), *row] for row in rows]
 
     def band_width(self) -> int:
         """Cells across a band row: inside the box's sides, in from them like the
@@ -4467,7 +4462,7 @@ class Transcript:
         )
         self.note(
             f"{key('l')} choose model · {key('n')} raise effort · {key('p')} lower effort "
-            "(next turn)"
+            "(next request)"
         )
         self.note(f"{previous} back to the previous session (/switch -)")
         self.note(f"{key('y')} copy the draft · Ctrl+C discard input · Ctrl+D exit on empty input")

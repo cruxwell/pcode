@@ -417,16 +417,14 @@ def test_an_error_elsewhere_during_the_turn_is_shown_but_does_not_fail_it(tmp_pa
     asyncio.run(run())
 
 
-def gate_model_switch(host) -> asyncio.Event:
+def gate_turn_start(host) -> asyncio.Event:
     """Hold each taken message between leaving the queue and starting its turn."""
     gate = asyncio.Event()
 
-    async def slow_switch():
+    async def slow_reload():
         await gate.wait()
-        host.controller.pending_model = None
 
-    host.controller.apply_pending_model = slow_switch
-    host.controller.pending_model = "function:script"
+    host.controller.apply_pending_reload = slow_reload
     return gate
 
 
@@ -435,7 +433,7 @@ def test_a_message_taken_but_not_started_is_not_mistaken_for_this_one(tmp_path, 
         script = Script()
         host = await start_host("aaaa1111", tmp_path, script)
         try:
-            gate = gate_model_switch(host)
+            gate = gate_turn_start(host)
             terminal, _, _ = await attach(host)
             terminal.submit("hang status", "queue")
             # Out of the queue, not yet a turn: nothing queued says it is there.
@@ -461,7 +459,7 @@ def test_the_host_going_idle_for_a_moment_does_not_drop_a_taken_message(tmp_path
     async def run():
         host = await start_host("aaaa1111", tmp_path, Script())
         try:
-            gate = gate_model_switch(host)
+            gate = gate_turn_start(host)
             printed = Printed()
             sending = asyncio.create_task(printed.send(host, "mine"))
             await until(lambda: host.activity.busy and not host.activity.queued)

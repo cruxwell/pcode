@@ -518,8 +518,8 @@ class SessionController:
         # The runtime is built once the event loop is up (see initialize_runtime).
         self._needs_runtime = False
         self._loop: asyncio.AbstractEventLoop | None = None
-        # A model chosen mid-run, adopted before the next request.
-        self.pending_model: str | None = None
+        # The `$MODEL`/`+EFFORT` target of the running turn, if it has one.
+        self.borrowed_turn = None
         # User extensions load with the runtime; their commands register once it exists.
         self.extensions = None
         self.extension_command_names: list[str] = []
@@ -816,7 +816,6 @@ class SessionController:
                     arguments[command.name] = []
         return {
             "model": self.model,
-            "pending_model": self.pending_model,
             "effort": self.current_effort(),
             "context": self.context_label(),
             "workspace": str(self.workspace),
@@ -1328,10 +1327,6 @@ class SessionController:
                     owner.dropped()
                 continue
             self.prompts.taken()
-            # A model chosen mid-run takes effect here, before the request
-            # that follows it is sent.
-            if self.pending_model is not None:
-                await self.apply_pending_model()
             await self.apply_pending_reload()
             if owner is not None:
                 # Everything shown from here to `after_turn` is this message's.
@@ -1384,10 +1379,6 @@ class SessionController:
             if self.closing():
                 return
             self.turn_ended(success)
-            # Adopt it as soon as the turn ends so the footer and /status
-            # agree with what the next request will use.
-            if self.pending_model is not None:
-                await self.apply_pending_model()
             await self.apply_pending_reload()
             self.view.session_changed()
             await self.view.after_turn()
@@ -1460,6 +1451,8 @@ class SessionController:
         failure = None
         cancelled = False
         chosen, prompt = (None, text) if resend or wake else prompt_target(text)
+        # A `/model` during this turn says which model the rest of it is on.
+        self.borrowed_turn = chosen
         source = (
             self.stream_on(chosen, prompt)
             if chosen is not None
@@ -1496,6 +1489,7 @@ class SessionController:
             # A turn that ended before its first event opened the session all the same.
             if getattr(runtime, "session", None) is not None:
                 self.start_naming(first_prompt)
+            self.borrowed_turn = None
             self.view.turn_ended()
             # MCP work started beside the turn may outlast it.
             self.activity.status = self.mcp_status if self.mcp_task is not None else ""
@@ -2566,37 +2560,28 @@ class SessionController:
             self.view.warning(notice)
 
     async def switch_model(self, model: str) -> None:
-        """Adopt a model now, or record it for the next request while working."""
-        if self.activity.busy or self.activity.queued_prompts:
-            # Replacing the agent mid-run would change the model of a request
-            # that is already in flight. Defer like /effort instead of refusing.
-            if model == self.model:
-                self.pending_model = None
-                self.persist_defaults(model=model)
-                self.view.note(f"Already using {model}.")
-                return
-            self.pending_model = model
-            self.view.note(
-                f"Model: {model} (next request). This turn finishes on {self.model or 'preview'}."
-            )
-            return
-        await self.activate_model(model)
+        """Adopt a model now, even mid-turn: the turn's next request goes to it.
 
-    async def apply_pending_model(self) -> None:
-        """Adopt a model chosen mid-run, now that no request is in flight."""
-        model, self.pending_model = self.pending_model, None
-        if model is None:
-            return
-        try:
-            await self.activate_model(model)
-        except Exception as error:
-            self.view.error(error_message(error), title="Model unchanged")
+        A running turn follows the runtime's agent between requests (see
+        `live.FollowAgent`), so the switch lands where steering does. The
+        request in flight keeps its model; a `$MODEL` or `+EFFORT` turn keeps
+        its own to the end.
+        """
+        # Read before the agent is built: the turn can end, or another start,
+        # while it is.
+        previous, running, borrowed = self.model, self.turn_running(), self.borrowed_turn
+        await self.activate_model(model)
+        if running and self.turn_running() and self.model != previous:
+            self.view.note(
+                f"This turn stays on {borrowed.model or previous}; the next one uses {model}."
+                if borrowed is not None
+                else f"The request in flight finishes on {previous}; the next one uses {model}."
+            )
 
     async def activate_model(self, model: str) -> None:
         from pcode.agent import create_agent
         from pcode.live import AgentRuntime
 
-        self.pending_model = None
         recovering = self.startup_error is not None
         if model == self.model and not recovering:
             self.persist_defaults(model=model)
@@ -2678,7 +2663,8 @@ class SessionController:
         if gated and value != "default":
             self.view.flash(effort_unavailable(self.model))
             return
-        # Replace rather than mutate: an active run keeps its captured settings.
+        # Replace rather than mutate: a request already sent keeps its settings,
+        # and a running turn's next request reads the new ones.
         apply_effort(agent, self.model, value)
         self.persist_defaults(model=self.model)
         # Per model: raising effort on one model must not raise it on the next.
@@ -2689,7 +2675,7 @@ class SessionController:
         if gated:
             self.view.flash(f"Cleared the saved effort; {self.model} has no effort control.")
             return
-        self.view.flash(f"Effort: {self.current_effort()} (next turn).")
+        self.view.flash(f"Effort: {self.current_effort()} (next request).")
 
     def adjust_effort(self, direction: int) -> None:
         levels = ("low", "medium", "high", "xhigh")

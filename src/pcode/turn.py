@@ -40,6 +40,9 @@ class TurnContext:
     # Auto-compaction summarizes in its own run, whose usage reaches neither the
     # turn's result nor `after_model_request`; the turn adds it to session totals.
     compaction_usage: RunUsage = field(default_factory=RunUsage)
+    # The model the turn's latest request went to, which a mid-turn `/model`
+    # changes; a failure is reported against it.
+    model: object = None
 
     def messages(self) -> list[ModelMessage]:
         """What to send: settled history plus anything queued behind it."""

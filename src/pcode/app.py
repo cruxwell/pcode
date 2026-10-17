@@ -496,7 +496,6 @@ class PreviewApp:
     session_dir = _controller_attribute("session_dir")
     save_sessions = _controller_attribute("save_sessions")
     resuming = _controller_attribute("resuming")
-    pending_model = _controller_attribute("pending_model")
     extensions = _controller_attribute("extensions")
     asides = _controller_attribute("asides")
     running = _controller_attribute("running")
@@ -940,11 +939,11 @@ class PreviewApp:
             wanted = thinking_settings(model, None, argument)
             display = wanted.get("anthropic_thinking", {}).get("display")
             if display == "updates":
-                lines.append("Asks for progress updates between tool calls from the next turn.")
+                lines.append("Asks for progress updates between tool calls from the next request.")
             elif wanted:
-                lines.append("Asks for thinking summaries from the next turn.")
+                lines.append("Asks for thinking summaries from the next request.")
             else:
-                lines.append("Asks for no readable thinking from the next turn.")
+                lines.append("Asks for no readable thinking from the next request.")
             if provider == "anthropic":
                 # Only scrollback turns thinking on, and only where it was off.
                 if wanted and not ANTHROPIC_THINKS_BY_DEFAULT.search(model):
@@ -2243,9 +2242,6 @@ class PreviewApp:
         width = get_app().output.get_size().columns
         location = plain(location_label(self.workspace, self.branch), limit=None)
         model = self.model if self.model else "preview"
-        if self.pending_model:
-            # The running turn keeps its model; show what the next one will use.
-            model += f" → {self.pending_model}"
         if self.model:
             model += f" ({self.current_effort()})"
         # Read left to right and cut from the right: the path leads, then send

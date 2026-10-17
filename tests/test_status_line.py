@@ -124,16 +124,6 @@ def test_footer_outside_home_and_busy(tmp_path, monkeypatch):
     assert "Ctrl" not in text
 
 
-def test_footer_shows_a_model_chosen_during_a_run(tmp_path, monkeypatch):
-    monkeypatch.setattr("pcode.context_usage.context_window", lambda model: 400_000)
-    app, _ = make_app(tmp_path, monkeypatch, model="openai:gpt-5", width=200)
-    app.activity.busy = True
-    app.pending_model = "anthropic:claude-opus-5"
-    text = fragment_list_to_text(app.toolbar())
-    # The running turn keeps its model; the arrow names what the next one uses.
-    assert "openai:gpt-5 → anthropic:claude-opus-5 (default)" in text
-
-
 @pytest.mark.parametrize("width", [20, 40, 60, 100])
 def test_long_unicode_path_stays_one_row(tmp_path, monkeypatch, width):
     app, _ = make_app(tmp_path / ("界" * 80 + "\npath"), monkeypatch, width=width)

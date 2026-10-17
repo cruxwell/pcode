@@ -237,7 +237,6 @@ class RemoteController:
         self.arguments: dict[str, list[str]] = {}
         self.state: dict = {}
         self.model: str | None = None
-        self.pending_model: str | None = None
         self.workspace = Path.cwd()
         self.session_dir: Path | None = None
         self.save_sessions = True
@@ -387,7 +386,6 @@ class RemoteController:
     def apply_state(self, state: dict) -> None:
         self.state = state
         self.model = state.get("model")
-        self.pending_model = state.get("pending_model")
         self.workspace = Path(state.get("workspace") or self.workspace)
         self.startup_pending = bool(state.get("startup_pending"))
         error = state.get("startup_error")

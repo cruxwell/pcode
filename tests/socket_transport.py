@@ -25,7 +25,6 @@ TRANSPORT_ENV = "PCODE_TEST_TRANSPORT"
 # host's controller takes it over, as `pcode.host` takes it from its arguments.
 SETTINGS = (
     "model",
-    "pending_model",
     "workspace",
     "session_dir",
     "save_sessions",

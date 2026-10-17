@@ -25,7 +25,7 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   `/logout [openai-codex]` removes pcode's stored Codex login, leaving CLI credentials
   untouched. Both require an idle conversation.
 - `/model`: searchable model picker for configured providers. Keeps the conversation;
-  chosen mid-run, it applies from the next request. To switch for one prompt only, start
+  chosen mid-run, the running turn's next request already uses it. To switch for one prompt only, start
   it with `$PROVIDER:MODEL` (optionally `+EFFORT`, as in `$openai:gpt-5+high fix this`)
   or a bare `+EFFORT` word; that turn runs there and the next prompt is back on the
   conversation's model. `$` completes model names as it does in `/btw`. A `$` word
@@ -278,7 +278,7 @@ it is open. Enter, the arrows, Ctrl+J, Ctrl+C, and Ctrl+D never change.
 | Alt+Enter | Newline in Emacs mode only (Esc followed by Enter also works) |
 | Tab / arrows | Browse completion; arrows also navigate input/history |
 | Ctrl+L | Choose a model (keeps the conversation; applies from the next request). While a completion menu or a grey history suggestion is showing, Ctrl+L accepts it instead, like Tab or → |
-| Ctrl+N / Ctrl+P | Raise / lower reasoning effort for the next turn |
+| Ctrl+N / Ctrl+P | Raise / lower reasoning effort from the next request |
 | Ctrl+^ | Back to the session this terminal showed before (`/switch -`) |
 | Ctrl+O | Show/hide the [activity panel](#activity-panel): thinking, tool calls, tasks and running commands (saves the default) |
 | Ctrl+T | Choose where thinking shows: `o` off, `a` activity panel, `b` scrollback (saves the default) |
@@ -345,8 +345,8 @@ glance:
 ┌─ ⠋ Run shell ───────────────────────────── Tasks 2/4 · ✓ 3 tools · 4s ─┐
 │∴ Before running the suite, make sure nothing else reads discount       │
 │  as a flat amount.                                                     │
-│    √ ✎ acme/orders.py · +1 −1                                          │
-│    ◜ $ python3 -m unittest discover tests                              │
+│√ ✎ acme/orders.py · +1 −1                                              │
+│◜ $ python3 -m unittest discover tests                                  │
 ├────────────────────────────────────────────────────────────────────────┤
 │✔ Find where the discount is applied                                    │
 │◜ Run the test suite                                                    │
@@ -362,16 +362,16 @@ glance:
 - **The thought**, marked `∴`, is faded and in italics. Its later rows indent
   under its text, so the `∴` stands alone in the column the spinner, the task
   icons and the prompt share.
-- **Tool calls** indent a level past the thought's text, one row each: why,
-  then what.
+- **Tool calls** follow, one row each, their marks in that same left column:
+  why, then what.
 - **Tasks** sit below a divider, with their status icons in that left column.
 
 With the default `frame_style shaded`, there are no lines, just three shades:
 the status row and the thought share a slightly darker header, the tool calls
 sit a step darker still, like a terminal inset under the prose about it, and
 the tasks and your draft keep the box's own shade. With `frame_style borders`
-the indent tells thought and calls apart, and a divider line sets off the
-tasks.
+the marks and the thought's italics tell thought and calls apart, and a
+divider line sets off the tasks.
 
 `/config set attach_activity off` moves the thought and tool rows back above
 the editor box, where the status row is the line under them; they still show
@@ -694,8 +694,8 @@ Set the default with `pcode config set send_mode steering` (or `queue` /
 Input sent while idle starts a normal turn in every mode.
 
 Slash commands run separately from the model, so help, inspection, theme,
-context, and effort commands work while it's busy. `/model` also works and
-applies from the next request. `/new`, `/resume`, `/login`, and `/logout` need
+context, and effort commands work while it's busy. `/model` and `/effort` also work and
+apply from the running turn's next request. `/new`, `/resume`, `/login`, and `/logout` need
 an idle conversation: cancel or wait, then retry.
 
 Cancelling:
