@@ -149,12 +149,21 @@ def test_a_running_turn_waits_behind_the_thread_and_lands_on_return(pane, releas
     # Enter replies to the thread rather than steering the running turn.
     pane("send-keys", "-t", "preview:0.0", "while it runs?", "Enter")
     capture(pane, "Echo: while it runs?", running=True)
+    # A divider under the thread points up to it and down to the
+    # conversation, with the key back.
+    screen = capture(pane, "↓ conversation", running=True)
+    divider = screen.splitlines()[row(screen, "↓ conversation")]
+    assert "↑ btw: SIDE_QUESTION?" in divider and "Esc back · Ctrl+Q next thread" in divider
     release()
-    # The turn finishes behind the thread, which keeps the screen.
-    capture(pane, "SIDE_ANSWER")
-    assert "MAIN_TURN_DONE" not in history(pane)
-    pane("send-keys", "-t", "preview:0.0", "Escape")
+    # The turn finishes behind the thread, which keeps the screen; its
+    # newest output shows under the divider meanwhile.
     screen = capture(pane, "MAIN_TURN_DONE")
+    assert row(screen, "Echo: while it runs?") < row(screen, "↓ conversation")
+    assert row(screen, "↓ conversation") < row(screen, "MAIN_TURN_DONE")
+    assert "do the work" not in history(pane)
+    pane("send-keys", "-t", "preview:0.0", "Escape")
+    screen = capture(pane, "do the work")
+    assert "↓ conversation" not in screen
     assert row(screen, "do the work") < row(screen, "MAIN_TURN_DONE")
     # The reply went to the thread: neither steered nor queued for the turn.
     assert "SIDE_ANSWER" not in history(pane)

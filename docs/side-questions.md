@@ -73,7 +73,20 @@ it with the mouse wheel or your terminal's own keys, and select and copy it
 without any frame coming along.
 
 A running turn carries on while you read. Its spinner stays on the editor's
-border, but what it writes waits until you go back, and lands then in order.
+border, and what it writes lands in the conversation, in order, when you go
+back. Meanwhile a divider under the thread points up to it and down to the
+conversation, with the keys back (`Esc`) and to the next thread, and the
+conversation's newest three lines stream in beneath it, above the turn's own
+tool rows:
+
+```text
+because one token of lookahead decides every rule.
+── ↑ btw: why is the parser LL(1)? · ↓ conversation ──── Esc back · Ctrl+Q next thread ─
+  Updated parser.py: the lookahead table now comes from the grammar, so a new
+  rule needs no edit here. Running the parser tests next to check the error
+  messages still name the right token.
+```
+
 Notices meant for the conversation flash above the editor instead, and so do
 its warnings and errors, which are in the conversation too when you go back.
 A `!command` or a command for the conversation, such as `/help`, takes you

@@ -146,6 +146,83 @@ def test_notes_while_a_thread_is_shown_flash_instead(monkeypatch):
     assert screen.activity.notice == ""
 
 
+def test_the_conversations_newest_rows_stay_in_reach_under_the_view(monkeypatch):
+    from pcode.ui import ESCAPES
+
+    def plain(rows):
+        return [ESCAPES.sub("", row).strip() for row in rows]
+
+    screen = Screen(monkeypatch)
+    transcript, output = screen.transcript, screen.output
+    transcript.message("OLD")
+    screen.flush()
+    assert output.held_tail(80, 3) == []  # Nothing hidden, nothing to show.
+    output.open_view(lambda: [])
+    screen.flush()
+    for n in range(4):
+        transcript.message(f"HELD_{n}")
+    # Blank separators never take a row; the newest three do.
+    assert plain(output.held_tail(80, 3)) == ["HELD_1", "HELD_2", "HELD_3"]
+    # Text still streaming, not yet a block, is the newest of all.
+    output.delta("half a sente")
+    assert plain(output.held_tail(80, 3)) == ["HELD_2", "HELD_3", "half a sente"]
+    # A long line still streaming wraps, and its newest words are the ones shown.
+    output.delta(" ".join(f"word{n}" for n in range(60)))
+    newest = plain(output.held_tail(40, 3))
+    assert len(newest) == 3 and newest[-1].endswith("word59")
+    assert all(len(row) <= 40 for row in newest)
+    output.close_view(transcript.replay)
+    assert output.held_tail(80, 3) == []
+
+
+def test_reopening_shows_only_what_came_since(monkeypatch):
+    from pcode.ui import ESCAPES
+
+    screen = Screen(monkeypatch)
+    transcript, output = screen.transcript, screen.output
+    output.open_view(lambda: [])
+    screen.flush()
+    transcript.message("FIRST_VISIT")
+    assert "FIRST_VISIT" in ESCAPES.sub("", "".join(output.held_tail(80, 3)))
+    output.close_view(transcript.replay)
+    screen.flush()
+    output.open_view(lambda: [])
+    screen.flush()
+    # The same count of held writes as last time, but none of them.
+    transcript.message("SECOND_VISIT")
+    shown = ESCAPES.sub("", "".join(output.held_tail(80, 3)))
+    assert "SECOND_VISIT" in shown and "FIRST_VISIT" not in shown
+
+
+def test_the_divider_points_both_ways_and_names_the_keys(monkeypatch):
+    from prompt_toolkit.formatted_text.utils import fragment_list_to_text
+
+    from pcode.ui import PromptLayout
+
+    screen = Screen(monkeypatch)
+    aside = answered("why is the parser LL(1)?", "Because.")
+    screen.activity.asides = [aside]
+    layout = SimpleNamespace(
+        transcript=screen.transcript,
+        activity=screen.activity,
+        shortcuts=None,
+        render_cache=None,
+        size=lambda: Size(rows=40, columns=100),
+    )
+    rows = PromptLayout.conversation_rows.__wrapped__
+    assert rows(layout) == []  # The conversation is on screen.
+    open_thread(screen.activity, aside.thread)
+    screen.output.open_view(lambda: [])
+    assert rows(layout) == []  # Not until the thread is drawn.
+    screen.flush()
+    screen.transcript.message("A link: [docs](https://example.com/docs)")
+    divider, *tail = (fragment_list_to_text(row) for row in rows(layout))
+    assert "↑ btw: why is the parser LL(1)?" in divider and "↓ conversation" in divider
+    assert divider.endswith("Esc back · Ctrl+Q next thread ─") and len(divider) == 99
+    # A hyperlink's escape never reaches the screen as text.
+    assert [row.rstrip() for row in tail] == ["  A link: docs"]
+
+
 def test_opening_and_closing_before_a_frame_leaves_the_conversation(monkeypatch):
     screen = Screen(monkeypatch)
     transcript, output = screen.transcript, screen.output
