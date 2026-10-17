@@ -83,8 +83,8 @@ A few things worth knowing on day one:
 
 - **Enter while the agent is working** steers the running turn with your
   message. Ctrl+C cancels it.
-- **Ctrl+G** shows every command and its output in scrollback; press it again
-  to fold them back to summaries. See
+- **Ctrl+G** cycles where command output shows: live in the activity panel
+  while it runs, then also kept in scrollback, then back to summaries. See
   [scrollback and transparency](guide/scrollback.md).
 - **`/tools`** shows every call the agent made, with its full output.
 - **`/btw QUESTION`** asks about the running turn without interrupting it.

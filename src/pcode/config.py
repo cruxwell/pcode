@@ -19,6 +19,7 @@ from pcode.preferences import (
     SETTINGS,
     USER_ONLY,
     Setting,
+    canonical,
     preferences_path,
     project_preferences_path,
     read_preferences,
@@ -68,7 +69,7 @@ def _setting(key: str) -> Setting:
 
 def _effective(data: dict, key: str) -> str | None:
     setting = SETTINGS[key]
-    value = data.get(key)
+    value = canonical(key, data.get(key))
     if isinstance(value, str):
         try:
             setting.validate(key, value)
@@ -149,6 +150,7 @@ def _configure_project(args: list[str]) -> str:
         return json.dumps(read_preferences(_project_path()), indent=2)
     if action == "set" and len(args) == 3:
         key, value = args[1:]
+        value = canonical(key, value)
         if key in USER_ONLY:
             raise ValueError(f"{key} is user-only; a repository cannot set it. Use config set.")
         _setting(key).validate(key, value)
@@ -188,6 +190,7 @@ def configure(arguments: Sequence[str]) -> str:
         return "null" if value is None else value
     if action == "set" and len(args) == 3:
         key, value = args[1:]
+        value = canonical(key, value)
         _setting(key).validate(key, value)
         update_preferences({key: value})
         return f"Saved global default: {key} = {value}. Applies on next launch."

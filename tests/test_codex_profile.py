@@ -114,7 +114,7 @@ def test_codex_summary_request_is_independent_of_display_and_effort(monkeypatch,
         )
     )
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    for visibility in ("off", "status-line", "scrollback"):
+    for visibility in ("off", "activity-panel", "scrollback"):
         save_preferences(show_thinking=visibility)
         agent = create_agent("openai-codex:gpt-5.6-sol", tmp_path)
         assert agent.model_settings == {"openai_reasoning_summary": "detailed"}

@@ -147,8 +147,8 @@ def test_thinking_stream_request_and_persistable_events(name, expected, status_l
             try:
                 from pcode.runtime import ThinkingDelta
 
-                wanted = {"off": None, "status-line": status_line, "scrollback": expected}
-                for mode in ("off", "scrollback", "status-line", "off"):
+                wanted = {"off": None, "activity-panel": status_line, "scrollback": expected}
+                for mode in ("off", "scrollback", "activity-panel", "off"):
                     app.set_thinking_mode(mode)
                     events = [event async for event in runtime.stream("hello")]
                     assert requests[-1]["stream"] is True
@@ -236,7 +236,7 @@ def test_switch_uses_current_visibility_not_saved_default(monkeypatch, tmp_path)
 def test_other_routes_are_untouched(model):
     settings = {"existing": "setting"}
     agent = SimpleNamespace(model_settings=settings)
-    for mode in ("off", "status-line", "scrollback"):
+    for mode in ("off", "activity-panel", "scrollback"):
         apply_thinking(agent, model, mode)
         assert agent.model_settings is settings
 
@@ -245,7 +245,7 @@ def test_other_routes_are_untouched(model):
 def test_openai_summaries_follow_the_mode_on_reasoning_models(provider):
     agent = SimpleNamespace(model_settings={"openai_reasoning_effort": "high"})
     # One summarizer per model: both modes ask for it, and only rendering differs.
-    for mode in ("status-line", "scrollback"):
+    for mode in ("activity-panel", "scrollback"):
         apply_thinking(agent, f"{provider}:o4-mini", mode)
         assert agent.model_settings == {
             "openai_reasoning_effort": "high",
@@ -309,7 +309,7 @@ def test_only_models_that_write_progress_updates_get_the_beta(name, updates):
     from pcode.preferences import UPDATES_BETA, thinking_settings
 
     profile = SimpleNamespace(profile={"anthropic_supports_adaptive_thinking": True})
-    wanted = thinking_settings(f"anthropic:{name}", profile, "status-line")
+    wanted = thinking_settings(f"anthropic:{name}", profile, "activity-panel")
     assert (wanted.get("anthropic_betas") == [UPDATES_BETA]) == updates
 
 
@@ -317,8 +317,8 @@ def test_only_models_that_write_progress_updates_get_the_beta(name, updates):
     "model, mode, warned",
     [
         ("anthropic:claude-opus-4-7", "scrollback", True),
-        ("anthropic:claude-opus-4-7", "status-line", False),
-        ("anthropic:claude-opus-5-5", "status-line", False),
+        ("anthropic:claude-opus-4-7", "activity-panel", False),
+        ("anthropic:claude-opus-5-5", "activity-panel", False),
         ("anthropic:claude-opus-5-5", "scrollback", False),
     ],
 )

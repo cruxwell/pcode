@@ -1,4 +1,4 @@
-"""Visibility affects the entire combined Tasks/Tools widget, not its data."""
+"""Hiding the task list, or the whole activity panel, never touches its data."""
 
 import asyncio
 from io import StringIO
@@ -64,7 +64,7 @@ def test_shortcut_hides_rows_without_losing_state(tmp_path, monkeypatch, editing
         session = create_prompt(
             app.registry,
             activity=activity,
-            on_tasks=app.set_show_tasks,
+            on_panel=app.set_show_activity,
             input=pipe,
             output=DummyOutput(),
             editing_mode=editing_mode,
@@ -88,10 +88,12 @@ def test_shortcut_hides_rows_without_losing_state(tmp_path, monkeypatch, editing
         assert activity.plan_rows(10) == []
         assert activity.plan[0]["content"] == "Retained task"
         assert activity.busy
-        assert load_preferences()["show_tasks"] == "off"
+        # Ctrl+O hides the whole panel; the task list's own switch stays on.
+        assert load_preferences()["show_activity"] == "off"
+        assert activity.show_tasks
         binding.handler(event)
         assert activity.plan_rows(10) == rows
         assert session.default_buffer.text == "retained draft"
-        assert load_preferences()["show_tasks"] == "on"
+        assert load_preferences()["show_activity"] == "on"
         activity.reset()
-        assert activity.show_tasks
+        assert activity.show_activity

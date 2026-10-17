@@ -77,7 +77,7 @@ async def running_app():
 @pytest.mark.parametrize("busy", [False, True], ids=["idle", "busy"])
 @pytest.mark.parametrize("prefix", [None, "ctrl+b"], ids=["default-ctrl", "saved-leader"])
 def test_bound_terminal_command_preserves_multiline_draft_and_history(busy, prefix):
-    save_preferences(show_thinking="status-line")
+    save_preferences(show_thinking="activity-panel")
     if prefix is not None:
         save_preferences(key_prefix=prefix)
 
@@ -110,7 +110,7 @@ def test_bound_terminal_command_preserves_multiline_draft_and_history(busy, pref
 
 
 def test_unbind_and_reset_take_effect_without_restarting_prompt():
-    save_preferences(show_thinking="status-line")
+    save_preferences(show_thinking="activity-panel")
 
     async def run():
         async with running_app() as view:
@@ -133,7 +133,7 @@ def test_unbind_and_reset_take_effect_without_restarting_prompt():
                 # Without the override, Emacs Ctrl+E moves to the end of this line.
                 assert buffer.text == "first line\nsecond line"
                 assert buffer.cursor_position == len("first line")
-                assert view.app.activity.thinking_mode == "status-line"
+                assert view.app.activity.thinking_mode == "activity-panel"
                 assert list(view.session.history.get_strings()) == history
                 assert view.runtime.calls == []
             assert view.session.command_bindings.manage("e") == "e: unbound"

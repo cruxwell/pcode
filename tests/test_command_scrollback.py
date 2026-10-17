@@ -229,11 +229,14 @@ def test_command_scrollback_lines_bounds_rows_and_keeps_tail(limit):
 
 
 def test_settings_round_trip_through_config():
+    # `on` is the old name for `scrollback`, saved under the new one.
     configure(["set", "show_commands", "on"])
     configure(["set", "command_scrollback_lines", "120"])
-    assert load_preferences()["show_commands"] == "on"
+    assert load_preferences()["show_commands"] == "scrollback"
     assert load_preferences()["command_scrollback_lines"] == "120"
-    assert configure(["get", "show_commands"]) == "on"
+    assert configure(["get", "show_commands"]) == "scrollback"
+    configure(["set", "show_commands", "activity-panel"])
+    assert configure(["get", "show_commands"]) == "activity-panel"
     configure(["unset", "show_commands"])
     configure(["unset", "command_scrollback_lines"])
     assert configure(["get", "show_commands"]) == "off"
@@ -244,18 +247,26 @@ def test_settings_round_trip_through_config():
         configure(["set", "command_scrollback_lines", "0"])
 
 
-def test_slash_command_toggles_state_and_saves_the_default():
+def test_slash_command_cycles_modes_and_saves_the_default():
     stream = StringIO()
     app = PreviewApp(console=Console(file=stream, width=80, color_system=None))
     assert app.registry.dispatch("/show-commands")
-    assert "Show commands: on" in stream.getvalue()
-    assert app.registry.dispatch("/show-commands on")
+    assert "Commands: activity-panel" in stream.getvalue()
+    # Live while it runs, nothing kept afterwards.
+    assert app.transcript.command_preview and not app.transcript.command_scrollback
+    assert app.registry.dispatch("/show-commands scrollback")
     assert app.transcript.command_scrollback is True
-    assert load_preferences()["show_commands"] == "on"
-    assert "Show commands: on. Usage: /show-commands [on|off] (Ctrl+G)" in (stream.getvalue())
+    assert load_preferences()["show_commands"] == "scrollback"
+    assert (
+        "Commands: scrollback. Usage: /show-commands [off|activity-panel|scrollback]; "
+        "bare cycles (Ctrl+G)"
+    ) in " ".join(stream.getvalue().split())
     assert app.registry.dispatch("/show-commands off")
-    assert app.transcript.command_scrollback is False
+    assert not app.transcript.command_preview
     assert load_preferences()["show_commands"] == "off"
+    # The old values still work.
+    assert app.registry.dispatch("/show-commands on")
+    assert app.transcript.command_mode == "scrollback"
     with pytest.raises(ValueError, match=r"Usage: /show-commands"):
         app.registry.dispatch("/show-commands yes")
 
@@ -274,14 +285,19 @@ def test_ctrl_g_toggles_mirroring_without_starting_a_search_or_inserting_text(vi
                 input=pipe,
                 output=DummyOutput(),
             )
-            pipe.send_text("\x07\x07\x07draft\r")
+            pipe.send_text("\x07\x07\x07\x07draft\r")
             return await asyncio.wait_for(prompt.prompt_async(), timeout=3)
 
     assert asyncio.run(run()) == "draft"
-    assert app.transcript.command_scrollback is True
-    assert load_preferences()["show_commands"] == "on"
-    notes = [line for line in stream.getvalue().splitlines() if "Show commands" in line]
-    assert [note.split(": ")[1].split(".")[0] for note in notes] == ["on", "off", "on"]
+    assert app.transcript.command_mode == "activity-panel"
+    assert load_preferences()["show_commands"] == "activity-panel"
+    notes = [line for line in stream.getvalue().splitlines() if "Commands:" in line]
+    assert [note.split("Commands: ")[1].split(".")[0] for note in notes] == [
+        "activity-panel",
+        "scrollback",
+        "off",
+        "activity-panel",
+    ]
 
 
 def test_toggle_survives_an_unwritable_preferences_file(monkeypatch):
@@ -293,9 +309,9 @@ def test_toggle_survives_an_unwritable_preferences_file(monkeypatch):
 
     monkeypatch.setattr("pcode.app.save_preferences", fail)
     app.show_commands("")
-    assert app.transcript.command_scrollback is True
+    assert app.transcript.command_mode == "activity-panel"
     assert "Could not save defaults" in stream.getvalue()
-    assert "Show commands: on" in stream.getvalue()
+    assert "Commands: activity-panel" in stream.getvalue()
 
 
 def test_toggled_mirroring_takes_effect_on_the_next_settled_command():
@@ -306,7 +322,7 @@ def test_toggled_mirroring_takes_effect_on_the_next_settled_command():
     )
     app.present_events((event,))
     assert "$ echo hi" not in stream.getvalue()
-    app.show_commands("")
+    app.show_commands("scrollback")
     app.present_events((event,))
     assert "✓ Run shell" in stream.getvalue()
     assert "$ echo hi" in stream.getvalue()

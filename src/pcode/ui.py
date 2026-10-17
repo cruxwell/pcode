@@ -66,9 +66,11 @@ from pcode.keymap import PromptKeymap
 from pcode.layout_speed import install_fast_layout_division
 from pcode.popup_ui import shortcut_hint
 from pcode.preferences import (
+    COMMAND_MODES,
     SETTINGS,
     SYNTAX_THEMES,
     TERMINAL_SYNTAX,
+    canonical,
     load_preferences,
     parse_height,
     screen_rows,
@@ -131,7 +133,7 @@ def _mix(color: str, toward: str, amount: float) -> str:
     )
 
 
-def shaded_styles(shade: str, top: str) -> dict[str, str]:
+def shaded_styles(shade: str, top: str, well: str) -> dict[str, str]:
     """`frame_style shaded`: the editor and task boxes as surfaces, not outlines.
 
     `shade` fills the box. Border glyphs keep their cells in the shade's own
@@ -140,8 +142,9 @@ def shaded_styles(shade: str, top: str) -> dict[str, str]:
 
     `top` is the editor's header block (see `header_shade`): its top row
     (status, task heading or session name), and while a turn runs the
-    activity band under it, so the turn's live rows read as one header
-    without a drawn line.
+    thought under it, so the turn's status and its reason read as one header
+    without a drawn line. `well` sits under that for the tool rows (see
+    `well_shade`), so what the turn runs never reads as what it thinks.
     """
     # Appended after the palette's `frame.border`: for equal classes the later
     # rule wins, so these override its muted color.
@@ -152,6 +155,8 @@ def shaded_styles(shade: str, top: str) -> dict[str, str]:
         "shaded frame.border": f"nodim fg:{shade}",
         "shaded.top": f"bg:{top}",
         "shaded.top frame.border": f"nodim fg:{top}",
+        "shaded.well": f"bg:{well}",
+        "shaded.well frame.border": f"nodim fg:{well}",
     }
 
 
@@ -183,6 +188,20 @@ def header_shade(background: str, theme: str) -> str:
     if theme == "light":
         return _mix(shade, "#000000", 0.028)
     return _mix(shade, background, 0.5)
+
+
+@cache
+def well_shade(background: str, theme: str) -> str:
+    """The tool rows' shade: a step further in than the header, as a terminal's
+    own surface sits under the prose about it.
+
+    Dark, most of the way back to the background, short of it so the box
+    still reads as one surface rather than as two with a gap; light, a step
+    past the header toward black.
+    """
+    if theme == "light":
+        return _mix(header_shade(background, theme), "#000000", 0.03)
+    return _mix(frame_shade(background, theme), background, 0.8)
 
 
 @dataclass(frozen=True)
@@ -243,7 +262,7 @@ class Palette:
         self,
         menu: "Palette | None" = None,
         task_style: str = "status",
-        shades: tuple[str, str] | None = None,
+        shades: tuple[str, str, str] | None = None,
     ) -> Style:
         # Palette is immutable. Reuse the Style so DynamicStyle's identity-based
         # invalidation hash changes only with the palette, not on every redraw.
@@ -584,6 +603,9 @@ THOUGHT_ICON = "∴"
 # Where the editor box's band sets a thought's later rows and the tool rows:
 # under the thought's text, a level in from the column of icons.
 BAND_INDENT = " " * (cell_len(THOUGHT_ICON) + 1)
+# The band's tool rows: a level further in than the thought's text, so each
+# reads as a step the thought took rather than more of its prose.
+TOOL_INDENT = BAND_INDENT * 2
 # The tool row's stand-ins for common verbs (`tool_display.LABELS`), so it
 # says `$ make test` rather than `Run shell · make test`. A tool not listed
 # keeps its verb spelled out. Each is one cell wide, ambiguous-width or not.
@@ -873,9 +895,13 @@ def chrome_rows(text: str, width: int, style: str) -> list[tuple[str, str]]:
 
 @dataclass
 class Activity:
-    # The activity panel: the newest thought, the turn's latest tool calls and
-    # the task list, shown and hidden together (Ctrl+O). The status row is not
-    # part of it: it says the turn is running whatever the panel shows.
+    # The activity panel: the newest thought, the turn's latest tool calls,
+    # the task list and a running command's output, shown and hidden together
+    # (Ctrl+O). The status row is not part of it: it says the turn is running
+    # whatever the panel shows. Each part has its own switch as well
+    # (`show_tasks`, `/show-thinking`, `/show-commands`).
+    show_activity: bool = True
+    # The task list's own switch, inside the panel.
     show_tasks: bool = True
     # Hide the task list again as soon as a turn ends, without forgetting that the
     # user wants it shown while the model works.
@@ -914,9 +940,9 @@ class Activity:
     tasks_unhidden: bool = False
     # Inline shortcut hints, such as the key that hides the task list.
     show_hints: bool = True
-    # Where the model's thinking shows: `off`, `status-line` (its own rows
+    # Where the model's thinking shows: `off`, `activity-panel` (its own rows
     # in the activity panel), or `scrollback`. See THINKING_MODES.
-    thinking_mode: str = "status-line"
+    thinking_mode: str = "activity-panel"
     busy: bool = False
     status: str = ""
     queued: int = 0
@@ -999,7 +1025,7 @@ class Activity:
     def thought_shown(self) -> bool:
         """Whether the thinking rows have a thought to show in the activity panel."""
         return (
-            self.thinking_mode == "status-line"
+            self.thinking_mode == "activity-panel"
             and self.status_shown
             and self.panel_shown
             and bool(latest_thought(self.thought).strip())
@@ -1008,7 +1034,7 @@ class Activity:
     def thought_fragments(
         self, width: int, rows: int = THOUGHT_ROWS, *, hanging: bool = False
     ) -> list[list[tuple[str, str]]]:
-        """The thinking rows of the activity panel, in `status-line` mode.
+        """The thinking rows of the activity panel, in `activity-panel` mode.
 
         Held through the tool calls that follow a thought, which it usually
         explains, and gone once the answer streams into scrollback: thinking
@@ -1176,29 +1202,47 @@ class Activity:
 
     @property
     def panel_shown(self) -> bool:
-        """The activity panel is visible: enabled, not auto-hidden after the
-        last turn, and the pane fits."""
-        return self.show_tasks and not self.tasks_autohidden and not self.tasks_too_big
+        """The activity panel is visible: enabled, and the pane fits."""
+        return self.show_activity and not self.tasks_too_big
+
+    @property
+    def tasks_shown(self) -> bool:
+        """The task list is visible: the panel is, the list is switched on, and it
+        is not auto-hidden after the last turn."""
+        return self.panel_shown and self.show_tasks and not self.tasks_autohidden
 
     @property
     def tasks_too_big(self) -> bool:
         """The pane is below the size thresholds and Ctrl+O has not overridden them."""
         return self.screen_small and not self.tasks_unhidden
 
-    def toggle_tasks(self) -> bool:
-        """Ctrl+O acts on what is on screen, so auto-hidden reads as hidden.
+    @property
+    def panel_looks_shown(self) -> bool:
+        """The panel is on screen with nothing of it auto-hidden: what Ctrl+O
+        reads, so after a turn auto-hides the tasks it brings them back
+        rather than hiding a panel that shows nothing of them."""
+        hidden = (
+            self.tasks_autohidden
+            and self.show_tasks
+            and bool(self.displayed_plan or self.tools.delegates)
+        )
+        return self.panel_shown and not hidden
+
+    def toggle_panel(self) -> bool:
+        """Ctrl+O acts on what is on screen (`panel_looks_shown`).
 
         In a small pane it only overrides the size rule for that pane, leaving
-        `show_tasks` on so a larger pane still shows the panel.
+        `show_activity` on so a larger pane still shows the panel. Showing the
+        panel brings auto-hidden tasks back with it.
         """
-        shown = self.panel_shown
+        shown = self.panel_looks_shown
         self.tasks_autohidden = False
-        if self.screen_small and self.show_tasks:
+        if self.screen_small and self.show_activity:
             self.tasks_unhidden = not shown
-            return self.show_tasks
-        self.show_tasks = not shown
-        self.tasks_unhidden = self.show_tasks and self.screen_small
-        return self.show_tasks
+            return self.show_activity
+        self.show_activity = not shown
+        self.tasks_unhidden = self.show_activity and self.screen_small
+        return self.show_activity
 
     def finish_prompt(self, state: str) -> None:
         """End the turn, auto-hiding the widget when that option is enabled."""
@@ -1223,7 +1267,7 @@ class Activity:
 
     def plan_rows(self, budget: int, spinner: str = ACTIVE_TASK_ICON):
         """`spinner` marks the step in progress while a turn runs."""
-        if not self.panel_shown:
+        if not self.tasks_shown:
             return []
         # Persisted task status describes unfinished work, not a live request.
         # Use the turn lifecycle rather than busy, which also includes queued input.
@@ -1241,7 +1285,7 @@ class Activity:
         activity state, so a preview that squeezes the plan rows out of a
         short pane does not count as hiding it.
         """
-        if self.panel_shown:
+        if self.tasks_shown:
             return ""
         step = next((i for i in self.displayed_plan if i.get("status") == "in_progress"), None)
         if step is None:
@@ -1298,20 +1342,21 @@ class Activity:
             # The clock is the call's own, whatever the model said last.
             self._phase_seconds("")
             phase = call_parts(call)[0] if running < 2 else f"Running {running} tools"
-            detail = ""
+            # With the tasks hidden, the plan's step says what the call is for.
+            detail = self.hidden_step()
             if not self.panel_shown:
                 # The tool rows went with the panel, so a lone call's own
-                # detail says what runs; else the plan's step says what for.
-                detail = (call_parts(call)[1] if running < 2 else "") or self.hidden_step()
+                # detail says what runs.
+                detail = (call_parts(call)[1] if running < 2 else "") or detail
             return StatusLine(phase, detail, tally=tally, elapsed=call.elapsed, call=call)
         clock, hue = phase, None
         if agents := self.tools.delegates:
-            # The panel lists the agents themselves, so this row just says
-            # the turn is waiting on them, unless the panel is hidden. One
+            # The task list shows the agents themselves, so this row just says
+            # the turn is waiting on them, unless the list is hidden. One
             # clock for the whole wait, however the count changes.
             count = len(agents)
             phase = f"Waiting for {count} agent{'s' * (count > 1)}"
-            if not self.panel_shown:
+            if not self.tasks_shown:
                 detail, hue = agents[-1].line(timed=False), agents[-1].hue
             else:
                 detail = ""
@@ -2629,11 +2674,11 @@ class PromptLayout:
         if not edits:
             # The preview ended, so the next edit never flashes this one's diff.
             self.live_delta.forget()
-        # A `!command` the user typed is shown while it runs whatever the
-        # scrollback setting for the model's commands says, and so is a job
-        # the user asked to watch; the model's own commands follow the setting.
+        # A `!command` the user typed is shown while it runs whatever
+        # `show_commands` says, and so is a job the user asked to watch; the
+        # model's own commands follow the setting, and hide with the panel.
         commands = activity.command_outputs
-        if not (transcript.command_scrollback or activity.user_command):
+        if not ((transcript.command_preview and activity.panel_shown) or activity.user_command):
             commands = {
                 key: event for key, event in commands.items() if key.startswith(WATCHED_PREFIX)
             }
@@ -2795,11 +2840,11 @@ class PromptLayout:
             limit = min(limit, budget)
         rows = self.activity.tool_rows(
             self.status_line(),
-            self.band_width() - len(BAND_INDENT),
+            self.band_width() - len(TOOL_INDENT),
             limit,
             self.tool_spinner_frame(),
         )
-        return [[("", BAND_INDENT), *row] for row in rows]
+        return [[("", TOOL_INDENT), *row] for row in rows]
 
     def band_width(self) -> int:
         """Cells across a band row: inside the box's sides, in from them like the
@@ -2820,12 +2865,18 @@ class PromptLayout:
         if cap is None:
             return None
         # Running sub-agents get task rows with no plan at all.
-        tasks = activity.panel_shown and bool(activity.displayed_plan or activity.tools.delegates)
+        tasks = activity.tasks_shown and bool(activity.displayed_plan or activity.tools.delegates)
         return cap - 4 - (1 + self.task_chrome() if tasks else 0)
 
-    @_per_render
     def band_rows(self) -> list[list[tuple[str, str]]]:
-        """The activity band: the thought, then its tool calls, under the status row.
+        """The activity band's rows, thought then tool calls (see `band_parts`)."""
+        thought, tools = self.band_parts()
+        return [*thought, *tools]
+
+    @_per_render
+    def band_parts(self) -> tuple[list, list]:
+        """The activity band under the status row: the thought's rows, and the
+        tool calls' rows, each drawn in a shade of its own.
 
         `attach_activity` draws it in the editor box. It grows at once but
         gives rows back only once it has held fewer for `BAND_HOLD_SECONDS`,
@@ -2834,17 +2885,17 @@ class PromptLayout:
         row and the tasks up and down on every step. With nothing left to
         show (the thought gave way to the answer and the calls stopped
         lingering, or Ctrl+O hid the panel) it goes at once: a band of blank
-        rows would only look stuck.
+        rows would only look stuck. The blank rows pad the tool calls, or the
+        thought when there are none, so no part takes another's shade.
         """
-        rows = (
-            [*self.thought_rows(), *self.tool_rows()]
-            if self.activity.attach_activity and self.activity.status_shown
-            else []
-        )
+        attached = self.activity.attach_activity and self.activity.status_shown
+        thought = self.thought_rows() if attached else []
+        tools = self.tool_rows() if attached else []
+        rows = [*thought, *tools]
         size = self.size()
         if not rows:
             self.band_hold = (0, 0.0, size)
-            return []
+            return [], []
         now = monotonic()
         held, since, sized = self.band_hold
         budget = self.band_budget()
@@ -2854,8 +2905,9 @@ class PromptLayout:
         # could crowd the editor out of this one.
         if len(rows) >= held or now - since >= BAND_HOLD_SECONDS or sized != size:
             self.band_hold = (len(rows), now, size)
-            return rows
-        return rows + [[] for _ in range(held - len(rows))]
+            return thought, tools
+        padding = [[] for _ in range(held - len(rows))]
+        return (thought, tools + padding) if tools else (thought + padding, tools)
 
     def band_height(self) -> int:
         """Rows the band adds to the editor box: its rows and the divider under them."""
@@ -3040,22 +3092,32 @@ class PromptLayout:
             ]
         )
 
-    def band_body(self) -> VSplit:
-        """The band's rows, set in from the side like the tasks under them."""
-        return VSplit(
+    def band_body(self, part: int, side) -> ConditionalContainer:
+        """One part of the band (0 the thought, 1 the tool calls) between the
+        box's sides, its rows set in from them like the tasks under it."""
+
+        def rows():
+            return self.band_parts()[part]
+
+        body = VSplit(
             [
+                side(),
                 Window(width=self.task_padding),
                 Window(
                     FormattedTextControl(
-                        lambda: panel_fragments(self.band_rows(), self.band_width()),
+                        lambda: panel_fragments(rows(), self.band_width()),
                         show_cursor=False,
                     ),
-                    height=lambda: len(self.band_rows()),
+                    height=lambda: len(rows()),
                     dont_extend_height=True,
                     wrap_lines=False,
                 ),
-            ]
+                side(),
+            ],
+            # The tool rows sit in a well of their own (`well_shade`).
+            style="class:shaded.well" if part else "",
         )
+        return ConditionalContainer(body, Condition(lambda: bool(rows())))
 
     def status_border(self) -> Window:
         """The editor's top border carrying the status: `┌─ ⠋ Phase ── ✓ 1 tool · 4s ─┐`.
@@ -3074,7 +3136,7 @@ class PromptLayout:
             meta = [transcript.pending_tally() if transcript is not None else ""]
             activity = self.activity
             # A plan hidden only for the pane's size still says it exists.
-            hidden = activity.show_tasks and activity.tasks_too_big
+            hidden = activity.show_activity and activity.show_tasks and activity.tasks_too_big
             if (self.plan_attached() or hidden) and activity.displayed_plan:
                 meta.insert(0, activity.panel_title())
             line = replace(self.status_line(), tally=" · ".join(part for part in meta if part))
@@ -3430,7 +3492,8 @@ class PromptLayout:
                             self.heading_border(self.idle_title),
                             filter=~attached & ~status & shaded,
                         ),
-                        ConditionalContainer(VSplit([side(), self.band_body(), side()]), band),
+                        self.band_body(0, side),
+                        self.band_body(1, side),
                     ],
                     style=lambda: "class:shaded.top" if self.top_row_filled() else "",
                 ),
@@ -3486,7 +3549,7 @@ class PromptLayout:
             or activity.notice_shown
             or activity.asides_running
             or bool(activity.waits)
-            or (activity.panel_shown and activity.tools.animating)
+            or (activity.tasks_shown and activity.tools.animating)
         )
 
     async def animate(self, app) -> None:
@@ -3503,7 +3566,7 @@ class PromptLayout:
         transcript, activity = self.transcript, self.activity
         if transcript is None or not (
             (transcript.live_edit_previews and activity.edit_previews)
-            or (transcript.command_scrollback and activity.command_outputs)
+            or (transcript.command_preview and activity.command_outputs)
             or any(key.startswith(WATCHED_PREFIX) for key in activity.command_outputs)
         ):
             self.preview_body.cache_clear()
@@ -3553,7 +3616,7 @@ def create_prompt(
     on_cancel=None,
     on_effort=None,
     on_model=None,
-    on_tasks=None,
+    on_panel=None,
     on_thinking=None,
     on_commands=None,
     on_send_mode=None,
@@ -3574,7 +3637,7 @@ def create_prompt(
         on_cancel=on_cancel,
         on_effort=on_effort,
         on_model=on_model,
-        on_tasks=on_tasks,
+        on_panel=on_panel,
         on_thinking=on_thinking,
         on_commands=on_commands,
         on_send_mode=on_send_mode,
@@ -3687,7 +3750,9 @@ class Transcript:
         self.tool_error_scrollback = preferences.get("tool_error_scrollback", "off") == "on"
         self.show_edits = preferences.get("show_edits", "on") == "on"
         self.live_edits = preferences.get("live_edits", SETTINGS["live_edits"].default) == "on"
-        self.command_scrollback = preferences.get("show_commands", "off") == "on"
+        # `show_commands`: see COMMAND_MODES.
+        mode = canonical("show_commands", preferences.get("show_commands", "off"))
+        self.command_mode = mode if mode in COMMAND_MODES else "off"
         self.group_tools = preferences.get("group_tools", SETTINGS["group_tools"].default) == "on"
         self.command_scrollback_lines = int(preferences.get("command_scrollback_lines", "20"))
         # Rows, or a share of the screen; resolved against the pane when drawn.
@@ -3991,6 +4056,20 @@ class Transcript:
         self.regenerate()
 
     @property
+    def command_scrollback(self) -> bool:
+        """Whether a finished command's output is mirrored into scrollback."""
+        return self.command_mode == "scrollback"
+
+    @command_scrollback.setter
+    def command_scrollback(self, mirrored: bool) -> None:
+        self.command_mode = "scrollback" if mirrored else "off"
+
+    @property
+    def command_preview(self) -> bool:
+        """Whether a running command's output shows live in the activity panel."""
+        return self.command_mode != "off"
+
+    @property
     def resolved_theme(self) -> str:
         return self.detected_theme if self.theme == "auto" else self.theme
 
@@ -4040,8 +4119,8 @@ class Transcript:
         shades = self.frame_shades()
         return shades[0] if shades is not None else None
 
-    def frame_shades(self) -> tuple[str, str] | None:
-        """The box's shade and its header's, or None to keep the borders.
+    def frame_shades(self) -> tuple[str, str, str] | None:
+        """The box's shade, its header's and its tool rows', or None to keep the borders.
 
         From the background the terminal last reported when its theme is the
         one in use (an explicit `/theme light` on a dark terminal is not, nor a
@@ -4060,7 +4139,11 @@ class Transcript:
             return None
         else:
             background = self.palette.surface
-        return frame_shade(background, theme), header_shade(background, theme)
+        return (
+            frame_shade(background, theme),
+            header_shade(background, theme),
+            well_shade(background, theme),
+        )
 
     @property
     def rich_theme(self) -> Theme:

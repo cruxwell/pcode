@@ -41,6 +41,7 @@ from pcode.preferences import (
     THINKING_MODES,
     apply_effort,
     apply_thinking,
+    canonical,
     effort_for,
     effort_setting,
     effort_unavailable,
@@ -839,6 +840,8 @@ class SessionController:
 
     def set_thinking(self, mode: str) -> None:
         """Ask the provider for the readable thinking `mode` needs from the next request."""
+        # A terminal from before the rename may still send `status-line`.
+        mode = canonical("show_thinking", mode)
         if mode not in THINKING_MODES:
             return  # From a mismatched terminal over the host socket; keep the current mode.
         self.activity.thinking_mode = mode

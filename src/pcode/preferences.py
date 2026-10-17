@@ -47,7 +47,23 @@ SPINNERS = tuple(
 
 EFFORTS = ("low", "medium", "high", "xhigh", "default")
 # `/show-thinking` and Ctrl+T, in cycling order.
-THINKING_MODES = ("off", "status-line", "scrollback")
+THINKING_MODES = ("off", "activity-panel", "scrollback")
+# `/show-commands` and Ctrl+G, in cycling order: nowhere, the live preview
+# while a command runs, or that and its output mirrored into scrollback.
+COMMAND_MODES = ("off", "activity-panel", "scrollback")
+# Values a setting has been renamed from, still read from older preference
+# files and accepted by `config set`: what a value means outlived its name.
+RENAMED_VALUES = {
+    "show_thinking": {"status-line": "activity-panel"},
+    "show_commands": {"on": "scrollback"},
+}
+
+
+def canonical(key: str, value):
+    """`value` under its current name, for a setting whose values were renamed."""
+    return RENAMED_VALUES.get(key, {}).get(value, value) if isinstance(value, str) else value
+
+
 OPENAI_PROVIDERS = ("openai", "openai-chat", "openai-responses", "openai-codex")
 # Routes that reach a Claude model and so take Anthropic's own effort setting.
 ANTHROPIC_PROVIDERS = ("anthropic", "claude")
@@ -530,10 +546,11 @@ SETTINGS = {
     ),
     "show_commands": Setting(
         "off",
-        ("on", "off"),
+        COMMAND_MODES,
         description=(
-            "Mirror shell command output into scrollback (the g shortcut, Ctrl+G by default, "
-            "toggles it)"
+            "Where shell command output shows: live in the activity panel while it runs, "
+            "that and mirrored into scrollback, or nowhere (the g shortcut, Ctrl+G by "
+            "default, cycles it)"
         ),
     ),
     "group_tools": Setting(
@@ -554,11 +571,14 @@ SETTINGS = {
         description="Lines of the pinned live preview of a running shell command, "
         "or 0.25 for a quarter of the screen",
     ),
-    # The key predates the panel: it once held the task list alone.
-    "show_tasks": Setting(
+    "show_activity": Setting(
         "on",
         ("on", "off"),
-        description="Show the activity panel: the model's thinking, tool calls and task list",
+        description="Show the activity panel: the model's thinking, tool calls, task list and "
+        "running commands (Ctrl+O)",
+    ),
+    "show_tasks": Setting(
+        "on", ("on", "off"), description="Show the task list in the activity panel"
     ),
     "autohide_tasks": Setting(
         "off", ("on", "off"), description="Hide the task list when a turn ends"
@@ -648,7 +668,7 @@ SETTINGS = {
         description="Animation on a running tool call's row (a Rich spinner name)",
     ),
     "show_thinking": Setting(
-        "status-line",
+        "activity-panel",
         THINKING_MODES,
         description="Where the model's thinking shows: its own rows in the activity panel, "
         "streamed into scrollback, or nowhere",
@@ -657,7 +677,7 @@ SETTINGS = {
     "thinking_max_lines": Setting(
         "10",
         height=True,
-        description="Max rows of thinking in the activity panel (status-line mode), "
+        description="Max rows of thinking in the activity panel (activity-panel mode), "
         "or 0.2 for a fifth of the screen; a fixed count is capped at a quarter of it",
     ),
     "editing_mode": Setting(
@@ -875,7 +895,7 @@ def valid_preferences(data: dict) -> dict[str, str]:
     """Keep valid overrides before merging layers, so invalid values inherit."""
     result = {}
     for key, setting in SETTINGS.items():
-        value = data.get(key)
+        value = canonical(key, data.get(key))
         if not isinstance(value, str):
             continue
         try:
@@ -1148,7 +1168,7 @@ def openai_profile(model: str, resolved=None) -> dict:
 def thinking_settings(model: str, resolved, mode: str) -> dict:
     """The request settings that make thinking readable in `mode`.
 
-    `off` asks for nothing. `status-line` wants short text: Anthropic's
+    `off` asks for nothing. `activity-panel` wants short text: Anthropic's
     progress updates where the model writes them, else summaries.
     `scrollback` wants the fullest text the provider returns: Anthropic's
     summaries (it never returns raw thinking) and OpenAI's `auto`, which is
@@ -1164,11 +1184,11 @@ def thinking_settings(model: str, resolved, mode: str) -> dict:
     forcing `updates` only hid the reasoning, and left the row empty
     (checked live, CLI 2.1.283).
     """
-    if mode not in ("status-line", "scrollback"):
+    if mode not in ("activity-panel", "scrollback"):
         return {}
     provider = model.split(":", 1)[0]
     if provider == "anthropic":
-        if mode == "status-line" and not ANTHROPIC_THINKS_BY_DEFAULT.search(model):
+        if mode == "activity-panel" and not ANTHROPIC_THINKS_BY_DEFAULT.search(model):
             return {}
         if not anthropic_profile(model, resolved).get("anthropic_supports_adaptive_thinking"):
             # Older models think only when asked. The budget is below the
@@ -1181,7 +1201,7 @@ def thinking_settings(model: str, resolved, mode: str) -> dict:
                     "display": "summarized",
                 }
             }
-        if mode == "status-line" and ANTHROPIC_PROGRESS_UPDATES.search(model):
+        if mode == "activity-panel" and ANTHROPIC_PROGRESS_UPDATES.search(model):
             return {
                 "anthropic_thinking": {"type": "adaptive", "display": "updates"},
                 "anthropic_betas": [UPDATES_BETA],

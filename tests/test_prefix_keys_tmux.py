@@ -119,7 +119,7 @@ def test_leader_hint_shows_above_the_editor_and_runs_the_shortcut(pane):
     # The same panel offers explicit thinking choices without changing the draft.
     pane("send-keys", "-t", "preview:0.0", "C-p", "t")
     screen = capture(pane, "Thinking visibility")
-    assert "Off" in screen and "Status line" in screen and "Scrollback" in screen
+    assert "Off" in screen and "Activity panel" in screen and "Scrollback" in screen
     pane("send-keys", "-t", "preview:0.0", "b")
     screen = settle(pane, lambda screen: "Thinking visibility" not in screen)
     assert "draft" in draft_line(screen) and input_rows(screen) == 1
@@ -163,7 +163,7 @@ def test_short_terminal_help_scrolls_without_changing_draft(pane, height, scroll
     # A chooser still fits above the editor after scrolling either menu.
     pane("send-keys", "-t", "preview:0.0", "C-p", "t")
     screen = capture(pane, "Thinking visibility")
-    assert "Off" in screen and "Status line" in screen and "Scrollback" in screen, screen
+    assert "Off" in screen and "Activity panel" in screen and "Scrollback" in screen, screen
     assert "keep this draft" in draft_line(screen), screen
     pane("send-keys", "-t", "preview:0.0", "Escape")
     screen = settle(pane, lambda screen: "Thinking visibility" not in screen)

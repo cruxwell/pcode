@@ -29,7 +29,7 @@ class PromptCallbacks:
     on_cancel: Callable | None = None
     on_effort: Callable | None = None
     on_model: Callable | None = None
-    on_tasks: Callable | None = None
+    on_panel: Callable | None = None
     on_thinking: Callable | None = None
     on_commands: Callable | None = None
     on_send_mode: Callable | None = None
@@ -83,7 +83,7 @@ def _add_shortcuts(shortcuts: PrefixKeys, activity, transcript, callbacks: Promp
     on_send_mode = callbacks.on_send_mode
     on_model = callbacks.on_model
     on_effort = callbacks.on_effort
-    on_tasks = callbacks.on_tasks
+    on_panel = callbacks.on_panel
     on_thinking = callbacks.on_thinking
     on_commands = callbacks.on_commands
     on_previous_session = callbacks.on_previous_session
@@ -142,12 +142,17 @@ def _add_shortcuts(shortcuts: PrefixKeys, activity, transcript, callbacks: Promp
         event.app.invalidate()
 
     @shortcuts.add(
-        "o", lambda: "Hide activity panel" if activity.panel_shown else "Show activity panel"
+        "o",
+        lambda: (
+            "Hide activity panel"
+            if getattr(activity, "panel_looks_shown", activity.panel_shown)
+            else "Show activity panel"
+        ),
     )
-    def toggle_tasks(event: KeyPressEvent) -> None:
-        shown = activity.toggle_tasks()
-        if on_tasks is not None:
-            on_tasks(shown)
+    def toggle_panel(event: KeyPressEvent) -> None:
+        shown = activity.toggle_panel()
+        if on_panel is not None:
+            on_panel(shown)
         event.app.invalidate()
 
     @shortcuts.add("t", "Select thinking visibility")
@@ -171,20 +176,25 @@ def _add_shortcuts(shortcuts: PrefixKeys, activity, transcript, callbacks: Promp
                 )
                 for key, mode, label in (
                     ("o", "off", "Off"),
-                    ("s", "status-line", "Status line"),
+                    ("a", "activity-panel", "Activity panel"),
                     ("b", "scrollback", "Scrollback"),
                 )
             ],
         )
 
     def command_output_label() -> str:
-        shown = getattr(transcript, "command_scrollback", None)
-        if shown is None:
-            return "Toggle command output"
-        return "Hide command output" if shown else "Show command output"
+        # What the press does: the next of `COMMAND_MODES`.
+        mode = getattr(transcript, "command_mode", None)
+        if mode is None:
+            return "Cycle command output"
+        return {
+            "off": "Show command output in the activity panel",
+            "activity-panel": "Mirror command output into scrollback",
+            "scrollback": "Hide command output",
+        }[mode]
 
     @shortcuts.add("g", command_output_label, filter=on_commands is not None)
-    def toggle_command_scrollback(event: KeyPressEvent) -> None:
+    def cycle_command_output(event: KeyPressEvent) -> None:
         on_commands()
         event.app.invalidate()
 

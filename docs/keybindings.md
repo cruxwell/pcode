@@ -141,7 +141,7 @@ targets you can reuse on another key.
 | `p` | `@effort-down` | Decrease thinking effort |
 | `o` | `@tasks` | Show or hide the activity panel |
 | `t` | `@thinking` | Choose thinking visibility |
-| `g` | `@commands` | Show or hide command output in scrollback |
+| `g` | `@commands` | Cycle command output: off, live in the activity panel, mirrored to scrollback |
 | `^` | `@previous-session` | Return to the session previously shown in this terminal |
 | `y` | `@copy` | Copy the draft, or the last response when the draft is empty |
 | `q` | `@side-threads` | Open the [`/btw` viewer](side-questions.md#the-popup) (with `btw_view swap`: [swap in](side-questions.md#swapping-a-thread-in) the thread last shown, or go back to the conversation from one) |

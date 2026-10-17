@@ -24,6 +24,7 @@ from pcode.ui import (
     create_prompt,
     frame_shade,
     header_shade,
+    well_shade,
 )
 
 BACKGROUND = "#2e2a29"
@@ -94,12 +95,12 @@ def test_the_band_hangs_under_the_status_row(plan):
     status = status_index(lines)
     assert lines[status].startswith("┌─ ")
     thought, continued, done, running, divider = lines[status + 1 : status + 6]
-    # The marker stands alone in the column of icons; the text after it, the
-    # thought's later rows and the tool rows share the next column in.
+    # The marker stands alone in the column of icons, the thought's later rows
+    # line up with its text, and the tool rows sit a level further in.
     assert thought.startswith("│∴ Checking where the config")
     assert continued.startswith("│  ") and continued[3] != " ", continued
-    assert done.startswith("│  √ ⎘ src/config.py"), done
-    assert running.startswith("│  ") and "$ make test" in running, running
+    assert done.startswith("│    √ ⎘ src/config.py"), done
+    assert running.startswith("│    ") and "$ make test" in running, running
     assert divider.startswith("├─") and divider.endswith("─┤")
     if plan:
         assert lines[status + 6].startswith("│✔ Read the config loader")
@@ -126,7 +127,7 @@ def test_detached_activity_keeps_its_rows_above_the_box():
 def test_hiding_the_panel_hides_the_thought_and_tool_rows_too(attached):
     def hide(activity):
         activity.attach_activity = attached
-        activity.show_tasks = False
+        activity.show_activity = False
 
     lines, _ = render(configure=hide)
     status = status_index(lines)
@@ -138,10 +139,22 @@ def test_hiding_the_panel_hides_the_thought_and_tool_rows_too(attached):
     assert lines[status + 1].startswith("│❯")
 
 
+def test_hiding_the_tasks_keeps_the_thought_and_tool_rows():
+    def hide(activity):
+        activity.show_tasks = False
+
+    lines, _ = render(configure=hide)
+    status = status_index(lines)
+    assert lines[status + 1].startswith("│∴ Checking where the config")
+    assert not any("Read the" in line for line in lines)
+    # The status row says what the hidden list would: the step in progress.
+    assert "Fix the parser" in lines[status]
+
+
 def test_a_hidden_panel_leaves_parallel_calls_the_plans_step():
     def hide(activity):
         activity.tools.record(ToolStarted("shell", "make lint", "three"))
-        activity.show_tasks = False
+        activity.show_activity = False
 
     lines, _ = render(configure=hide)
     status = next(line for line in lines if "Running 2 tools" in line)
@@ -155,11 +168,15 @@ def test_the_band_takes_the_header_shade_and_its_divider_the_box(monkeypatch):
     status = status_index(lines)
     box = frame_shade(BACKGROUND, "dark").removeprefix("#")
     header = header_shade(BACKGROUND, "dark").removeprefix("#")
+    well = well_shade(BACKGROUND, "dark").removeprefix("#")
     shades = [{cell.bgcolor for cell in row} for row in attrs]
-    # The status row and the band read as one header block; the divider,
-    # tasks and prompt keep the box's shade.
-    assert all(shades[row] == {header} for row in range(status, status + 5)), shades
+    # The status row and the thought read as one header block, the tool rows
+    # sit in a well of their own, and the divider, tasks and prompt keep the
+    # box's shade.
+    assert all(shades[row] == {header} for row in range(status, status + 3)), shades
+    assert all(shades[row] == {well} for row in range(status + 3, status + 5)), shades
     assert all(shades[row] == {box} for row in range(status + 5, status + 10)), shades
+    assert len({box, header, well}) == 3
 
 
 @pytest.fixture
@@ -211,7 +228,7 @@ def test_the_band_grows_at_once_and_gives_rows_back_after_a_hold(layout):
 def test_an_empty_band_goes_at_once(layout):
     with patch("pcode.ui.monotonic", lambda: 100.0):
         assert layout.band_rows()
-        layout.activity.show_tasks = False
+        layout.activity.show_activity = False
         assert layout.band_rows() == []
         assert layout.band_height() == 0
 
@@ -232,7 +249,7 @@ def test_a_height_cap_gives_the_thought_up_first(layout):
     activity.tasks_max_height = 6
     assert layout.band_budget() == 2
     rows = layout.band_rows()
-    assert [row[0] for row in rows] == [("", "  "), ("", "  ")]
+    assert [row[0] for row in rows] == [("", "    "), ("", "    ")]
     assert layout.band_height() == 3
     activity.tasks_max_height = 4
     assert layout.band_rows() == []
@@ -263,10 +280,15 @@ def test_a_sub_agent_without_a_plan_keeps_the_box_under_its_cap(attached):
     assert bottom - top + 1 <= 10, lines
 
 
-def test_show_activity_toggles_the_panel_and_show_tasks_still_works():
+def test_show_activity_and_show_tasks_switch_the_panel_and_its_list_apart():
     app = PreviewApp(console=Console(file=StringIO()))
-    assert app.activity.show_tasks
+    activity = app.activity
+    assert app.registry.dispatch("/show-tasks off")
+    assert activity.panel_shown and not activity.tasks_shown
     assert app.registry.dispatch("/show-activity off")
-    assert not app.activity.show_tasks
+    assert not activity.panel_shown
     assert app.registry.dispatch("/show-tasks on")
-    assert app.activity.show_tasks
+    # The list's own switch is on, but the panel it lives in is still hidden.
+    assert activity.show_tasks and not activity.tasks_shown
+    assert app.registry.dispatch("/show-activity on")
+    assert activity.tasks_shown

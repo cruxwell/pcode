@@ -455,8 +455,8 @@ def test_tool_rows_share_a_short_pane_with_the_thought(attached):
         assert len(layout.tool_rows()) == 3
         row = layout.tool_rows()[0]
         if attached:
-            # In the editor box's band, a level in under the thought's text.
-            assert row[0] == ("", "  ")
+            # In the editor box's band, a level in past the thought's text.
+            assert row[0] == ("", "    ")
             row = row[1:]
         # A running call spins with the tool spinner's frame.
         assert row[0] == ("class:activity.tool", layout.tool_spinner_frame())
@@ -508,7 +508,7 @@ def test_status_row_waits_on_sub_agents_listed_in_the_panel(monkeypatch):
     activity.tools.record(ToolSummary("delegate_task", "done", call_id="b"))
     parts = styled(activity.status_fragments("⠋", 80))
     assert parts["activity.phase"] == "Waiting for 1 agent"
-    # With the panel hidden, the row is the only place left to name one.
+    # With the task list hidden, the row is the only place left to name one.
     activity.show_tasks = False
     assert "Worker" in row() and "task a" in row()
 
@@ -526,17 +526,22 @@ def test_status_row_names_the_active_step_only_while_the_panel_hides_it():
             "status": "in_progress",
         },
     ]
-    # The panel already shows the step, so the row stays short.
+    # The task list already shows the step, so the row stays short.
     assert "activity.detail" not in styled(activity.status_fragments("⠋", 80))
     activity.show_tasks = False
     parts = styled(activity.status_fragments("⠋", 80))
     assert parts["activity.phase"] == "Thinking"
     assert parts["activity.detail"] == " · Adding the migration"
-    # A running tool keeps its verb as the phase. Its tool row went with the
-    # panel, so the row says what it works on instead of the step.
+    # A running tool keeps its verb as the phase; its tool row is still in
+    # the panel, so the step stays the why.
     activity.tools.record(ToolStarted("read_file", "example.py", "one"))
     parts = styled(activity.status_fragments("⠋", 80))
     assert parts["activity.phase"] == "Read file"
+    assert parts["activity.detail"] == " · Adding the migration"
+    # With the whole panel hidden the tool row goes too, so the row says
+    # what the call works on instead.
+    activity.show_activity = False
+    parts = styled(activity.status_fragments("⠋", 80))
     assert parts["activity.detail"] == " · example.py"
     # Parallel calls have no one detail: the step is the why again.
     activity.tools.record(ToolStarted("read_file", "other.py", "two"))
@@ -674,7 +679,7 @@ def test_thinking_rows_hold_the_newest_thought_above_the_status_row():
     def row(width=80):
         return "\n".join(rows(width))
 
-    assert activity.thinking_mode == "status-line" and row() == ""
+    assert activity.thinking_mode == "activity-panel" and row() == ""
     # Untitled text shows its newest line, with a marker over the spinner.
     feed(ThinkingDelta("The status row"))
     feed(ThinkingDelta(" is empty\n\n"))
@@ -730,7 +735,7 @@ def test_thinking_rows_hold_the_newest_thought_above_the_status_row():
     # The other modes have no row; a new turn starts empty.
     activity.thinking_mode = "scrollback"
     assert row() == ""
-    activity.thinking_mode = "status-line"
+    activity.thinking_mode = "activity-panel"
     activity.start_prompt("again")
     assert row() == ""
 

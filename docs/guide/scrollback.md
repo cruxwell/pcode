@@ -14,9 +14,11 @@ history already on screen is rebuilt to match.
 
 A typical rhythm:
 
-1. While a tricky turn runs, press **Ctrl+G** to mirror every shell command and
-   its output into scrollback, so you can watch the tests fail and pass.
-2. Once it's done, press Ctrl+G again. The same history comes back with the
+1. While a tricky turn runs, press **Ctrl+G** twice (or
+   `/show-commands scrollback`) to mirror every shell command and its output
+   into scrollback, so you can watch the tests fail and pass. The first press
+   alone shows a running command's output live, without keeping it.
+2. Once it's done, press Ctrl+G again (`off`). The same history comes back with the
    command output gone and each run of tool calls folded into one line, so the
    reply is easy to find:
 
@@ -32,15 +34,15 @@ into a line:
 
 ![A bug fix turn with tool calls folded into one summary line](../assets/screenshots/scrollback-summary.svg)
 
-Then the same history after Ctrl+G, rebuilt with each command and its output:
+Then the same history with `show_commands scrollback`, rebuilt with each command and its output:
 
-![The same turn after Ctrl+G, with every shell command and its output](../assets/screenshots/scrollback-commands.svg)
+![The same turn with show_commands scrollback, every shell command and its output](../assets/screenshots/scrollback-commands.svg)
 
 The toggles, each saved as your default:
 
 | Toggle | Shows or hides |
 | --- | --- |
-| Ctrl+G, `/show-commands` | Each shell command and its output |
+| Ctrl+G, `/show-commands scrollback` | Each shell command and its output |
 | Ctrl+V, `/show-edits` | The diff of each file edit |
 | `/show-thinking scrollback` | The model's readable reasoning |
 | Ctrl+], `/group-tools` | One line per run of tool calls (the default) or one per call |

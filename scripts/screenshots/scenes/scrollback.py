@@ -39,6 +39,9 @@ STEPS = [
     ("key", "Enter"),
     ("wait", "matching test_total"),
     ("shot", "scrollback-summary"),
+    # Ctrl+G cycles off → activity-panel → scrollback; the second mirrors.
+    ("key", "C-g"),
+    ("wait", "Commands: activity-panel"),
     ("key", "C-g"),
     ("wait", "Initial commit"),
     ("shot", "scrollback-commands"),

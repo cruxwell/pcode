@@ -61,6 +61,7 @@ def make_app(width=80, workspace=None):
                 "/resend",
                 "/worktree",
                 "/show-activity",
+                "/show-tasks",
                 "/autohide-tasks",
                 "/show-thinking",
                 "/show-edits",

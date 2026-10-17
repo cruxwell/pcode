@@ -1409,7 +1409,7 @@ def error_message(error: Exception, *, unexpected: str | None = None) -> str:
         suffix = f" {detail}" if detail else " See the saved session diagnostics."
         if "reasoning summar" in detail.lower():
             # An unverified OpenAI organisation, refused the summaries that
-            # `/show-thinking status-line` and `scrollback` ask for.
+            # `/show-thinking activity-panel` and `scrollback` ask for.
             suffix += " `/show-thinking off` stops asking for them."
         return f"Provider request failed (HTTP {status}).{suffix}"
     if isinstance(error, ImportError):

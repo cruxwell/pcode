@@ -42,12 +42,14 @@ from pcode.controller import (
 from pcode.error_report import error_message
 from pcode.preferences import (
     ANTHROPIC_THINKS_BY_DEFAULT,
+    COMMAND_MODES,
     SETTINGS,
     SYNTAX_THEMES,
     THINKING_KEYS,
     THINKING_MODES,
     apply_effort,
     apply_thinking,
+    canonical,
     effort_for,
     hints_preference,
     load_preferences,
@@ -151,6 +153,7 @@ class PreviewApp:
     ) -> None:
         terminal_color.configure(load_preferences().get("color_depth"))
         self.activity = Activity(
+            show_activity=load_preferences().get("show_activity", "on") == "on",
             show_tasks=load_preferences().get("show_tasks", "on") == "on",
             autohide_tasks=load_preferences().get("autohide_tasks", "off") == "on",
             attach_tasks=load_preferences().get("attach_tasks", SETTINGS["attach_tasks"].default)
@@ -396,10 +399,16 @@ class PreviewApp:
             self.controller.registry.find("/worktree"),
             Command(
                 "/show-activity",
-                "Activity panel (thinking, tool calls, tasks): on / off; bare toggles",
+                "Activity panel (thinking, tool calls, tasks, commands): on / off; bare toggles",
+                self.show_activity,
+                ("on", "off"),
+                group="Display",
+            ),
+            Command(
+                "/show-tasks",
+                "Task list in the activity panel: on / off; bare toggles",
                 self.show_tasks,
                 ("on", "off"),
-                aliases=("/show-tasks",),
                 group="Display",
             ),
             Command(
@@ -411,9 +420,11 @@ class PreviewApp:
             ),
             Command(
                 "/show-thinking",
-                "Where thinking shows: off / status-line / scrollback; bare cycles",
+                "Where thinking shows: off / activity-panel / scrollback; bare cycles",
                 self.show_thinking,
                 THINKING_MODES,
+                # The handler also takes the values' old names.
+                free_arguments=True,
                 group="Display",
             ),
             Command(
@@ -425,9 +436,11 @@ class PreviewApp:
             ),
             Command(
                 "/show-commands",
-                "Shell command output in scrollback: on / off; bare toggles",
+                "Where shell command output shows: off / activity-panel / scrollback; bare cycles",
                 self.show_commands,
-                ("on", "off"),
+                COMMAND_MODES,
+                # The handler also takes the values' old names.
+                free_arguments=True,
                 group="Display",
             ),
             Command(
@@ -801,9 +814,9 @@ class PreviewApp:
             result = result.replace("Applies on next launch.", "Layout settings apply immediately.")
         return result
 
-    def set_show_tasks(self, shown: bool) -> None:
-        self.activity.show_tasks = shown
-        self.persist_defaults(show_tasks="on" if shown else "off")
+    def set_show_activity(self, shown: bool) -> None:
+        self.activity.show_activity = shown
+        self.persist_defaults(show_activity="on" if shown else "off")
         if self.transcript.output is not None:
             self.transcript.output.app.invalidate()
 
@@ -816,23 +829,41 @@ class PreviewApp:
             raise ValueError(f"Usage: {command} [on|off]")
         return argument == "on"
 
-    def show_tasks(self, argument: str) -> None:
+    def show_activity(self, argument: str) -> None:
         activity = self.activity
         if argument:
-            shown = self.toggle_argument("/show-activity", argument, activity.show_tasks)
+            shown = self.toggle_argument("/show-activity", argument, activity.show_activity)
             # `on` means on screen now, even in a pane below the size thresholds.
             activity.tasks_unhidden = shown and activity.screen_small
+            if shown:
+                activity.tasks_autohidden = False
         else:
             # Bare acts on what is on screen, like Ctrl+O: in a small pane it
-            # overrides the size rule rather than saving the widget as off.
-            shown = activity.toggle_tasks()
-        self.set_show_tasks(shown)
-        state = "on" if activity.show_tasks else "off"
-        if activity.show_tasks and activity.tasks_too_big:
+            # overrides the size rule rather than saving the panel as off.
+            shown = activity.toggle_panel()
+        self.set_show_activity(shown)
+        state = "on" if activity.show_activity else "off"
+        if activity.show_activity and activity.tasks_too_big:
             state += " (hidden in this pane: see tasks_min_rows and tasks_min_columns)"
         self.transcript.flash(
             f"Activity panel: {state}. Usage: /show-activity [on|off] ({self.shortcut('o')})"
         )
+
+    def show_tasks(self, argument: str) -> None:
+        """`/show-tasks [on|off]`: the task list alone, inside the activity panel."""
+        activity = self.activity
+        # The list's own switch, so a hidden panel or a small pane cannot pin it on.
+        listed = activity.show_tasks and not activity.tasks_autohidden
+        shown = self.toggle_argument("/show-tasks", argument, listed)
+        activity.show_tasks = shown
+        activity.tasks_autohidden = False
+        self.persist_defaults(show_tasks="on" if shown else "off")
+        if self.transcript.output is not None:
+            self.transcript.output.app.invalidate()
+        state = "on" if shown else "off"
+        if shown and not activity.panel_shown:
+            state += " (the activity panel is hidden: /show-activity)"
+        self.transcript.flash(f"Show tasks: {state}. Usage: /show-tasks [on|off]")
 
     def autohide_tasks(self, argument: str) -> None:
         enabled = self.toggle_argument("/autohide-tasks", argument, self.activity.autohide_tasks)
@@ -883,7 +914,8 @@ class PreviewApp:
             self.transcript.output.app.invalidate()
 
     def show_thinking(self, argument: str) -> None:
-        """`/show-thinking [off|status-line|scrollback]`; the bare command cycles."""
+        """`/show-thinking [off|activity-panel|scrollback]`; the bare command cycles."""
+        argument = canonical("show_thinking", argument)
         if argument and argument not in THINKING_MODES:
             raise ValueError(f"Usage: /show-thinking [{'|'.join(THINKING_MODES)}]")
         if not argument:
@@ -926,22 +958,28 @@ class PreviewApp:
         mode = SEND_MODES[(SEND_MODES.index(self.next_send_mode) + 1) % len(SEND_MODES)]
         self.send_mode_once = None if mode == self.send_mode else mode
 
-    def set_show_commands(self, shown: bool) -> None:
+    def set_show_commands(self, mode: str) -> None:
+        mirrored = self.transcript.command_scrollback
+        self.transcript.command_mode = mode
+        self.persist_defaults(show_commands=mode)
         # Reproject retained results as well as future completions.
-        self.transcript.command_scrollback = shown
-        self.persist_defaults(show_commands="on" if shown else "off")
-        self.transcript.regenerate()
+        if self.transcript.command_scrollback != mirrored:
+            self.transcript.regenerate()
         if self.transcript.output is not None:
             self.transcript.output.app.invalidate()
 
     def show_commands(self, argument: str) -> None:
-        self.set_show_commands(
-            self.toggle_argument("/show-commands", argument, self.transcript.command_scrollback)
-        )
-        state = "on" if self.transcript.command_scrollback else "off"
-        self.transcript.flash(
-            f"Show commands: {state}. Usage: /show-commands [on|off] ({self.shortcut('g')})"
-        )
+        """`/show-commands [off|activity-panel|scrollback]`; the bare command cycles."""
+        usage = f"Usage: /show-commands [{'|'.join(COMMAND_MODES)}]"
+        # `on` is what `scrollback` was called before there were three modes.
+        argument = canonical("show_commands", argument)
+        if argument and argument not in COMMAND_MODES:
+            raise ValueError(usage)
+        if not argument:
+            current = self.transcript.command_mode
+            argument = COMMAND_MODES[(COMMAND_MODES.index(current) + 1) % len(COMMAND_MODES)]
+        self.set_show_commands(argument)
+        self.transcript.flash(f"Commands: {argument}. {usage}; bare cycles ({self.shortcut('g')})")
 
     def shortcut(self, key: str) -> str:
         """How this session's prompt spells shortcut ``key``, e.g. Ctrl+O."""
@@ -2513,7 +2551,7 @@ class PreviewApp:
             on_interrupt_submit=lambda text: submit(text, mode_override="interrupt"),
             on_command=submit,
             on_cancel=cancel,
-            on_tasks=self.set_show_tasks,
+            on_panel=self.set_show_activity,
             on_thinking=self.show_thinking,
             on_commands=lambda: self.show_commands(""),
             on_effort=self.adjust_effort,

@@ -233,10 +233,10 @@ it is open. Enter, the arrows, Ctrl+J, Ctrl+C, and Ctrl+D never change.
 | Ctrl+L | Choose a model (keeps the conversation; applies from the next request). While a completion menu or a grey history suggestion is showing, Ctrl+L accepts it instead, like Tab or → |
 | Ctrl+N / Ctrl+P | Raise / lower reasoning effort for the next turn |
 | Ctrl+^ | Back to the session this terminal showed before (`/switch -`) |
-| Ctrl+O | Show/hide the [activity panel](#activity-panel): thinking, tool calls and tasks (saves the default) |
-| Ctrl+T | Choose where thinking shows: `o` off, `s` status line, `b` scrollback (saves the default) |
+| Ctrl+O | Show/hide the [activity panel](#activity-panel): thinking, tool calls, tasks and running commands (saves the default) |
+| Ctrl+T | Choose where thinking shows: `o` off, `a` activity panel, `b` scrollback (saves the default) |
 | Ctrl+Y | Copy the current draft to the system clipboard; with an empty editor, `/copy` chooses a response |
-| Ctrl+G | Mirror commands and their output to scrollback (saves the default) |
+| Ctrl+G | Cycle where shell command output shows: off, live in the activity panel, also mirrored to scrollback (`/show-commands`, saves the default) |
 | Ctrl+V | Show/hide edit diffs in scrollback (`/show-edits`, saves the default) |
 | Ctrl+] | Group/ungroup runs of tool calls (`/group-tools`, saves the default) |
 | Ctrl+C | Discard input; cancels the running turn only when the prompt is empty |
@@ -282,9 +282,11 @@ Editor history is kept in memory only.
 
 ## Activity panel
 
-The activity panel is everything live about a turn, drawn inside the editor
-box under its status row: the model's newest thought, the tool calls it is
-making, and the task list. **Ctrl+O** shows or hides all of it at once.
+The activity panel is everything live about a turn: inside the editor box,
+under its status row, the model's newest thought, the tool calls it is making
+and the task list, and just above the box a running command's output (with
+`show_commands activity-panel` or `scrollback`). **Ctrl+O** shows or hides all
+of it at once.
 
 ![A turn three steps into a four-step plan: the thought and its shell calls under the status row, then the task list, then the prompt](assets/screenshots/activity.svg)
 
@@ -295,8 +297,8 @@ glance:
 ┌─ ⠋ Run shell ───────────────────────────── Tasks 2/4 · ✓ 3 tools · 4s ─┐
 │∴ Before running the suite, make sure nothing else reads discount       │
 │  as a flat amount.                                                     │
-│  √ ✎ acme/orders.py · +1 −1                                            │
-│  ◜ $ python3 -m unittest discover tests                                │
+│    √ ✎ acme/orders.py · +1 −1                                          │
+│    ◜ $ python3 -m unittest discover tests                              │
 ├────────────────────────────────────────────────────────────────────────┤
 │✔ Find where the discount is applied                                    │
 │◜ Run the test suite                                                    │
@@ -312,13 +314,16 @@ glance:
 - **The thought**, marked `∴`, is faded and in italics. Its later rows indent
   under its text, so the `∴` stands alone in the column the spinner, the task
   icons and the prompt share.
-- **Tool calls** indent under the thought, one row each: why, then what.
+- **Tool calls** indent a level past the thought's text, one row each: why,
+  then what.
 - **Tasks** sit below a divider, with their status icons in that left column.
 
-With the default `frame_style shaded`, the status row and the thought and tool
-rows under it share a slightly darker shade, so the turn's live rows read as
-one header block above the plan and your draft. With `frame_style borders` a
-divider line separates them instead.
+With the default `frame_style shaded`, there are no lines, just three shades:
+the status row and the thought share a slightly darker header, the tool calls
+sit a step darker still, like a terminal inset under the prose about it, and
+the tasks and your draft keep the box's own shade. With `frame_style borders`
+the indent tells thought and calls apart, and a divider line sets off the
+tasks.
 
 `/config set attach_activity off` moves the thought and tool rows back above
 the editor box, where the status row is the line under them; they still show
@@ -358,17 +363,17 @@ A spinner means the turn is waiting on that row. Running jobs are counted in
 the footer below the editor as `1 job` or `N jobs`, including jobs being waited
 on; the count is hidden at zero. Use `/jobs` for individual job details.
 The phase is the one highlighted word, and a stall shows as its clock climbing
-(`Thinking · 40s`). With the activity panel hidden (Ctrl+O or
-`/show-activity off`, or a pane too small for it), the status row carries what
-the panel would have: a lone running call's command or path
-(`Run shell · make test`), else the plan's active step
-(`Waiting for model · Adding the migration`), so the row still says what the
-turn is doing. Each row holds what it says for a moment, so a burst of
+(`Thinking · 40s`). With the task list hidden (`/show-tasks off`), the
+plan's active step follows the phase as its detail
+(`Waiting for model · Adding the migration`). With the whole activity panel
+hidden (Ctrl+O or `/show-activity off`, or a pane too small for it), a lone
+running call's command or path takes that place (`Run shell · make test`), so
+the row still says what the turn is doing. Each row holds what it says for a moment, so a burst of
 quick calls reads as progress rather than flicker. `◈` marks work pcode runs
 itself, such as compaction.
 The thought is the model's newest, kept until its answer starts streaming;
-that is the default `/show-thinking status-line` mode (see
-[thinking](transcript.md#thinking-status-line-or-scrollback)).
+that is the default `/show-thinking activity-panel` mode (see
+[thinking](transcript.md#thinking-activity-panel-or-scrollback)).
 
 ### Tasks
 
@@ -386,11 +391,19 @@ A finished call gets its line in [scrollback](transcript.md).
 
 ### Showing, hiding and sizing
 
-Press **Ctrl+O** or use `/show-activity [on|off]` (`/show-tasks` still works) to
-hide or show the whole panel, thought, tool calls and tasks together, without
-stopping work or clearing tasks. The status row, prompt and queue stay
-visible. Visibility is saved (default on); `pcode config set show_tasks off`
+Press **Ctrl+O** or use `/show-activity [on|off]` to hide or show the whole
+panel, thought, tool calls, tasks and a running command's output together,
+without stopping work or clearing tasks. The status row, prompt and queue stay
+visible. Visibility is saved (default on); `pcode config set show_activity off`
 sets it from the shell.
+
+Each part can also be switched on its own, inside the panel:
+
+| Part | Switch |
+| --- | --- |
+| Thinking | `/show-thinking activity-panel` (or `off`, or `scrollback` to stream it there instead); Ctrl+T |
+| Tasks | `/show-tasks [on|off]` |
+| A running command's output | `/show-commands activity-panel` (or `off`, or `scrollback` to also keep it there); Ctrl+G |
 
 `/autohide-tasks on` (or `pcode config set autohide_tasks on`) hides the task
 list when the model finishes a turn, keeping the idle prompt compact. It
@@ -482,7 +495,7 @@ The leader works whatever has focus, including a popup's search line or the
 Ctrl+/ takes over Emacs's Ctrl+_ undo chord; Ctrl+X Ctrl+U still undoes.
 
 At the prompt the default keys are `s` send mode, `l` model, `n`/`p` more/less
-effort, `o` tasks widget, `t` thinking, `g` command output, `^` previous
+effort, `o` activity panel, `t` thinking, `g` command output, `^` previous
 session, and `y` copy the draft or choose a response. Custom bindings share the same
 menu and prefix. Each popup lists its own in contextual help; see
 [Popup keys](#popup-keys).

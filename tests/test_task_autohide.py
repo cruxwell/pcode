@@ -34,9 +34,9 @@ def test_autohide_off_keeps_the_widget_after_a_turn():
 def test_toggle_after_autohide_shows_the_widget_again():
     activity = Activity(autohide_tasks=True, plan=[{"content": "Task", "status": "pending"}])
     activity.finish_prompt("done")
-    assert activity.toggle_tasks() is True
+    assert activity.toggle_panel() is True
     assert activity.plan_rows(10)
-    assert activity.toggle_tasks() is False
+    assert activity.toggle_panel() is False
     assert activity.plan_rows(10) == []
 
 
@@ -65,3 +65,16 @@ def test_command_and_preference(tmp_path, monkeypatch):
         app.registry.dispatch("/autohide-tasks invalid")
     save_preferences(autohide_tasks="off")
     assert not PreviewApp().activity.autohide_tasks
+
+
+@pytest.mark.parametrize("plan", [False, True])
+def test_toggle_after_autohide_hides_a_panel_with_nothing_auto_hidden(plan):
+    # Autohide hid nothing on screen (no list, or no tasks), so the first
+    # Ctrl+O hides the panel rather than "showing" what is already there.
+    items = [{"content": "Task", "status": "pending"}] if plan else []
+    activity = Activity(autohide_tasks=True, show_tasks=not plan, plan=items)
+    activity.start_prompt("go")
+    activity.finish_prompt("done")
+    assert activity.panel_looks_shown
+    assert activity.toggle_panel() is False
+    assert not activity.panel_shown

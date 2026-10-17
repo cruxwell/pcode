@@ -43,12 +43,12 @@ def press(app, *keys):
     "prefix,opening", [("ctrl", (Keys.ControlT,)), ("ctrl+b", (Keys.ControlB, "t"))]
 )
 @pytest.mark.parametrize(
-    "selection,mode", [("o", "off"), ("s", "status-line"), ("b", "scrollback")]
+    "selection,mode", [("o", "off"), ("a", "activity-panel"), ("b", "scrollback")]
 )
 @pytest.mark.parametrize("callback", [False, True])
 def test_thinking_chooses_explicit_mode(prefix, opening, selection, mode, callback):
     async def run():
-        activity = SimpleNamespace(thinking_mode="status-line", panel_shown=True, busy=False)
+        activity = SimpleNamespace(thinking_mode="activity-panel", panel_shown=True, busy=False)
         selected = []
         keys, shortcuts = prompt_key_bindings(
             activity,
@@ -65,15 +65,15 @@ def test_thinking_chooses_explicit_mode(prefix, opening, selection, mode, callba
             assert shortcuts.help_title == "Thinking visibility"
             assert shortcuts.hint_rows() == [
                 ("o", "Off"),
-                ("s", "Status line (current)"),
+                ("a", "Activity panel (current)"),
                 ("b", "Scrollback"),
             ]
             assert shortcuts.hint_footer() == [("Esc", "cancel")]
-            assert selected == [] and activity.thinking_mode == "status-line"
+            assert selected == [] and activity.thinking_mode == "activity-panel"
             press(app, selection)
             assert not shortcuts.visible
             assert selected == ([mode] if callback else [])
-            assert activity.thinking_mode == ("status-line" if callback else mode)
+            assert activity.thinking_mode == ("activity-panel" if callback else mode)
             assert draft.buffer.document == before
             assert app.layout.current_control is focus
             assert shortcuts.help_title == "Keybindings · Prompt"
@@ -276,7 +276,7 @@ def test_pending_leader_blocks_eager_editor_defaults():
 
 def test_action_labels_describe_actions_and_follow_state():
     activity = SimpleNamespace(thinking_mode="off", panel_shown=True, busy=False)
-    transcript = SimpleNamespace(command_scrollback=True)
+    transcript = SimpleNamespace(command_mode="scrollback")
     callbacks = PromptCallbacks(
         on_send_mode=lambda: None,
         on_model=lambda: None,
@@ -299,11 +299,14 @@ def test_action_labels_describe_actions_and_follow_state():
         "y": "Copy draft / choose response",
     }
     activity.panel_shown = False
-    transcript.command_scrollback = False
     assert labels()["o"] == "Show activity panel"
-    assert labels()["g"] == "Show command output"
-    del transcript.command_scrollback
-    assert labels()["g"] == "Toggle command output"
+    # Ctrl+G cycles the modes, and says where the next press takes the output.
+    transcript.command_mode = "off"
+    assert labels()["g"] == "Show command output in the activity panel"
+    transcript.command_mode = "activity-panel"
+    assert labels()["g"] == "Mirror command output into scrollback"
+    del transcript.command_mode
+    assert labels()["g"] == "Cycle command output"
 
 
 def test_choices_reject_ambiguous_keys():

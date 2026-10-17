@@ -47,8 +47,8 @@ def test_thinking_is_muted_and_sanitizes_controls():
 
 def test_show_thinking_preference(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    assert SETTINGS["show_thinking"].default == "status-line"
-    assert PreviewApp().activity.thinking_mode == "status-line"
+    assert SETTINGS["show_thinking"].default == "activity-panel"
+    assert PreviewApp().activity.thinking_mode == "activity-panel"
     assert not PreviewApp().activity.show_thinking  # Scrollback is opt-in.
     save_preferences(show_thinking="scrollback")
     assert load_preferences()["show_thinking"] == "scrollback"
@@ -77,9 +77,9 @@ def test_show_thinking_command_redraws_and_saves_default(tmp_path, monkeypatch):
     assert len(redraws) == 2
     assert "RETAINED_REASONING" not in redraws[-1]
     assert load_preferences()["show_thinking"] == "off"
-    # Off and status-line both keep it out of scrollback: nothing to redraw.
+    # Off and activity-panel both keep it out of scrollback: nothing to redraw.
     assert app.registry.dispatch("/show-thinking")
-    assert load_preferences()["show_thinking"] == "status-line"
+    assert load_preferences()["show_thinking"] == "activity-panel"
     assert len(redraws) == 2
     assert app.registry.dispatch("/show-thinking scrollback")
     assert app.registry.dispatch("/show-thinking off")
@@ -91,7 +91,7 @@ def test_show_thinking_command_redraws_and_saves_default(tmp_path, monkeypatch):
     completions = SlashCompleter(app.registry).get_completions(
         Document("/show-thinking "), CompleteEvent()
     )
-    assert [item.text for item in completions] == ["off", "status-line", "scrollback"]
+    assert [item.text for item in completions] == ["off", "activity-panel", "scrollback"]
 
 
 def test_tasks_heading_never_contains_thinking_and_legacy_settings_are_ignored():
@@ -275,7 +275,7 @@ def test_ctrl_t_selects_modes_and_redraws_only_when_scrollback_flips(tmp_path, m
                     ("b", "scrollback", 1),
                     ("b", "scrollback", 1),
                     ("o", "off", 2),
-                    ("s", "status-line", 2),
+                    ("a", "activity-panel", 2),
                     ("b", "scrollback", 3),
                 ]:
                     before = (app.activity.thinking_mode, len(redraws))
@@ -303,7 +303,7 @@ def test_ctrl_t_without_an_app_still_selects_the_activity_mode():
             registry = PreviewApp(console=Console(file=StringIO())).registry
             session = create_prompt(registry, activity=activity, input=pipe, output=DummyOutput())
             with set_app(session.app):
-                for key, mode in [("o", "off"), ("b", "scrollback"), ("s", "status-line")]:
+                for key, mode in [("o", "off"), ("b", "scrollback"), ("a", "activity-panel")]:
                     before = activity.thinking_mode
                     press(session, Keys.ControlT)
                     assert activity.thinking_mode == before

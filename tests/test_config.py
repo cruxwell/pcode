@@ -70,8 +70,9 @@ def test_defaults_and_path_do_not_create_files():
         "stall_log": "on",
         "spinner": "dots",
         "tool_spinner": "arc",
-        "show_thinking": "status-line",
+        "show_thinking": "activity-panel",
         "thinking_max_lines": "10",
+        "show_activity": "on",
         "show_tasks": "on",
         "autohide_tasks": "off",
         # conftest's override; the shipped thresholds are 30 and 100.

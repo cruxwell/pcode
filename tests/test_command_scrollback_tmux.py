@@ -63,8 +63,12 @@ def test_ctrl_g_mirrors_commands_into_scrollback_and_keeps_the_prompt_compact(pa
     assert "$ printf MIRRORED_COMMAND" not in screen
     assert input_rows(screen) == 1
 
+    # Ctrl+G cycles: live in the panel first, then mirrored into scrollback.
     pane("send-keys", "-t", "preview:0.0", "C-g")
-    screen = capture(pane, "Show commands: on")
+    screen = capture(pane, "Commands: activity-panel")
+    assert input_rows(screen) == 1
+    pane("send-keys", "-t", "preview:0.0", "C-g")
+    screen = capture(pane, "Commands: scrollback")
     assert input_rows(screen) == 1
     pane("send-keys", "-t", "preview:0.0", "h", "Enter")
     screen = capture(pane, "TURN_2_DONE")
@@ -79,7 +83,7 @@ def test_ctrl_g_mirrors_commands_into_scrollback_and_keeps_the_prompt_compact(pa
         pane("resize-window", "-t", "preview:0", "-x", str(columns))
         assert input_rows(capture(pane, "❯", columns=columns)) == 1
     pane("send-keys", "-t", "preview:0.0", "C-g")
-    screen = capture(pane, "Show commands: off", columns=35)
+    screen = capture(pane, "Commands: off", columns=35)
     assert input_rows(screen) == 1
     pane("send-keys", "-t", "preview:0.0", "-l", "kept draft")
     time.sleep(0.2)
@@ -97,7 +101,8 @@ def test_toggle_rebuilds_existing_history_without_rerunning_commands(pane):
     def history():
         return pane("capture-pane", "-p", "-S", "-", "-t", "preview:0.0")
 
-    for enabled in (True, False, True, False):
+    # Ctrl+G's cycle from off: only `scrollback` mirrors.
+    for enabled in (False, True, False, False, True, False):
         pane("send-keys", "-t", "preview:0.0", "C-g")
         # Wait for the coalesced terminal handoff, not an old toggle notice.
         deadline = time.monotonic() + TIMEOUT
@@ -129,9 +134,9 @@ def test_resize_replay_reflows_history_without_duplicates_or_stretched_editor(pa
     capture(pane, "❯")
     pane("send-keys", "-t", "preview:0.0", "h", "Enter")
     capture(pane, "TURN_1_DONE")
-    pane("send-keys", "-t", "preview:0.0", "-l", "/show-commands on")
+    pane("send-keys", "-t", "preview:0.0", "-l", "/show-commands scrollback")
     pane("send-keys", "-t", "preview:0.0", "Enter")
-    capture(pane, "Show commands: on")
+    capture(pane, "Commands: scrollback")
     pane("send-keys", "-t", "preview:0.0", "-l", "keep draft")
     for width in (40, 100, 35):
         pane("resize-window", "-t", "preview:0", "-x", str(width))
@@ -144,7 +149,7 @@ def test_resize_replay_reflows_history_without_duplicates_or_stretched_editor(pa
         assert history.count("TURN_1_DONE") == 1
         # The toggle answers a keystroke in the live panel; it never reaches
         # history, not even as a replayed copy.
-        assert "Show commands:" not in scrollback(pane)
+        assert "Commands:" not in scrollback(pane)
 
 
 LIVE_SCRIPT = (
@@ -172,24 +177,29 @@ def test_active_output_precedes_completion_and_keeps_real_cpr_height(pane, relea
     screen = capture(pane, "OUTPUT_LINE_03", running=True)
     assert "TURN_1_DONE" not in screen
     assert "$ printf MIRRORED_COMMAND" in screen
-    assert "Show commands" not in screen
+    assert "Commands:" not in screen
     assert input_rows(screen) == 1
     for width in (40, 100, 35):
         pane("resize-window", "-t", "preview:0", "-x", str(width))
         screen = capture(pane, "OUTPUT_LINE_03", columns=width, running=True)
         assert input_rows(screen) == 1
+    # From `scrollback`, Ctrl+G's cycle turns the output off.
     pane("send-keys", "-t", "preview:0.0", "C-g")
     # The toggle's notice paints a frame before the preview it hides is gone.
     screen = settle(
         pane,
-        lambda screen: "Show commands: off" in screen and "OUTPUT_LINE_03" not in screen,
+        lambda screen: "Commands: off" in screen and "OUTPUT_LINE_03" not in screen,
         running=True,
     )
-    assert "Show commands: off" in screen
+    assert "Commands: off" in screen
     assert "OUTPUT_LINE_03" not in screen
+    # `activity-panel` brings the live preview back.
     pane("send-keys", "-t", "preview:0.0", "C-g")
     screen = capture(pane, "OUTPUT_LINE_03", columns=35, running=True)
     assert input_rows(screen) == 1
+    # And `scrollback` keeps it once the command settles.
+    pane("send-keys", "-t", "preview:0.0", "C-g")
+    capture(pane, "Commands: scrollback", columns=35, running=True)
     release()
     screen = capture(pane, "TURN_1_DONE", columns=35)
     assert "running · Ctrl+G" not in screen
@@ -241,7 +251,7 @@ def test_live_tail_uses_remaining_height_without_disappearing_or_growing_editor(
         if not 1 <= count <= 6:
             pytest.fail(f"height={height} count={count}\n{screen}")
         assert input_rows(screen) == 1
-        assert "Show commands" not in screen
+        assert "Commands:" not in screen
         assert "Ctrl+G to hide" not in screen
         if height == 32:
             assert sum("OUTPUT_LINE_" in line for line in screen.splitlines()) == 6

@@ -310,16 +310,12 @@ def test_main_status_rides_the_editor_box_and_jobs_only_appear_in_footer(command
     assert next(i for i, line in enumerate(lines) if "Notice above status" in line) < status_index
     if commands:
         assert next(i for i, line in enumerate(lines) if "Tool output" in line) < status_index
+    # The thought is the activity band in the box, under the status, with a
+    # divider of its own below it, whether or not the task list shows.
     thought = [i for i, line in enumerate(lines) if "Latest thought" in line]
-    if tasks:
-        # The thought is the activity band in the box, under the status,
-        # with a divider of its own below it.
-        assert thought == [status_index + 1]
-        assert lines[status_index + 1].startswith("│∴ Latest thought")
-        assert lines[status_index + 2].startswith("├─")
-    else:
-        # Hiding the activity panel hides the thought with the tasks.
-        assert thought == []
+    assert thought == [status_index + 1]
+    assert lines[status_index + 1].startswith("│∴ Latest thought")
+    assert lines[status_index + 2].startswith("├─")
     if tasks:
         task = next(i for i, line in enumerate(lines) if "Example task" in line)
         if attached:
@@ -334,9 +330,10 @@ def test_main_status_rides_the_editor_box_and_jobs_only_appear_in_footer(command
             assert task < status_index
             assert "Tasks" not in status
     else:
-        # Hidden tasks give the status no count either.
+        # Hidden tasks give the status no count either; the band's divider
+        # sits right over the draft.
         assert "Tasks" not in status
-        assert lines[status_index + 1].startswith("│❯")
+        assert lines[status_index + 3].startswith("│❯")
     assert "2 jobs" in lines[-1]
     assert sum("jobs" in line for line in lines) == 1
 

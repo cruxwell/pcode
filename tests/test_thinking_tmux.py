@@ -76,7 +76,7 @@ def test_streaming_thinking_enters_history_toggle_redraws_and_cancel_retains(pan
     screen = capture(pane, "draft preserved", running=True)
     assert_compact(screen)
     # Choose status line, where the newest thought gets its row.
-    pane("send-keys", "-t", "preview:0.0", "C-t", "s")
+    pane("send-keys", "-t", "preview:0.0", "C-t", "a")
     # Wait out the mode's notice, which sits where the thought goes.
     screen = settle(
         pane, lambda screen: thought_row(screen) == "REASONING_29 live text", running=True

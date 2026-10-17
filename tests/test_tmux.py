@@ -280,12 +280,7 @@ def _thought_span(lines):
     if status is None or not lines[status + 1].startswith(f"│{THOUGHT_ICON} "):
         return range(0)
     end = status + 2
-    while (
-        end < len(lines)
-        and lines[end].startswith("│  ")
-        and lines[end].strip("│ ")
-        and not lines[end][3:].startswith(TOOL_MARKS)
-    ):
+    while end < len(lines) and lines[end].startswith("│  ") and lines[end][3] != " ":
         end += 1
     return range(status + 1, end)
 
@@ -306,7 +301,7 @@ def tool_lines(screen):
     return [
         line.strip("│ ")
         for line in lines[status + 1 : end]
-        if line.startswith("│  ") and line[3:].startswith(TOOL_MARKS)
+        if line.startswith("│    ") and line[5:].startswith(TOOL_MARKS)
     ]
 
 
@@ -1498,7 +1493,7 @@ def test_thinking_modes_cycle_between_row_and_scrollback_without_growing_prompt(
     screen = capture(pane, "❯", running=True)
     assert "SAVED_REASONING_TEXT" not in screen  # Off: nowhere.
     # Status line: its own rows above the status row, and not in scrollback.
-    pane("send-keys", "-t", "preview:0.0", "C-t", "s")
+    pane("send-keys", "-t", "preview:0.0", "C-t", "a")
     screen = settle(
         pane, lambda screen: thought_row(screen) == "SAVED_REASONING_TEXT", running=True
     )

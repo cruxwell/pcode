@@ -18,7 +18,7 @@ Shell tool calls show a compact two-row preview with their result and duration.
 Long arguments and embedded scripts are abbreviated; short commands stay
 readable. Previews are stripped of terminal control sequences.
 Failure excerpts stay visible. To see a command's full output, use `/tools`, or
-turn on [`show_commands`](#command-output-in-scrollback) to mirror it into
+set [`show_commands`](#command-output-in-scrollback) to `scrollback` to mirror it into
 scrollback.
 
 ## Edit diffs and streaming previews
@@ -109,16 +109,16 @@ they're written, in delta's layout and colored as added or removed, and
 delta's syntax highlighting fills them in a moment later. Side by side, the
 preview waits for delta instead.
 
-## Thinking: status line or scrollback
+## Thinking: activity panel or scrollback
 
 `/show-thinking` picks where the thinking a provider exposes shows up. **Ctrl+T**
-opens a chooser: `o` for off, `s` for status line, or `b` for scrollback; Esc
+opens a chooser: `o` for off, `a` for the activity panel, or `b` for scrollback; Esc
 cancels without changing the mode. A bare `/show-thinking` still cycles through
 the modes:
 
 | Mode | Shows |
 | --- | --- |
-| `status-line` (default) | The newest thought, faded and marked with `∴`, on up to `thinking_max_lines` (default 10) rows of its own in the [activity panel](commands.md#activity-panel), under the status row |
+| `activity-panel` (default; formerly `status-line`) | The newest thought, faded and marked with `∴`, on up to `thinking_max_lines` (default 10) rows of its own in the [activity panel](commands.md#activity-panel), under the status row |
 | `scrollback` | The full thinking, streamed into scrollback in a dim style |
 | `off` | Nothing, and pcode asks the provider for nothing extra |
 
@@ -131,13 +131,13 @@ title rather than the prose under it.
 
 Each mode asks the provider for the text that suits it:
 
-- **Opus 5.5, Sonnet 5.5, Fable 5 and Mythos 5.1 over `anthropic:`**: `status-line`
+- **Opus 5.5, Sonnet 5.5, Fable 5 and Mythos 5.1 over `anthropic:`**: `activity-panel`
   asks for progress updates, the short notes these models write between tool
   calls for whoever is watching. The row stays empty while the model reasons
   and fills in as it moves between tools. `scrollback` asks for full summaries.
 - **Other `anthropic:` models**: summaries. Models older than Opus and Sonnet 5
   only think when asked, so `scrollback` turns their thinking on (more latency
-  and tokens) and `status-line` leaves them alone.
+  and tokens) and `activity-panel` leaves them alone.
 - **`claude:`**: always summaries. Under its CLI the model writes progress notes
   as ordinary text, which already streams as part of the answer, so summaries
   are what give the row something to show.
@@ -147,7 +147,7 @@ Each mode asks the provider for the text that suits it:
 - **`openai-codex:`**: always detailed summaries.
 
 ```sh
-pcode config set show_thinking scrollback   # Default is status-line
+pcode config set show_thinking scrollback   # Default is activity-panel
 ```
 
 Switching into or out of `scrollback` saves the default and rebuilds the retained
@@ -200,7 +200,8 @@ pcode config set tool_error_scrollback on  # Failed-tool diagnostics (default of
 ```
 
 Failed commands follow [command output](#command-output-in-scrollback) instead:
-with `show_commands` off they keep only their summary line; with it on, they
+with `show_commands` `off` or `activity-panel` they keep only their summary
+line; with `scrollback`, they
 show that line plus captured output, but the output only appears when
 `tool_error_scrollback` is also on. Application errors, warnings, and
 cancellation notices are always shown. These display settings don't change what
@@ -261,12 +262,20 @@ A background job's exit uses the same line with its id after the label:
 collected the result with `wait_for_job` or `job_output`, or once the session is
 idle if nothing collected it.
 
-Turn on `show_commands` to mirror **every finished shell tool call and its
-captured output** into scrollback. A failed call's output is mirrored only when
-`tool_error_scrollback` is also on.
+`show_commands` picks where the model's shell commands show their output,
+the way `/show-thinking` does for thinking:
+
+| Mode | Shows |
+| --- | --- |
+| `off` (default) | A summary line in scrollback once the command finishes, nothing while it runs |
+| `activity-panel` | Its output live in the [activity panel](commands.md#activity-panel) while it runs, then just the summary line |
+| `scrollback` (formerly `on`) | The live output, then **every finished shell tool call and its captured output** mirrored into scrollback |
+
+A failed call's output is mirrored only when `tool_error_scrollback` is also on.
 
 ```sh
-pcode config set show_commands on             # Mirror commands and output (default off)
+pcode config set show_commands scrollback     # Live output, then mirror commands and output
+pcode config set show_commands activity-panel # Live output only, nothing kept
 pcode config set command_scrollback_lines 80  # Output rows per block; default 20
 pcode config set command_preview_lines 10     # Live output height; default 10, or 0.25 of the screen
 pcode config set show_commands off            # Summary lines only (default)
@@ -297,13 +306,15 @@ Details:
   `check_command`, and `stop_command` entries in older saved sessions. Other
   tools, and [delegated calls](#delegated-work-in-scrollback), keep their
   summary line.
-- While a foreground `shell` call runs, a live preview above the prompt shows
+- While a foreground `shell` call runs (in `activity-panel` or `scrollback`
+  mode), a live preview above the prompt shows
   its combined stdout/stderr as complete lines arrive. It looks like the settled
   block, with `⟳` and a running elapsed time. It is capped at
   `command_preview_lines` wrapped rows (not counting the command and border
   lines) and uses whatever height is left after the editor, queued prompts, and
-  the activity panel; in a cramped pane it keeps at least a one-line tail.
-  With parallel calls, the most recently updated one is shown.
+  the activity panel's other rows; in a cramped pane it keeps at least a one-line
+  tail. With parallel calls, the most recently updated one is shown. It hides
+  with the rest of the panel (Ctrl+O).
 - The preview shows at most the first 16,000 bytes of output; a capped preview
   is marked, and the rest stays in the command log. Programs that buffer their
   own output must flush it to appear live (for example, `python -u`).
@@ -320,11 +331,12 @@ Details:
 - Verbose commands can push earlier conversation out of terminal history. Raise
   your terminal or tmux scrollback limit before turning this on.
 
-Press **Ctrl+G** to toggle mirroring; it saves the default, so the next launch
-starts the way you left it. `/show-commands on`, `/show-commands off`, and bare
-`/show-commands` do the same. Toggling rebuilds retained scrollback right away:
-on reveals earlier commands and their output, off removes every command block,
-failures included. Nothing is rerun.
+Press **Ctrl+G** to cycle through the modes; it saves the default, so the next
+launch starts the way you left it. `/show-commands off|activity-panel|scrollback`
+picks one, and a bare `/show-commands` cycles (`on` still means `scrollback`).
+Switching mirroring on or off rebuilds retained scrollback right away:
+`scrollback` reveals earlier commands and their output, the other modes remove
+every command block, failures included. Nothing is rerun.
 
 These settings also work through `/config` and apply on the next launch.
 

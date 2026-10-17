@@ -59,21 +59,21 @@ def test_zero_never_hides():
 def test_toggle_in_a_small_pane_overrides_without_turning_tasks_off():
     activity = small_pane_activity()
     assert not activity.panel_shown
-    assert activity.toggle_tasks() is True  # Persisted as on: nothing changes.
+    assert activity.toggle_panel() is True  # Persisted as on: nothing changes.
     assert activity.panel_shown
-    assert activity.toggle_tasks() is True  # Hiding again keeps the preference on.
-    assert not activity.panel_shown and activity.show_tasks
+    assert activity.toggle_panel() is True  # Hiding again keeps the preference on.
+    assert not activity.panel_shown and activity.show_activity
 
 
 def test_toggle_in_a_small_pane_turns_a_disabled_widget_on():
-    activity = small_pane_activity(show_tasks=False)
-    assert activity.toggle_tasks() is True
+    activity = small_pane_activity(show_activity=False)
+    assert activity.toggle_panel() is True
     assert activity.panel_shown
 
 
 def test_crossing_the_threshold_drops_the_override():
     activity = small_pane_activity()
-    activity.toggle_tasks()
+    activity.toggle_panel()
     activity.fit_screen(80, 20)  # Still small: the override stands.
     assert activity.panel_shown
     activity.fit_screen(200, 50)
@@ -86,7 +86,8 @@ def test_autohide_after_a_turn_still_applies_in_a_large_pane():
     activity = Activity(tasks_min_rows=30, autohide_tasks=True, plan=list(PLAN))
     activity.fit_screen(200, 50)
     activity.finish_prompt("done")
-    assert not activity.panel_shown
+    # Autohide is the task list's alone: the panel stays for the next turn.
+    assert activity.panel_shown and not activity.tasks_shown
 
 
 def render_tasks(size: list[Size]) -> list[int]:
@@ -148,21 +149,21 @@ def test_config_applies_thresholds_at_once():
     assert PreviewApp().activity.tasks_min_rows == 30
 
 
-def test_show_tasks_command_in_a_small_pane_never_saves_off():
+def test_show_activity_command_in_a_small_pane_never_saves_off():
     app = PreviewApp(console=Console(file=StringIO()))
     activity = app.activity
     activity.plan = list(PLAN)
     activity.tasks_min_rows = 30
     activity.fit_screen(80, 24)
     assert not activity.panel_shown
-    app.registry.dispatch("/show-tasks")  # Bare: show it here.
-    assert activity.panel_shown and load_preferences().get("show_tasks", "on") == "on"
-    app.registry.dispatch("/show-tasks")  # And hide it again, still saved as on.
-    assert not activity.panel_shown and load_preferences()["show_tasks"] == "on"
-    app.registry.dispatch("/show-tasks on")
+    app.registry.dispatch("/show-activity")  # Bare: show it here.
+    assert activity.panel_shown and load_preferences().get("show_activity", "on") == "on"
+    app.registry.dispatch("/show-activity")  # And hide it again, still saved as on.
+    assert not activity.panel_shown and load_preferences()["show_activity"] == "on"
+    app.registry.dispatch("/show-activity on")
     assert activity.panel_shown
-    app.registry.dispatch("/show-tasks off")
-    assert not activity.panel_shown and load_preferences()["show_tasks"] == "off"
+    app.registry.dispatch("/show-activity off")
+    assert not activity.panel_shown and load_preferences()["show_activity"] == "off"
 
 
 def test_a_running_turn_still_counts_tasks_hidden_by_size():
@@ -214,3 +215,16 @@ def test_thinking_rows_scale_with_the_pane(setting, screen, rows):
         )
         layout = PromptLayout(session, activity, None, session.shortcuts)
         assert len(layout.thought_rows()) == rows
+
+
+def test_bare_show_tasks_turns_the_list_off_in_a_small_pane():
+    app = PreviewApp(console=Console(file=StringIO()))
+    activity = app.activity
+    activity.plan = list(PLAN)
+    activity.tasks_min_rows = 30
+    activity.fit_screen(80, 24)
+    assert not activity.panel_shown and activity.show_tasks
+    app.registry.dispatch("/show-tasks")
+    assert not activity.show_tasks and load_preferences()["show_tasks"] == "off"
+    app.registry.dispatch("/show-tasks")
+    assert activity.show_tasks

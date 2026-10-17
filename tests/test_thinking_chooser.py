@@ -51,7 +51,7 @@ def test_thinking_chooser_refreshes_current_selection(prefix, opening, callback)
         )
         choices = [
             ("o", "off", "Off"),
-            ("s", "status-line", "Status line"),
+            ("a", "activity-panel", "Activity panel"),
             ("b", "scrollback", "Scrollback"),
         ]
         with set_app(app):
@@ -105,7 +105,7 @@ def test_main_shortcut_labels():
         "p": "Decrease thinking effort",
         "o": "Hide activity panel",
         "t": "Select thinking visibility",
-        "g": "Toggle command output",
+        "g": "Cycle command output",
         "y": "Copy draft / choose response",
     }
     activity.panel_shown = False
