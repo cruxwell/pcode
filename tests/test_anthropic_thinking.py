@@ -193,7 +193,7 @@ def test_startup_and_toggle_preserve_effort_and_replace_settings():
         "type": "adaptive",
         "display": "summarized",
     }
-    assert "next turn" in app.transcript.console.file.getvalue()
+    assert "next request" in app.transcript.console.file.getvalue()
 
 
 def test_thinking_on_can_open_anthropic_without_credentials(monkeypatch, tmp_path):

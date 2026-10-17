@@ -932,11 +932,11 @@ class PreviewApp:
             wanted = thinking_settings(model, None, argument)
             display = wanted.get("anthropic_thinking", {}).get("display")
             if display == "updates":
-                lines.append("Asks for progress updates between tool calls from the next turn.")
+                lines.append("Asks for progress updates between tool calls from the next request.")
             elif wanted:
-                lines.append("Asks for thinking summaries from the next turn.")
+                lines.append("Asks for thinking summaries from the next request.")
             else:
-                lines.append("Asks for no readable thinking from the next turn.")
+                lines.append("Asks for no readable thinking from the next request.")
             if provider == "anthropic":
                 # Only scrollback turns thinking on, and only where it was off.
                 if wanted and not ANTHROPIC_THINKS_BY_DEFAULT.search(model):

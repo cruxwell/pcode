@@ -231,7 +231,7 @@ it is open. Enter, the arrows, Ctrl+J, Ctrl+C, and Ctrl+D never change.
 | Alt+Enter | Newline in Emacs mode only (Esc followed by Enter also works) |
 | Tab / arrows | Browse completion; arrows also navigate input/history |
 | Ctrl+L | Choose a model (keeps the conversation; applies from the next request). While a completion menu or a grey history suggestion is showing, Ctrl+L accepts it instead, like Tab or → |
-| Ctrl+N / Ctrl+P | Raise / lower reasoning effort for the next turn |
+| Ctrl+N / Ctrl+P | Raise / lower reasoning effort from the next request |
 | Ctrl+^ | Back to the session this terminal showed before (`/switch -`) |
 | Ctrl+O | Show/hide the [activity panel](#activity-panel): thinking, tool calls, tasks and running commands (saves the default) |
 | Ctrl+T | Choose where thinking shows: `o` off, `a` activity panel, `b` scrollback (saves the default) |

@@ -100,3 +100,21 @@ def test_a_turn_on_another_model_keeps_it_through_a_switch(tmp_path):
     # `$MODEL` runs the whole turn there; the conversation's switch waits for the next turn.
     assert calls == ["side", "side"]
     assert all(entry["settings"].get("top_p") == 0.3 for entry in seen)
+
+
+def test_a_turn_resuming_a_suspended_response_does_not_follow_the_agent(tmp_path):
+    """Pydantic AI refuses to resume a suspended response under a model selector."""
+    from pydantic_ai.messages import ModelResponse, TextPart
+
+    from pcode.live import FollowAgent, TurnModel
+
+    runtime = AgentRuntime(Agent("test", capabilities=[create_coder(tmp_path)]))
+    chosen = TurnModel(None, None, runtime.conversation_id)
+
+    def following() -> bool:
+        capabilities = runtime._run_capabilities(runtime.context, chosen)
+        return any(isinstance(capability, FollowAgent) for capability in capabilities)
+
+    assert following()
+    runtime.context.history = [ModelResponse(parts=[TextPart("…")], state="suspended")]
+    assert not following()

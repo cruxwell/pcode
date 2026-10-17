@@ -142,7 +142,7 @@ model remembers its own level. The footer shows the selected effort.
 
 - Shortcuts stop at the lowest and highest levels. From the provider default they
   start at medium, so Ctrl+N selects high and Ctrl+P selects low.
-- Changes apply from the next turn and keep your draft.
+- Changes apply from the next request, mid-turn too, and keep your draft.
 - Effort does not change the model's thinking configuration. Not every model
   accepts every level; the provider still validates it.
 - On Anthropic and Claude Code, only models that support effort accept

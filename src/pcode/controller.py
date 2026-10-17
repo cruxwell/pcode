@@ -2562,11 +2562,11 @@ class SessionController:
         request in flight keeps its model; a `$MODEL` or `+EFFORT` turn keeps
         its own to the end.
         """
-        previous = self.model
-        running = self.turn_running()
+        # Read before the agent is built: the turn can end, or another start,
+        # while it is.
+        previous, running, borrowed = self.model, self.turn_running(), self.borrowed_turn
         await self.activate_model(model)
-        if running and self.model != previous:
-            borrowed = self.borrowed_turn
+        if running and self.turn_running() and self.model != previous:
             self.view.note(
                 f"This turn stays on {borrowed.model or previous}; the next one uses {model}."
                 if borrowed is not None
