@@ -206,7 +206,7 @@ def test_public_refresh_disk_cache_expiry_stale_fallback_and_no_secrets(monkeypa
         assert len(requests) == 1
         assert service.window("openai:example") == 922_000
         stored = json.loads(path.read_text())
-        assert stored["version"] == 1
+        assert stored["version"] == 2
         assert "cost" not in path.read_text()
         assert "credential" not in path.read_text()
         restored = ContextCatalog(path)
@@ -227,7 +227,7 @@ def test_public_refresh_disk_cache_expiry_stale_fallback_and_no_secrets(monkeypa
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("content", ["not json", "[]", '{"version": 9}', '{"version": 1}'])
+@pytest.mark.parametrize("content", ["not json", "[]", '{"version": 9}', '{"version": 2}'])
 def test_corrupt_cache_and_network_failure_leave_unknown(monkeypatch, tmp_path, content):
     path = tmp_path / "cache.json"
     path.write_text(content)
@@ -241,6 +241,104 @@ def test_corrupt_cache_and_network_failure_leave_unknown(monkeypatch, tmp_path, 
     service = ContextCatalog(path)
     asyncio.run(service.refresh_public())
     assert service.window("openai:example") is None
+
+
+INPUTS = {
+    "anthropic": {
+        "models": {
+            "vision": {
+                "limit": {"context": 1_000},
+                "modalities": {"input": ["text", "image", "pdf"], "output": ["text"]},
+            },
+            "blind": {
+                "limit": {"context": 1_000},
+                "modalities": {"input": ["text"], "output": ["text"]},
+            },
+            "silent": {"limit": {"context": 1_000}},
+            "garbled": {"limit": {"context": 1_000}, "modalities": {"input": "image"}},
+        }
+    }
+}
+
+
+def test_each_source_reports_the_kinds_of_input_it_knows():
+    public = parse_catalog(INPUTS, 1)
+    assert public["anthropic:vision"].inputs == ("text", "image", "pdf")
+    assert public["anthropic:blind"].inputs == ("text",)
+    # Silence and nonsense are unknown, which is not the same as text only.
+    assert public["anthropic:silent"].inputs == ()
+    assert public["anthropic:garbled"].inputs == ()
+    seen = {
+        "models": [{"slug": "x", "context_window": 1_000, "input_modalities": ["text", "image"]}]
+    }
+    assert parse_codex(seen, "x", 1).inputs == ("text", "image")
+    assert parse_codex(CODEX, "example", 1).inputs == ()
+    sees = {"max_input_tokens": 1_000, "capabilities": {"image_input": {"supported": True}}}
+    assert parse_anthropic(sees, 1).inputs == ("text", "image")
+    blind = {"max_input_tokens": 1_000, "capabilities": {"image_input": {"supported": False}}}
+    assert parse_anthropic(blind, 1).inputs == ("text",)
+    assert parse_anthropic({"max_input_tokens": 1_000}, 1).inputs == ()
+
+
+def test_input_kinds_prefer_the_account_and_fall_back_to_the_public_catalog():
+    async def run():
+        async with httpx2.AsyncClient() as client:
+            model = AnthropicModel(
+                "vision", provider=AnthropicProvider(api_key="synthetic", http_client=client)
+            )
+            service = ContextCatalog()
+            service.public = parse_catalog(INPUTS, 1)
+            assert service.inputs(model) == ("text", "image", "pdf")
+            # An account answer with no opinion on input does not hide the public one.
+            service.state(model).limits = ModelLimits(input=100, source="anthropic")
+            assert service.inputs(model) == ("text", "image", "pdf")
+            service.state(model).limits = ModelLimits(
+                input=100, inputs=("text",), source="anthropic"
+            )
+            assert service.inputs(model) == ("text",)
+            assert service.inputs("unknown:model") == ()
+            assert service.inputs("anthropic:blind") == ("text",)
+
+    asyncio.run(run())
+
+
+def test_a_cache_from_before_input_kinds_is_stale_not_discarded(monkeypatch, tmp_path):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx2.Response(200, json=INPUTS)
+
+    real_client = httpx2.AsyncClient
+    monkeypatch.setattr(
+        "pcode.model_metadata.httpx2.AsyncClient",
+        lambda **kwargs: real_client(transport=httpx2.MockTransport(handler), **kwargs),
+    )
+    path = tmp_path / "cache.json"
+    row = {"context": 1_000, "input": None, "output": None}
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "fetched_at": time.time(),
+                "models": {"anthropic:vision": row},
+                "routes": {},
+            }
+        )
+    )
+
+    async def run():
+        service = ContextCatalog(path)
+        # Kept for a start with no network, but fetched again now: it has no input kinds.
+        await asyncio.to_thread(service._load)
+        assert service.window("anthropic:vision") == 1_000
+        assert service.inputs("anthropic:vision") == ()
+        await service.refresh_public()
+        assert len(requests) == 1
+        assert service.inputs("anthropic:vision") == ("text", "image", "pdf")
+        assert json.loads(path.read_text())["version"] == 2
+
+    asyncio.run(run())
 
 
 def test_native_failure_retains_previous_value_and_cancellation_propagates(monkeypatch):

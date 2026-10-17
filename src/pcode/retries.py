@@ -5,6 +5,8 @@ from copy import deepcopy
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai_harness.step_persistence import is_provider_valid
 
+from pcode.images import as_in_history
+
 # Seconds before a request that got no answer is resent, by a turn or a worker.
 RETRY_DELAY = 1.0
 
@@ -24,7 +26,9 @@ class RequestCheckpoint(AbstractCapability):
         # runs the whole before-request chain, and a streamed request's error
         # reaches the consumer while the wrap is still parked on the stream.
         # Keep a copy: the graph mutates history while unwinding a broken stream.
-        messages = list(request_context.messages)
+        # Images `ImageGate` left out of this request go back in: a recovered
+        # history must not lose them because one request could not carry them.
+        messages = as_in_history(list(request_context.messages))
         self.messages = deepcopy(messages) if is_provider_valid(messages) else None
         self.step = ctx.run_step
         return request_context

@@ -4,6 +4,12 @@ Harness announces each write and edit through `_request` while it holds the
 file's lock and before it writes, so the before snapshot is taken there, inside
 the operation rather than from a later reread. The after side is what the write
 put there: the written content, or the same replacements applied to the snapshot.
+
+It also lets `read_file` show an image. Harness 0.56 answers every binary file
+with a note; its next release returns a PNG, JPEG, GIF or WebP as the file
+(pydantic/pydantic-ai#9596), and `_viewed` steps aside for that, so delete it
+when the pin moves past it. Whether the model can see the picture is not decided
+here: `pcode.images.ImageGate` does that on each request.
 """
 
 import posixpath
@@ -11,6 +17,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 from pydantic_ai import CapabilityEvent
+from pydantic_ai.messages import BinaryImage
 from pydantic_ai_harness.filesystem._toolset import (
     FileSystemToolset,
     _apply_replacements,
@@ -18,8 +25,23 @@ from pydantic_ai_harness.filesystem._toolset import (
 )
 
 from pcode.edits import MAX_SOURCE, completed_change
+from pcode.images import (
+    IMAGE_SUFFIXES,
+    MAX_IMAGE_BYTES,
+    MAX_IMAGE_SIDE,
+    image_pixels,
+    image_type,
+)
 from pcode.runtime import EditCompleted
 from pcode.workspace_filesystem import WorkspaceFileSystem
+
+# What Harness 0.56 returns for a file its null-byte check calls binary.
+BINARY_NOTE = "[Binary file: "
+
+
+def too_large(why: str) -> str:
+    """The text in place of an image no provider would take; it says how to see it anyway."""
+    return f"Too large to view: {why}. Make a smaller copy (shell) and read that.\n"
 
 
 @dataclass(kw_only=True)
@@ -111,6 +133,52 @@ class DisplayFileSystemToolset(FileSystemToolset):
                 omitted=snapshot.omitted,
             )
         return result
+
+    async def _read_file(self, scope, ctx, path, *, offset=0, limit=None):
+        result = await super()._read_file(scope, ctx, path, offset=offset, limit=limit)
+        # A newer Harness returns a list for an image; this only fills the gap
+        # while it answers with text. A name alone catches a GIF the null-byte
+        # check took for text, a note catches an image with another name.
+        if isinstance(result, str) and (
+            result.startswith(BINARY_NOTE) or posixpath.splitext(path)[1].lower() in IMAGE_SUFFIXES
+        ):
+            return await self._viewed(scope, path, result)
+        return result
+
+    async def _viewed(self, scope, path, text: str):
+        """The image at `path` as the file, or `text` when it is not one.
+
+        The file is read again: Harness has already judged it and kept only its
+        verdict. One over the limit is not, so a huge file named like an image
+        costs no second read. A file that vanishes in between is whatever `text`
+        said.
+        """
+        try:
+            resolved = await self._safe_resolve(scope, path)
+            size = (await scope.workspace.stat(resolved)).size
+            if size is not None and size > MAX_IMAGE_BYTES:
+                if posixpath.splitext(path)[1].lower() not in IMAGE_SUFFIXES:
+                    return text
+                return (
+                    f"[{path} | {size} bytes]\n{too_large(f'the limit is {MAX_IMAGE_BYTES} bytes')}"
+                )
+            raw = await scope.workspace.read_bytes(resolved)
+        except OSError:
+            return text
+        media_type = image_type(raw)
+        if media_type is None:
+            return text
+        header = f"[{path} | {media_type} | {len(raw)} bytes]\n"
+        if len(raw) > MAX_IMAGE_BYTES:
+            return header + too_large(f"the limit is {MAX_IMAGE_BYTES} bytes")
+        pixels = image_pixels(raw)
+        if pixels and max(pixels) > MAX_IMAGE_SIDE:
+            width, height = pixels
+            return header + too_large(
+                f"{width}x{height} pixels, and the limit is {MAX_IMAGE_SIDE} on a side"
+            )
+        # The type a saved history comes back as, so reopening a session finds it equal.
+        return [header, BinaryImage(data=raw, media_type=media_type)]
 
     async def _write_file(self, scope, ctx, path, content, *, expected_hash=None):
         return await self._recorded(

@@ -21,17 +21,20 @@ MEMORY_LIMIT = 8 * 1024 * 1024  # UTF-8 bytes of unsaved payload text
 MISSING = "Details were not captured for this call (older session or preview)."
 
 
+def omitted(obj: object) -> str:
+    """What stands for a value JSON cannot carry. A file is named and sized, not spelled out."""
+    media_type, data = getattr(obj, "media_type", None), getattr(obj, "data", None)
+    if isinstance(media_type, str) and isinstance(data, bytes):
+        return f"<{media_type}, {len(data):,} bytes omitted>"
+    return f"<{type(obj).__name__} omitted>"
+
+
 def capture(value: object) -> str:
     """Render a bounded text projection, not arbitrary object reprs."""
     text = (
         value
         if isinstance(value, str)
-        else json.dumps(
-            value,
-            ensure_ascii=False,
-            indent=2,
-            default=lambda obj: f"<{type(obj).__name__} omitted>",
-        )
+        else json.dumps(value, ensure_ascii=False, indent=2, default=omitted)
     )
     text = command_text(text)
     if len(text) > PAYLOAD_LIMIT:

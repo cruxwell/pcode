@@ -1,4 +1,4 @@
-"""Context and output metadata, not pricing. Refreshes never run during rendering.
+"""Context, output and input-kind metadata, not pricing. Refreshes never run during rendering.
 
 Public Models.dev metadata is cached on disk. Authenticated metadata is cached
 per model instance only: one account/proxy must not inherit another's limits.
@@ -70,6 +70,9 @@ class ModelLimits:
     maximum: int | None = None
     source: str = ""
     fetched_at: float = 0
+    # Kinds of input the model takes ("text", "image", "pdf"), as its source
+    # lists them. Empty means the source said nothing, which is not text only.
+    inputs: tuple[str, ...] = ()
 
     def working_window(self, override: int | None = None) -> int | None:
         # Input ceilings are distinct from the combined input+output context.
@@ -95,6 +98,13 @@ def configured_window() -> int | None:
     return window
 
 
+def parse_inputs(value) -> tuple[str, ...]:
+    """A source's list of input kinds; anything else is unknown, not empty."""
+    if not isinstance(value, list):
+        return ()
+    return tuple(kind for kind in value if isinstance(kind, str))
+
+
 def parse_catalog(data, fetched_at: float) -> dict[str, ModelLimits]:
     result = {}
     if not isinstance(data, dict):
@@ -114,12 +124,16 @@ def parse_catalog(data, fetched_at: float) -> dict[str, ModelLimits]:
             context = positive_int(limits.get("context"))
             input_limit = positive_int(limits.get("input"))
             if context or input_limit:
+                modalities = model.get("modalities")
                 result[f"{provider}:{name}"] = ModelLimits(
                     context=context,
                     input=input_limit,
                     output=positive_int(limits.get("output")),
                     source="models.dev",
                     fetched_at=fetched_at,
+                    inputs=parse_inputs(
+                        modalities.get("input") if isinstance(modalities, dict) else None
+                    ),
                 )
     return result
 
@@ -140,6 +154,7 @@ def parse_codex(data, name: str, fetched_at: float) -> ModelLimits | None:
                 output=positive_int(model.get("max_output_tokens")),
                 source="codex",
                 fetched_at=fetched_at,
+                inputs=parse_inputs(model.get("input_modalities")),
             )
     return None
 
@@ -149,12 +164,20 @@ def parse_anthropic(data, fetched_at: float) -> ModelLimits | None:
         return None
     input_limit = positive_int(data.get("max_input_tokens"))
     output_limit = positive_int(data.get("max_tokens"))
+    capabilities = data.get("capabilities")
+    images = capabilities.get("image_input") if isinstance(capabilities, dict) else None
+    supported = images.get("supported") if isinstance(images, dict) else None
     if input_limit or output_limit:
         return ModelLimits(
             input=input_limit,
             output=output_limit,
             source="anthropic",
             fetched_at=fetched_at,
+            inputs=("text", "image")
+            if supported is True
+            else ("text",)
+            if supported is False
+            else (),
         )
     return None
 
@@ -250,7 +273,8 @@ class ContextCatalog:
     def _load(self) -> None:
         try:
             data = json.loads(self._path().read_text())
-            if data.get("version") != 1:
+            version = data.get("version")
+            if version not in (1, 2):
                 return
             updated = data["fetched_at"]
             if type(updated) not in (int, float) or not 0 < updated <= time.time():
@@ -268,6 +292,7 @@ class ContextCatalog:
                     output=positive_int(row.get("output")),
                     source="models.dev",
                     fetched_at=updated,
+                    inputs=parse_inputs(row.get("inputs")),
                 )
                 if limits.working_window():
                     parsed[key] = limits
@@ -282,7 +307,9 @@ class ContextCatalog:
                         and isinstance(value, str)
                         and value.startswith("https://")
                     }
-                self._public_updated = updated
+                # A version 1 cache predates input kinds: good enough offline,
+                # but due for a refresh now rather than in a day.
+                self._public_updated = updated if version == 2 else 0
         except OSError, ValueError, TypeError, KeyError, AttributeError:
             pass
 
@@ -295,7 +322,7 @@ class ContextCatalog:
                 temporary = Path(file.name)
                 json.dump(
                     {
-                        "version": 1,
+                        "version": 2,
                         "fetched_at": self._public_updated,
                         "models": {key: asdict(value) for key, value in self.public.items()},
                         "routes": self.routes,
@@ -322,6 +349,18 @@ class ContextCatalog:
         override = configured_window()
         limits = self.limits(model)
         return limits.working_window(override) if limits else override
+
+    def inputs(self, model: str | Model) -> tuple[str, ...]:
+        """Kinds of input `model` takes, or empty when no source says.
+
+        The account's own answer wins, but one that is silent on input must not
+        hide the public catalog's: Anthropic's endpoint predates the field.
+        """
+        if not isinstance(model, str) and (native := self.state(model).limits) and native.inputs:
+            return native.inputs
+        key = catalog_key(model, self.routes)
+        entry = self.public.get(key) if key else None
+        return entry.inputs if entry else ()
 
     async def refresh_public(self) -> None:
         async with self._public_lock:
@@ -414,6 +453,11 @@ catalog = ContextCatalog()
 def context_window(model: str | Model) -> int | None:
     """Synchronous, memory-only lookup shared by the UI and compaction."""
     return catalog.window(model)
+
+
+def model_inputs(model: str | Model) -> tuple[str, ...]:
+    """Kinds of input the model takes, as far as any source says; memory-only like the window."""
+    return catalog.inputs(model)
 
 
 async def refresh_context(model: str | Model | None) -> None:

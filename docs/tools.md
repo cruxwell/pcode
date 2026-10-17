@@ -276,6 +276,19 @@ list of them, all checked before the file is written once. When the model sends
 a malformed list, pcode lets it correct itself: see
 [retries](sessions.md#retries-and-resend).
 
+### Images
+
+`read_file` on a PNG, JPEG, GIF or WebP file shows the model the picture itself
+instead of a note that the file is binary. Up to 3.75 MB and 8000 pixels on a
+side, which is what Anthropic accepts once the file is encoded; a larger one is
+described, and the model can make a smaller copy to look at. Ask it to open a
+screenshot, a chart it just rendered, or a mock-up, and it can see what is wrong
+with it. The file is recognized by its contents, not its name, and the
+transcript row says what was shown (`shot.png → PNG image · 350,374 bytes`).
+
+This needs a model that takes images, and each request carries only so many of
+them: see [images](context.md#images).
+
 ### Shell jobs
 
 A command the model runs keeps running until it finishes, whether or not the

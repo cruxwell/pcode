@@ -53,8 +53,14 @@ two files, so replacing them updates both. iTerm2 starts a tab's
 command with a bare PATH, so its launcher exports yours.
 
 Each `("shot", name)` step writes `docs/assets/screenshots/<name>.svg`. You
-can't look at an SVG, so run with `--text` and read the plain-text dump to
-check a shot shows what the scene meant it to.
+can't look at an SVG, so check a shot one of two ways:
+
+- `--text` prints the plain-text dump, which works on any model.
+- `--png --out tmp/shots` also renders each shot as a PNG (headless Chrome)
+  outside the docs tree, and `read_file` on a PNG shows you the picture when your
+  model takes images. That is the only way to catch what text can't: colors,
+  alignment, clipping, a glyph that rendered as a box. A 2x shot is a few hundred
+  KB, well under the 5 MB `read_file` shows.
 
 ## Writing a scene
 

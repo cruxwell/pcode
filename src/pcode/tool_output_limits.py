@@ -16,6 +16,7 @@ from pydantic_ai_harness.tool_output_limits import (
     indented_json,
 )
 
+from pcode.images import has_files
 from pcode.preferences import SETTINGS, load_preferences
 from pcode.shell import REDUCED_SHELL_OUTPUT, split_envelope
 
@@ -50,6 +51,24 @@ class CodingToolOutputLimits(ToolOutputLimits):
         )
 
     async def after_tool_execute(self, ctx, *, call, tool_def, args, result):
+        if has_files(result):
+            # Reduction measures serialized text. A file serialized is base64: past
+            # the threshold it would be spilled or cut, and the model would get a
+            # preview of the encoding instead of the picture. So only the text
+            # beside the files is reduced, as one block, and the files ride along.
+            value = result.return_value if isinstance(result, ToolReturn) else result
+            items = list(value) if isinstance(value, (list, tuple)) else [value]
+            text = "".join(item for item in items if isinstance(item, str))
+            if not text:
+                return result
+            reduced = await super().after_tool_execute(
+                ctx, call=call, tool_def=tool_def, args=args, result=text
+            )
+            if reduced == text:
+                return result
+            value = reduced.return_value if isinstance(reduced, ToolReturn) else reduced
+            kept = [value, *(item for item in items if not isinstance(item, str))]
+            return replace(result, return_value=kept) if isinstance(result, ToolReturn) else kept
         split = (
             split_envelope(result)
             if isinstance(result, str) and call.tool_name in {"shell", "wait_for_job", "job_output"}

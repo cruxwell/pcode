@@ -13,6 +13,8 @@ from pcode.code_mode import SANDBOXED_TOOLS
 from pcode.diagnostics import strip_controls
 
 if TYPE_CHECKING:
+    from pydantic_ai.messages import BinaryContent
+
     from pcode.jobs import JobRegistry
 
 LABELS = {
@@ -465,6 +467,17 @@ def command_error(content: object) -> str:
     return ("… earlier error output truncated\n" if truncated else "") + excerpt
 
 
+def read_image(content: object) -> "BinaryContent | None":
+    """The picture `read_file` returned beside its header, if it returned one."""
+    if not isinstance(content, list):
+        return None
+    # Here, not at the top: the terminal imports this module, and Pydantic AI is
+    # the agent's cost to pay (see test_startup).
+    from pydantic_ai.messages import BinaryContent
+
+    return next((i for i in content if isinstance(i, BinaryContent) and i.is_image), None)
+
+
 def result_detail(
     name: str, args: dict, content: object, outcome: str, source: str = ""
 ) -> tuple[str, bool]:
@@ -512,6 +525,9 @@ def result_detail(
         # A normal return without a lifecycle end can be a rejected delegation
         # (e.g. max_calls exhausted), not proof the child completed.
         result = "Returned"
+    elif name == "read_file" and (picture := read_image(content)) is not None:
+        kind = picture.media_type.removeprefix("image/").upper()
+        result = f"{kind} image · {len(picture.data):,} bytes"
     elif name == "read_file":
         numbers = re.findall(r"^\s*(\d+)\t", text, re.MULTILINE)
         result = (

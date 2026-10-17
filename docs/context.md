@@ -105,6 +105,37 @@ is left unchanged.
 With automatic compaction off, run `/compact` before the window fills, or `/new`
 for unrelated work.
 
+## Images
+
+An image reaches the model when it opens an image file with
+[`read_file`](tools.md#images). Whether it can see one comes from the model
+catalog, the same source as the context window, with Codex's and Anthropic's own
+model metadata taking precedence. Claude Code (`claude:`) models always count as
+seeing, including aliases such as `claude:opus`.
+
+A model that cannot see an image is never sent one. It gets a note in its place,
+naming the image and saying why it was left out, so reading a screenshot never
+ends a turn. The conversation keeps the picture: switch to a model that can see
+(`/model`) and the next request carries it again.
+
+For a model the catalog does not list (a custom endpoint, a model newer than the
+catalog), the note says its image support is unknown. Set it yourself:
+
+```sh
+PCODE_IMAGE_INPUT=on pcode --model your-provider:your-vision-model
+```
+
+`off` does the opposite: no images, even to a model that takes them.
+
+Every request sends the whole conversation again, so images add up. A request
+carries at most 20 images and 12 MB of them, which fits the strictest provider
+limit (Gemini's 20 MB of inline data per request). Past that the oldest are left
+out ten at a time, as notes that tell the model to read the file again if it
+needs one. Leaving them out in batches keeps the provider's prompt cache: the
+images a request carries change once every ten new ones, not with each. Without
+the cap a long session of screenshots would grow past what the provider accepts,
+and so would the request `/compact` sends to shrink it.
+
 ## Model output limits
 
 Anthropic models need a maximum response length, which covers thinking and

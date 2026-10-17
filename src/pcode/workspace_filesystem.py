@@ -45,6 +45,8 @@ class WorkspaceFileSystem(FileSystem):
                 "Search and listing tools default to the workspace. "
                 "Returned relative paths use that same workspace base. "
                 "Existing protected-file write rules still apply to file tools, not shell commands."
+                " read_file shows an image (PNG, JPEG, GIF, WebP) as the picture itself when "
+                "the model accepts images, so look at one rather than guessing from its name."
             )
 
         return instructions

@@ -39,6 +39,7 @@ from pcode.code_mode import create_code_mode
 from pcode.delegation import DelegationReporting, stream_child_activity
 from pcode.ext import EXTENSION_GUIDE, ExtensionCapabilities
 from pcode.filesystem import DisplayFileSystem
+from pcode.images import ImageGate
 from pcode.isolated_delegation import WorkspaceSubAgents
 from pcode.job_notices import JobNotices
 from pcode.jobs import isolated_registry
@@ -277,6 +278,7 @@ def _worker_capabilities(capabilities: Sequence) -> list:
     shared_types = (
         ToolOutputLimits,
         ModelOutputLimits,
+        ImageGate,
         CacheBustReporting,
         TurnLimits,
     )
@@ -334,6 +336,7 @@ def _delegation(
             # Extension sub-agents have no coder of their own to set it.
             ClaudeWorkspace(workspace, fallback=True),
             ModelOutputLimits(),
+            ImageGate(),
             *([replace(cache_notices)] if cache_notices else []),
             ProviderCacheSettings(),
             replace(output_limits),
@@ -375,6 +378,7 @@ def create_coder(
         IdentifiedPlanning(),
         DelegationReporting(),
         ModelOutputLimits(),
+        ImageGate(),
         *turn_limits(),
     ]
     # Ahead of the worker copy below, so a delegate edits under the same schema.

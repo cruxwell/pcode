@@ -325,3 +325,4 @@ def isolated_context_catalog(monkeypatch, tmp_path):
     monkeypatch.setattr(model_metadata, "catalog", catalog)
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     monkeypatch.delenv("PCODE_CONTEXT_WINDOW", raising=False)
+    monkeypatch.delenv("PCODE_IMAGE_INPUT", raising=False)

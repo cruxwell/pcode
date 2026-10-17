@@ -98,6 +98,17 @@ def test_run_scoping_retries_and_unfinished_states():
     assert archive.calls[-1].state == "unknown"
 
 
+def test_a_file_in_a_result_is_named_and_sized_never_dumped():
+    from pydantic_ai.messages import BinaryContent
+
+    picture = BinaryContent(data=b"\x89PNG\r\n\x1a\n" + b"x" * 5000, media_type="image/png")
+    text = capture(["[shot.png | image/png | 5,008 bytes]\n", picture])
+    assert "image/png, 5,008 bytes omitted" in text
+    assert "PNG" not in text.replace("image/png", "") and len(text) < 200
+    # Anything else that is not JSON is still just named.
+    assert "<object omitted>" in capture({"value": object()})
+
+
 def test_payload_bounds_sanitizing_and_memory_eviction(monkeypatch):
     import pcode.inspection as inspection
 

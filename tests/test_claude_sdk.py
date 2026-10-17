@@ -1098,6 +1098,44 @@ def test_normalize_encodes_binary_sources_as_stable_base64():
     assert claude.lineage(normalized) == claude.lineage(claude.normalize(messages()))
 
 
+def test_an_image_a_tool_returned_reaches_claude_code_as_an_image():
+    import base64
+
+    from pydantic_ai.messages import (
+        BinaryContent,
+        ModelRequest,
+        ModelResponse,
+        ToolCallPart,
+        ToolReturnPart,
+        UserPromptPart,
+    )
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from pcode.claude_sdk.messages import _mcp_content
+
+    picture = BinaryContent(data=b"\x89PNG\r\n\x1a\n\x00\x01", media_type="image/png")
+    history = [
+        ModelRequest([UserPromptPart("look at shot.png")]),
+        ModelResponse([ToolCallPart("read_file", {"path": "shot.png"}, tool_call_id="t1")]),
+        ModelRequest(
+            [ToolReturnPart("read_file", ["[shot.png | image/png]\n", picture], tool_call_id="t1")]
+        ),
+    ]
+    # What the CLI receives is what Pydantic AI's own Anthropic mapping builds.
+    model = AnthropicModel("claude-test", provider=AnthropicProvider(api_key="synthetic"))
+    _, mapped = asyncio.run(model._map_message(history, ModelRequestParameters(), {}))
+    [result] = [b for b in claude.normalize(mapped)[-1]["content"] if b["type"] == "tool_result"]
+    assert _mcp_content(result) == [
+        {"type": "text", "text": "[shot.png | image/png]\n"},
+        {
+            "type": "image",
+            "data": base64.b64encode(picture.data).decode(),
+            "mimeType": "image/png",
+        },
+    ]
+
+
 def test_replay_keeps_open_results_structured_and_answers_missing_ones():
     delta = [
         {

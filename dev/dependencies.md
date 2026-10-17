@@ -467,6 +467,71 @@ marks changed bodies with `REDUCED_SHELL_OUTPUT`.
 Keep the real-shell parent/worker tests, long-line recovery, serialized-history
 readback, and spill-failure fallback tests in `tests/test_tool_output_limits.py`.
 
+### Images (verified Pydantic AI 2.56.0, Harness 0.56.0)
+
+Pydantic AI carries an image as `BinaryContent`, an `ImageUrl` or an
+`UploadedFile`, in a `UserPromptPart`'s content or in a tool result. A tool
+returns one beside text (`[header, image]`) or alone. Only the top level counts:
+`ToolReturnPart.files` and every adapter look no deeper. Where an adapter puts a
+tool-result image varies and needs nothing from pcode: Anthropic, Bedrock (images
+only, by `bedrock_supported_media_kinds_in_tool_returns`) and OpenAI Responses
+put it in the tool result; Gemini does for the MIME types its profile lists and
+otherwise on a following user turn; OpenAI Chat always moves it to a user message
+after the tool results. A reloaded history comes back as `BinaryImage`, which
+compares unequal to the `BinaryContent` it was saved from, so `read_file`
+returns `BinaryImage` up front.
+
+Core has no flag for whether a model takes images, only `supports_image_output`
+and `supports_audio_input`, and an image sent to one that cannot (any Groq
+Llama, a text-only DeepSeek) fails the whole request. Upstream tracks it:
+pydantic-ai#8453 (`supports_image_input` and siblings), #10472 and PR #10476 (a
+file a tool returned becomes a note per request when the model cannot take it).
+pcode does not wait. `ImageGate` asks the catalog, whose `ModelLimits.inputs`
+comes from Models.dev `modalities.input` (listed for all 8,831 models in the feed
+checked 2026-10-17, 5,396 of them with `image`), Codex's `input_modalities` and
+Anthropic's `capabilities.image_input.supported`. When the profile flags ship,
+let `image_support` read them first and keep the catalog for what a profile does
+not say.
+
+`read_file`: Harness 0.56 and 0.57 answer every file the null-byte check calls
+binary with `[Binary file: N bytes…]`. pydantic-ai#9596 (merged 2026-10-16, after
+0.57.0) returns a PNG, JPEG, GIF, WebP or PDF up to 5 MB as `[header,
+BinaryContent]`, sniffing the bytes. `DisplayFileSystemToolset._viewed` fills the
+gap and only acts on a `str`, so it goes quiet by itself once the pin includes
+#9596. Then delete `_viewed`, `BINARY_NOTE` and `IMAGE_SUFFIXES`, keep
+`ImageGate`, and decide about PDFs, which that release also returns and the gate
+does not cover. The size cap below must survive that change, as an
+`after_tool_execute` check if Harness's result no longer passes through
+`_read_file`.
+
+Traps found while building it:
+
+- `ToolOutputLimits` measures a result by serializing it, and only raw `bytes`
+  count as binary. A `[text, BinaryContent]` list was JSON with base64, spilled
+  to a file past 10,000 characters and replaced by a preview of the encoding.
+  `CodingToolOutputLimits` returns any result holding a file untouched; the
+  spill test in `tests/test_read_file_images.py` fails without it.
+- `RequestCheckpoint` is innermost and saves the request as sent, which is after
+  `ImageGate` has swapped images for notes. Saved as is, one failed turn would
+  lose those images for good. The gate marks each copy it makes with the message
+  it came from (an attribute, never serialized) and the checkpoint saves
+  `as_in_history(...)`. Harness's step snapshots read the run's own history and
+  need nothing.
+- Anthropic's 5 MB image limit is on the base64 (5 MiB), so the raw cap is 3/4
+  of it; Harness's #9596 caps at 5,000,000 raw bytes, which lets a 4 MB PNG
+  through to a 400 that every later request repeats. Keep pcode's cap when the
+  stopgap goes. Anthropic also refuses an image over 8000 px a side; PNG and GIF
+  headers say, JPEG and WebP are not checked.
+- The budget leaves the oldest images out `IMAGE_STEP` at a time: moving the line
+  one image per new image would end the prompt cache at that image every request.
+- Harness compaction names a file by identifier and drops prompt images from the
+  summary request's text, so summarizing needs no gate. The kept tail does carry
+  its images, and the gate's budget applies to it.
+- The terminal imports `tool_display`, and `tests/test_startup.py` forbids
+  `pydantic_ai` on that path: import `BinaryContent` inside the function.
+- A `claude:` alias (`claude:opus`) is in no catalog, so the provider prefix, not
+  the name, says it sees.
+
 ### Reasoning effort
 
 `preferences.apply_effort` uses `openai_reasoning_effort` for OpenAI/Codex and

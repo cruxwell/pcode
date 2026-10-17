@@ -131,6 +131,28 @@ def test_safe_result_metrics(name, args, content, expected, failed):
     assert result_detail(name, args, content, "success") == (expected, failed)
 
 
+@pytest.mark.parametrize(
+    ("media_type", "label"),
+    [("image/png", "PNG"), ("image/jpeg", "JPEG"), ("image/webp", "WEBP")],
+)
+def test_reading_an_image_says_what_was_shown(media_type, label):
+    from pydantic_ai.messages import BinaryContent
+
+    content = ["[shot.png | header]\n", BinaryContent(data=b"x" * 12345, media_type=media_type)]
+    assert result_detail("read_file", {"path": "shot.png"}, content, "success") == (
+        f"shot.png → {label} image · 12,345 bytes",
+        False,
+    )
+
+
+def test_a_read_that_returned_no_image_is_not_called_one():
+    # Nothing in the list is a file: the generic fallback, not an image summary.
+    assert result_detail("read_file", {"path": "a.py"}, ["text only"], "success") == (
+        "a.py → Read finished",
+        False,
+    )
+
+
 def test_retry_is_not_reported_as_retrying_and_shows_error_body():
     detail, failed = result_detail(
         "read_file", {"path": "a.py"}, "No such file: private text", "retry"
