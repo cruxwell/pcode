@@ -820,6 +820,26 @@ def remote_resume_workspace(info, workspace: Path, profile) -> Path:
     return created.resolve()
 
 
+def fork_worktree(saved, workspace: Path) -> Path:
+    """A forked session's own worktree, started from the commit its original is on.
+
+    Named after the copy's ID, as any session worktree is, so `pcode -c PREFIX`
+    finds it. Outside git there is nothing to branch, so the copy shares the
+    original's directory as `--fork` always has.
+    """
+    from pcode import worktree
+    from pcode.app import _enter_worktree
+
+    base = worktree.head_commit(workspace)
+    if base is None:
+        return workspace
+    created, _ = _enter_worktree(workspace, saved.info.id[:8], always=True, base=base)
+    created = created.resolve()
+    saved.info.workspace = str(created)
+    saved.save_info(touch=False)
+    return created
+
+
 async def _serve(args: argparse.Namespace) -> None:
     from pcode.app import _enter_worktree, _resume_workspace
     from pcode.preferences import (
@@ -862,6 +882,8 @@ async def _serve(args: argparse.Namespace) -> None:
                 workspace = remote_resume_workspace(saved.info, workspace, profile)
             else:
                 workspace = Path(_resume_workspace(saved.info, workspace)).resolve()
+                if args.fork and args.worktree:
+                    workspace = fork_worktree(saved, workspace)
         except BaseException:
             saved.abandon()  # A copy made for this resume is removed, not left listed.
             raise
