@@ -96,9 +96,8 @@ a PR, so expect a reply about the shape first.
 
 `extensions/web_research.py` adds native `WebSearch` in `auto` mode, and native
 `WebFetch` for `anthropic:` models (`claude:` goes through the CLI and is
-unaffected). `AnthropicOAuthModel.profile` narrows to the 2025 tool versions,
-but `LEGACY_ANTHROPIC_AUTH` is off, so every `anthropic:` session takes the
-API-key path (`auth.anthropic_model`, a plain `AnthropicModel`). On Opus 5.5,
+unaffected). Every `anthropic:` session takes the API-key path
+(`auth.anthropic_model`, a plain `AnthropicModel`). On Opus 5.5,
 Sonnet 5/5.5 and Haiku 5.5 that sends the `20260209` tools, so the sandbox sits
 beside pcode's `shell`.
 
@@ -113,5 +112,5 @@ land in context instead).
 - [ ] Once #10489 (or its replacement) is released, decide whether pcode sets
       `allowed_callers=['direct']`, weighing the risk of a mix-up against the
       context dynamic filtering saves. Until then, the interim lever is
-      `anthropic_supports_dynamic_filtering=False` on the API-key model's profile,
-      the same merge `AnthropicOAuthModel.profile` does.
+      `anthropic_supports_dynamic_filtering=False` merged into the API-key
+      model's profile.

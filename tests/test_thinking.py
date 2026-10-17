@@ -94,16 +94,6 @@ def test_show_thinking_command_redraws_and_saves_default(tmp_path, monkeypatch):
     assert [item.text for item in completions] == ["off", "status-line", "scrollback"]
 
 
-def test_meridian_thinking_toggle_explains_upstream_requirement(tmp_path, monkeypatch):
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    output = StringIO()
-    app = PreviewApp(console=Console(file=output))
-    app.model = "meridian:claude-fable-5-1"
-    assert app.registry.dispatch("/show-thinking scrollback")
-    assert "Thinking Passthrough" in output.getvalue()
-    assert "only changes pcode's display" in output.getvalue()
-
-
 def test_tasks_heading_never_contains_thinking_and_legacy_settings_are_ignored():
     save_preferences(show_thinking="scrollback", thinking_display="expanded", thinking_lines="5")
     app = PreviewApp()

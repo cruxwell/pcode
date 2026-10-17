@@ -154,7 +154,7 @@ def test_native_anthropic_preserves_auth_base_url_and_input_limit(tmp_path):
     asyncio.run(run())
 
 
-def test_public_api_limits_do_not_leak_to_proxies_or_subscription_oauth():
+def test_public_api_limits_do_not_leak_to_proxies():
     async def run():
         async with httpx2.AsyncClient() as client:
             direct = OpenAIResponsesModel(
@@ -174,8 +174,6 @@ def test_public_api_limits_do_not_leak_to_proxies_or_subscription_oauth():
             assert service.window(direct) == 922_000
             assert service.window(proxy) is None
             assert service.window(anthropic) == 200_000
-            anthropic._subscription_oauth = True
-            assert service.window(anthropic) is None
             assert catalog_key("openai-responses:example") == "openai:example"
             assert catalog_key("unknown:example") == "unknown:example"
             assert catalog_key("unqualified") is None
@@ -348,38 +346,6 @@ def test_codex_metadata_reuses_provider_refresh_and_replays_401():
                 ("POST", "auth.openai.com"),
                 ("GET", "chatgpt.com"),
             ]
-
-    asyncio.run(run())
-
-
-def test_oauth_metadata_preserves_headers_and_rotated_credential(tmp_path):
-    from pcode.anthropic_oauth import AnthropicOAuthModel, OAuthTokens, write_tokens
-    from pcode.auth import OAUTH_BETAS
-
-    path = tmp_path / "credential.json"
-
-    def credentials(token):
-        write_tokens(path, OAuthTokens(token, "synthetic-refresh", time.time() + 3600))
-
-    async def run():
-        requests = []
-
-        def handler(request):
-            requests.append(request)
-            assert request.url.path == "/v1/models/example"
-            assert request.headers["authorization"] == "Bearer rotated-synthetic"
-            assert "x-api-key" not in request.headers
-            assert set(request.headers["anthropic-beta"].split(",")) == set(OAUTH_BETAS)
-            return httpx2.Response(200, json={"max_input_tokens": 150_000, "max_tokens": 32_000})
-
-        credentials("initial-synthetic")
-        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
-            model = AnthropicOAuthModel("anthropic:example", path=path, http_client=client)
-            credentials("rotated-synthetic")
-            service = ContextCatalog()
-            await service.refresh_native(model)
-            assert len(requests) == 1
-            assert service.window(model) == 150_000
 
     asyncio.run(run())
 
@@ -569,67 +535,3 @@ def test_astra_catalog_version_filter_regression(tmp_path, monkeypatch):
             assert service.window(model) == 872_000
 
     asyncio.run(run())
-
-
-def test_meridian_native_catalog_is_account_scoped(tmp_path, monkeypatch):
-    from pcode.meridian import meridian_model
-
-    async def run():
-        requests = []
-
-        def handler(request):
-            requests.append(request)
-            assert request.url.path == "/prefix/v1/models"
-            assert request.headers["x-meridian-agent"] == "passthrough"
-            assert request.headers["x-api-key"] == "local-test"
-            return httpx2.Response(
-                200,
-                json={
-                    "data": [
-                        {"id": "claude-fable-5", "context_window": 200_000},
-                        {"id": "claude-fable-5-1", "context_window": 1_000_000},
-                    ]
-                },
-            )
-
-        real_client = httpx2.AsyncClient
-        monkeypatch.setenv("PCODE_MERIDIAN_BASE_URL", "http://localhost:3456/prefix")
-        monkeypatch.setenv("PCODE_MERIDIAN_API_KEY", "local-test")
-
-        class MockClient(real_client):
-            def __init__(self, **kw):
-                super().__init__(transport=httpx2.MockTransport(handler), **kw)
-
-        monkeypatch.setattr(httpx2, "AsyncClient", MockClient)
-        model = meridian_model("meridian:claude-fable-5-1")
-        other = meridian_model("meridian:claude-fable-5-1")
-        service = ContextCatalog(tmp_path / "cache.json")
-        try:
-            await service.refresh_native(model)
-            assert service.window(model) == 1_000_000
-            assert service.limits(model).source == "meridian"
-            assert service.window(other) is None
-            await service.refresh_native(model)
-            assert len(requests) == 1
-        finally:
-            await model.provider.client.close()
-            await other.provider.client.close()
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize(
-    "data",
-    [
-        None,
-        {},
-        {"data": {}},
-        {"data": [None]},
-        {"data": [{"id": "example", "context_window": "1000000"}]},
-        {"data": [{"id": "different", "context_window": 1000000}]},
-    ],
-)
-def test_invalid_meridian_catalog_does_not_guess(data):
-    from pcode.model_metadata import parse_meridian
-
-    assert parse_meridian(data, "example", 123) is None

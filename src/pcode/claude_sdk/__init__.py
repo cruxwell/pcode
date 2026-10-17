@@ -2,8 +2,7 @@
 
 `ClaudeModel` (in `model`) is an `AnthropicModel` whose requests never touch
 its HTTP client. Each conversation keeps one `claude` CLI process (the one
-bundled with `claude-agent-sdk`) alive across requests, where Meridian starts a
-fresh one per request behind a Node proxy. pcode's tools are served to that
+bundled with `claude-agent-sdk`) alive across requests. pcode's tools are served to that
 process as an in-process MCP server whose handlers *park*: the model calls a
 tool, the CLI invokes the handler, the streamed assistant message ends, and
 Pydantic AI runs the tool itself. The next request carries the result, which
@@ -19,7 +18,7 @@ history before the new user message. Otherwise it forks the CLI transcript at
 the last assistant message both share (`resume` + `fork_session` +
 `resume_session_at`: structured history, warm cache), found through a persisted
 index of history hashes (`resume`), and failing that starts over with the
-history replayed as text, as Meridian does. `session_pool` makes that choice
+history replayed as text. `session_pool` makes that choice
 and keeps idle processes within limits. See dev/anthropic-providers.md.
 
 `ClaudeWorkspace` (in `workspace`) points each request's CLI at the agent's

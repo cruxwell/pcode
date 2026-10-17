@@ -104,8 +104,8 @@ def runtime_with(handler) -> AgentRuntime:
     model = AnthropicModel(
         "claude-opus-5",
         provider=AnthropicProvider(
-            # Without this the SDK's default of 2 retries the 5xx itself, which
-            # is the hidden behaviour `meridian.py` now disables.
+            # Without this the SDK's default of 2 retries the 5xx itself, below
+            # the runtime's own visible retry budget.
             anthropic_client=AsyncAnthropic(api_key="t", http_client=client, max_retries=0)
         ),
     )

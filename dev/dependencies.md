@@ -321,16 +321,6 @@ history: `MCPState.undefer()` rebuilds the wrappers around the *same*
 `DeferredLoadingToolset` layer and the turn is sent again. Both are pinned by
 `tests/test_codex_profile.py` and `tests/test_mcp.py`.
 
-Meridian breaks the same contract without a 400. It re-registers client tools
-with the Agent SDK, which ignores `defer_loading`, `tool_reference`, and the
-`tool_search_tool_bm25` server tool. The model therefore sees every deferred
-schema and calls tools directly, and Pydantic AI refuses each call as "not
-available yet" because no search ever landed in history. `MeridianModel.profile`
-drops `ToolSearchTool` and clears both deferral and addition modes. Hidden tools
-are then withheld, found through the local `search_tools`, and sent in full.
-`tests/test_meridian.py` pins the wire shape; this was verified live against
-Meridian 1.76.2.
-
 ### Codex sign-in
 
 `src/pcode/codex_login.py` uses the installed Pydantic AI public
@@ -341,51 +331,6 @@ SDK is required for this flow. Provider `load()` / `save()` callbacks persist
 rotated tokens. The CLI credential loader remains the fallback when pcode's
 file is absent, including when `PCODE_LLM_PROXY` is configured. The stores stay
 separate and pcode never writes or deletes the CLI's file.
-
-### Anthropic subscription sign-in
-
-`src/pcode/anthropic_oauth.py` owns pcode's own `/login`: PKCE (S256)
-authorization code, loopback callback, token exchange/refresh, an owner-only
-credential file, and the `AnthropicOAuthModel` transport. `src/pcode/auth.py`
-holds the Claude Code wire markers (`SubscriptionOAuthWire`,
-`_subscription_oauth`).
-
-The flow parameters are not published API. They were verified against
-independent implementations rather than copied from a blog post, including
-[modelbridge's `oauth/claude.rs`](https://docs.rs/modelbridge/latest/src/modelbridge/oauth/claude.rs.html).
-
-They use the public Claude Code `client_id`, `https://claude.ai/oauth/authorize`
-with `code=true` and `code_challenge_method=S256`, and echo the PKCE verifier
-back as `state` (the callback and the token exchange both compare against it).
-Their differing loopback ports (53692 vs 54545) are the evidence that the
-redirect port is not fixed; pcode defaults to 54545 with
-`PCODE_OAUTH_CALLBACK_PORT` as the override. Use the current token endpoint,
-`https://platform.claude.com/v1/oauth/token`: `console.anthropic.com` is the
-older host still present in third-party code. Re-verify on upgrades;
-entitlements and server behavior can change without notice.
-
-Installed Anthropic SDK 1.6.0 provides a **public** async credentials hook, so no
-private client override is needed: `AsyncAnthropic(credentials=provider)` where
-`provider` is `async def (*, force_refresh: bool = False) -> AccessToken`
-(`anthropic/lib/credentials/`). Its `TokenCache` caches in memory, refreshes
-proactively with single-flight semantics, and `_should_retry` invalidates plus
-replays once on a 401 with `force_refresh=True`; `AccessTokenAuth` sets
-`Authorization: Bearer` and the `oauth-2025-04-20` beta per request. Passing
-`credentials=` also suppresses credential environment lookups, but `base_url`
-must still be passed explicitly so `ANTHROPIC_BASE_URL` cannot redirect
-subscription traffic. Recheck this hook on SDK upgrades; if it disappears,
-`custom_auth` plus `_validate_headers` is the private fallback. Blocking file and
-token-endpoint work runs in `asyncio.to_thread`, and cross-process refreshes are
-serialized with `filelock` (already used by preferences).
-
-`tests/test_anthropic_oauth.py` must keep: the authorization-request assertions,
-real loopback callback success, state-mismatch/error/wrong-path rejection,
-timeout and busy-port errors, stored-file validation, 0600 permissions, refresh
-with and without a rotated refresh token, single-flight refresh, failure messages
-that never contain bodies or tokens, and the end-to-end 401 → forced refresh →
-retry path through the real SDK. Tests must never open a browser, reach a real
-endpoint, or read the developer's credential file; `tests/conftest.py` redirects
-`XDG_CONFIG_HOME` and clears `PCODE_CREDENTIALS_FILE`.
 
 ## Verification workflow and known pitfalls
 
@@ -432,11 +377,11 @@ not inherit a familiar model name's direct-API limit. An explicit
 input/maximum limits.
 
 Harness capabilities that take a `max_*_fraction` resolve the window from
-genai-prices instead. It knows no `meridian:` ids and silently assumes 200k, and
-it gives `openai-codex:` ids the direct API's window by model name (1.05M for a
-model Codex serves at 272k). Pass them pcode's window (`context_window=`), or a
-1M Meridian session gets told it is nearly full at 160k and starts cutting work
-short.
+genai-prices instead. It gives `openai-codex:` ids the direct API's window by
+model name (1.05M for a model Codex serves at 272k) and silently assumes 200k
+for ids it does not know. Pass them pcode's window (`context_window=`), or a
+session is told the wrong fullness and compacts or cuts work short at the wrong
+point.
 
 - Public catalog: [Models.dev JSON](https://models.dev/api.json) and
   [schema](https://github.com/anomalyco/models.dev/blob/dev/README.md).
@@ -525,7 +470,7 @@ readback, and spill-failure fallback tests in `tests/test_tool_output_limits.py`
 ### Reasoning effort
 
 `preferences.apply_effort` uses `openai_reasoning_effort` for OpenAI/Codex and
-`anthropic_effort` for Anthropic/Meridian.
+`anthropic_effort` for Anthropic and Claude Code.
 Verified Pydantic AI 2.50.0's `AnthropicModelSettings.anthropic_effort` and
 `AnthropicModel._build_output_config` send `output_config.effort` without changing
 thinking settings. `_build_output_config` consults `anthropic_supports_effort`
@@ -565,13 +510,6 @@ covering it. Saved usage showed reads stuck at the old user-prompt boundary whil
 the growing tool-loop tail was repeatedly written. Checking only that cache
 controls reach the first request does not catch this; test a multi-request loop.
 
-Meridian is excluded deliberately. Installed 1.71.1's proxy strips client
-`cache_control` (`stripCacheControlDeep`, `stripCacheControlForHashing`) and decides
-reuse from its own lineage hash over the full semantic message prefix; only
-`thinking` / `redacted_thinking` blocks are exempt (`HASH_IGNORED_BLOCK_TYPES`).
-Sending cache settings there changes nothing, and a mutable tail that moves each
-request diverges the lineage regardless.
-
 For every provider, pcode's `IdentifiedPlanning` disables reminder injection by
 default. Planning tool results report changes, and `read_plan` retrieves the stored
 state; UI snapshots are independent of model reminders. Existing reminders in
@@ -587,12 +525,8 @@ in `ModelRequest.metadata`: Pydantic AI's history normalization merges consecuti
 requests and keeps only its reserved `__pydantic_ai__` namespace, so an
 application marker silently vanishes on resume and every turn re-appends its
 reminder. Anthropic and native Codex
-wire-prefix regressions live in `tests/test_meridian_reminders.py` and
+wire-prefix regressions live in `tests/test_reminders.py` and
 `tests/test_planning_cache.py`.
-
-Check the running proxy's `/health` version rather than trusting `meridian --version`:
-the launch service can use a different Node installation than the shell. The
-append-only requirement was reproduced against Meridian 1.72.0's lineage checker.
 
 ### Cache-bust warnings
 
@@ -644,45 +578,6 @@ the same step). A fingerprinting failure clears the window and degrades to the
 plain upstream warning rather than ending the run, since part shapes vary by
 provider and capability. `PCODE_CACHE_DIAGNOSTICS` disables (`off`) or redirects
 the dumps; tests must isolate `XDG_STATE_HOME`.
-
-### Meridian conversation identity
-
-Verified against installed Meridian 1.71.1, Pydantic AI 2.44.0, and Harness 0.31.0:
-Meridian's `passthrough` adapter reads `x-litellm-session-id` (not
-`x-session-affinity`). Without it, client-owned tool-result rounds take the
-`independent-request:headerless-tool-result` path and start fresh SDK sessions,
-replaying history instead of resuming native turns.
-
-`MeridianSessionIdentity.before_model_request` copies request settings/headers and
-supplies Pydantic's `RunContext.conversation_id`. The runtime already preserves
-that ID on saved resume and model changes, and rotates it on `/new`. Harness's
-`SubAgents.shared_capabilities` applies the same policy to every child, including
-disk-defined agents: fresh child runs have their own Pydantic conversation IDs.
-Do not store identity in the provider's default headers: children share models
-and HTTP clients, including during parallel delegation. Non-Meridian requests
-must remain untouched. `tests/test_meridian.py` exercises HTTP serialization,
-tool loops, resume from history, and parallel child identity separation.
-
-Compaction must change the identity. Meridian's `verifyLineage` classifies a
-history whose first messages changed but whose tail still matches as
-`compaction`, resumes the old CLI session, and sends only the messages after the
-matching tail, so pcode's summary never reaches the model. Reproduced live on
-1.72.0 (the model could not recall a fact only the summary held, while reading
-the full uncompacted prefix from cache); 1.76.1 has the same code.
-`session_identity` therefore appends a digest of the summary when the first
-message starts with `SUMMARY_PREFIX`, and leaves uncompacted conversations on the
-plain conversation ID so upgrading pcode does not cold-start every existing
-session.
-
-Meridian 1.71.1's passthrough transform does not advertise `supportsThinking`;
-its stream path strips thinking blocks unless `thinkingPassthrough` is enabled.
-The default is false. Inspect the running proxy's effective settings with a
-read-only GET of `/settings/api/features` (the `passthrough` entry), or use its
-`/settings` UI. Do not silently change global proxy settings from a display toggle.
-`tests/test_meridian.py` covers both forwarded and absent thinking blocks through
-Anthropic SSE decoding and `AgentRuntime`'s saved `ThinkingDelta`/`Thinking` events.
-Only readable provider text enters these events; native model-message history
-remains separate and may also contain opaque signatures.
 
 ### Claude Agent SDK provider (verified 0.2.160, CLI 2.1.283)
 
@@ -805,8 +700,7 @@ newer models reject budgeted thinking. Before login, use `anthropic_model_profil
 without forcing credential resolution. Settings dictionaries are replaced, not
 mutated, so in-flight requests are unaffected; off removes the opt-in and restores
 the provider default. Startup, model switching, session resume, `/show-thinking`,
-and Ctrl+T apply the same policy. Meridian remains display-only and still requires
-proxy-side Thinking Passthrough; never change its global settings automatically.
+and Ctrl+T apply the same policy.
 
 `tests/test_anthropic_thinking.py` checks serialized adaptive/budgeted requests,
 real Anthropic SSE decoding into readable thinking events with both API-key and
@@ -1110,58 +1004,6 @@ bypasses session/tree journals. Remove per-call previews when tool results arriv
 and clear them on cancellation/failure/reset. Preserve `tests/test_shell_streaming.py`,
 `tests/test_jobs.py`, and the real-tmux command-height tests; no-CPR PTYs cannot
 prove compact height.
-
-### Managed Meridian isolation (verified 1.71.1 to 1.76.1)
-
-Official reference: <https://github.com/rynfar/meridian/blob/main/docs/configuration.md>.
-Resolve `meridian` through the version-manager shim before inspecting its package.
-The contract the managed launcher relies on is `MERIDIAN_CONFIG_DIR` /
-`sdk-features.json` (adapter-keyed objects), `MERIDIAN_SESSION_DIR`,
-`MERIDIAN_DEFAULT_PROFILE`, `/health`, and `/settings/api/features`. A healthy
-response contains `status: healthy` and `version`; an unauthenticated response
-contains `auth.loggedIn: false`. The effective `passthrough.thinkingPassthrough`
-must be true. It was verified in the 1.71.1 bundle, run live on 1.72.0, and read
-in the 1.76.1 bundle, so the launcher accepts 1.71.1 or newer and keeps the
-readiness checks as the real guard. Re-read the bundle before raising the floor.
-
-Config-directory isolation alone is insufficient: telemetry, plugin, and update
-paths can still resolve under the real home, so the launcher isolates plugins and
-design-token state and disables persisted telemetry and update checks. Profiles
-are the trap: 1.72 reads `profiles.json` from `~/.config/meridian` whatever
-`MERIDIAN_CONFIG_DIR` says, while 1.76 reads it from the config directory, so a
-private config directory meant the user's profiles on one release and Claude
-Code's default login on the other. The launcher symlinks the user's
-`profiles.json` and `profiles/` into its private directory (never copies: a
-profile can hold a `setup-token` token) and names the profile with
-`MERIDIAN_DEFAULT_PROFILE`, so `/login meridian` knows which login to refresh.
-Claude authentication is shared intentionally; do not describe this mode as a
-credential sandbox.
-
-The session store is deliberately not private. With a per-process store a
-restarted Meridian no longer recognises the conversation (lineage `new`) and
-replays the whole history as flattened text; with the store in pcode's state
-directory a new instance continued the conversation warm. Meridian locks the
-store, so pcode processes can share it, but a SIGKILLed Meridian leaves its lock
-behind: the replacement answered `503 overloaded_error` ("a bookkeeping lock is
-busy") for about a minute before the lock was treated as stale. A normal
-`terminate()` releases it. `meridian_managed` defaults to `auto`, which probes
-the developer's real proxy and can start a real Meridian, so `tests/conftest.py`
-sets `PCODE_MERIDIAN_MANAGED=0`; lifecycle tests clear it and mock the process.
-
-`claude auth login` without a TTY still opens the browser and waits on its
-localhost callback, but it also prints a paste-a-code fallback URL wrapped in
-OSC 8 escapes and then `Paste code here if prompted > ` with no newline, so the
-next message lands on the same line. `/login meridian` strips escapes and the
-prompt rather than dropping lines, and replaces the fallback URL with the command
-to run in a terminal. Meridian's own `meridian profile login NAME` is that same
-command with `CLAUDE_CONFIG_DIR` set to the profile's directory.
-
-`pcode --upgrade-meridian` cannot trust `which meridian`: a launchd-run proxy can
-come from a different Node installation than the shell's version-manager shim
-(this machine had Homebrew's and asdf's, both 1.72.0). It upgrades the `PATH`
-install with the `PATH` npm and the proxy's own install, found from `/health`'s
-`claudeExecutable.path` inside the package, with the npm in that prefix.
-
 
 ### Completed file diffs (verified Harness 0.52.0)
 

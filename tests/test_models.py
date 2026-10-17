@@ -18,7 +18,6 @@ from pcode.models import (
 @pytest.fixture(autouse=True)
 def isolated_providers(monkeypatch, tmp_path):
     for name in (
-        "PCODE_ANTHROPIC_AUTH",
         "ANTHROPIC_API_KEY",
         "PCODE_LLM_PROXY",
         "CODEX_HOME",
@@ -29,7 +28,6 @@ def isolated_providers(monkeypatch, tmp_path):
         for group in requirements:
             for name in group:
                 monkeypatch.delenv(name, raising=False)
-    monkeypatch.delenv("PCODE_MERIDIAN_BASE_URL", raising=False)
     monkeypatch.setattr("pcode.models.shutil.which", lambda _: None)
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
@@ -83,12 +81,9 @@ def test_current_provider_stays_visible():
     assert active_providers("test:local") == set()
 
 
-@pytest.mark.parametrize("source", ["api-key", "oauth"])
-@pytest.mark.usefixtures("legacy_anthropic_auth")
-def test_anthropic_configuration(monkeypatch, source):
-    monkeypatch.setenv("PCODE_ANTHROPIC_AUTH", source)
-    if source == "api-key":
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-key")
+def test_anthropic_configuration(monkeypatch):
+    assert active_providers(None) == set()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-key")
     assert active_providers(None) == {"anthropic"}
 
 
@@ -112,32 +107,20 @@ def test_codex_presence_not_contents(monkeypatch, tmp_path):
     forbidden.assert_not_called()
 
 
-@pytest.mark.usefixtures("legacy_anthropic_auth")
 def test_proxy_does_not_limit_providers(monkeypatch):
     monkeypatch.setenv("PCODE_LLM_PROXY", "http://localhost:8080")
-    monkeypatch.setenv("PCODE_ANTHROPIC_AUTH", "oauth")
-    monkeypatch.setenv("PCODE_MERIDIAN_BASE_URL", "http://localhost:8888")
-    assert active_providers("openai-codex:custom") == {"openai-codex", "anthropic", "meridian"}
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-key")
+    assert active_providers("openai-codex:custom") == {"openai-codex", "anthropic"}
 
 
-def test_legacy_anthropic_routes_are_off_by_default(monkeypatch, tmp_path):
+def test_anthropic_model_without_a_key_stays_unresolved():
     from pcode.agent import resolve_model
 
-    monkeypatch.setenv("PCODE_MERIDIAN_BASE_URL", "http://localhost:8888")
-    monkeypatch.setenv("PCODE_ANTHROPIC_AUTH", "oauth")
-    credentials = tmp_path / "credentials.json"
-    credentials.write_text("{}")
-    monkeypatch.setenv("PCODE_CREDENTIALS_FILE", str(credentials))
-    # Neither a Meridian proxy nor a stored sign-in offers a model, even when
-    # the current model is a saved Meridian one.
-    assert active_providers("meridian:claude-opus-5") == set()
-    with pytest.raises(ValueError, match="switch to claude:claude-opus-5"):
-        resolve_model("meridian:claude-opus-5")
-    # Without a key an Anthropic model stays unresolved, not signed in.
+    # Unresolved, so the terminal opens and the first prompt explains the key.
     assert resolve_model("anthropic:claude-opus-5") == "anthropic:claude-opus-5"
 
 
-@pytest.mark.parametrize("provider", sorted(PROVIDERS.keys() - {"meridian", "claude"}))
+@pytest.mark.parametrize("provider", sorted(PROVIDERS.keys() - {"claude"}))
 def test_every_listed_provider_is_installed(provider):
     # A picker entry that raises ImportError on switch is worse than none.
     infer_provider_class(provider)
@@ -174,10 +157,10 @@ def test_endpoint_providers_need_both_variables(monkeypatch):
 
 
 def test_catalog_per_provider_and_typed_only_providers():
-    models = model_catalog({"google", "xai", "openrouter", "meridian"})
+    models = model_catalog({"google", "xai", "openrouter", "claude"})
     assert any(name.startswith("google:gemini") for name in models)
     assert any(name.startswith("xai:grok") for name in models)
-    assert any(name.startswith("meridian:claude") for name in models)
+    assert any(name.startswith("claude:claude") for name in models)
     assert not any(name.startswith("openrouter:") for name in models)
     assert not any(name.startswith("anthropic:") for name in models)
 

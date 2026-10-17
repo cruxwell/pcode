@@ -29,7 +29,7 @@ These are deterministic and free. They assert request structure, which is the
 part we control:
 
 ```sh
-uv run pytest -q tests/test_planning_cache.py tests/test_meridian_reminders.py \
+uv run pytest -q tests/test_planning_cache.py tests/test_reminders.py \
   tests/test_prompt_cache.py tests/test_cache_report.py
 uv run ruff check .
 ```

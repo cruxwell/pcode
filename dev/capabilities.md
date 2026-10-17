@@ -44,7 +44,6 @@ Every class in `src/pcode` that derives from
 | `IdentifiedPlanning` | `planning.py` | Harness `Planning` | `before_model_request`, `wrap_model_request`, `get_instructions`, `after_tool_execute` | Static | Replace Harness's planning guidance and `write_plan` description with text that names the user as the plan's reader and sets a trigger below "multi-step work"; show stable plan step ids so the model stops confusing them with row numbers; publish `PlanSnapshot` events. |
 | `BackgroundDelegation` | `background_delegation.py` | Harness `BackgroundTools` | `wrap_tool_execute`, `wrap_node_run`, `wrap_run_event_stream`, `after_node_run`, `wrap_run` | Static, parent only | When the user steers mid-delegation, return the `delegate_task` call so the message reaches the model now; the child keeps running and its result is enqueued. Holds the run open, still streaming child events, until every detached child reports. |
 | `DelegationReporting` | `delegation.py` | `AbstractCapability` | `wrap_tool_execute` | Static, parent only | Bind the parent's `delegate_task` call to its child's event stream so worker activity lands under the right tool call. |
-| `MeridianSessionIdentity` | `meridian.py` | `AbstractCapability` | `before_model_request` | Static; shared | Tag each request with the conversation's identity, stable across resume, model switch, and sub-agents. |
 | `ModelOutputLimits` | `output_limits.py` | `AbstractCapability` | `before_model_request` | Static; shared | Default `max_tokens` to the serving model's advertised maximum, per request. |
 | `MCPServers` | `mcp_notice.py` | `AbstractCapability` | `get_instructions`, `before_model_request` | Static | Tell the model which MCP servers are enabled, and again when that changes mid-session. |
 | `CacheBustReporting` | `cache_warnings.py` | Harness `WarnOnCacheBusts` | `after_model_request` | Static when the `cache_notices` preference is on; shared | Surface prompt-cache misses as a `CacheBustEvent` for the UI. |
@@ -72,9 +71,6 @@ bundled extensions, `web_research.py` and `session_history.py`, register plain
 | --- | --- | --- | --- |
 | `ClaudeModel` | `claude_sdk/model.py` | `AnthropicModel` | `claude:` models: requests go through a long-lived Claude Code CLI process instead of HTTP, reusing Pydantic AI's Anthropic message mapping. |
 | `ClaudeProvider` | `claude_sdk/model.py` | `AnthropicProvider` | Names responses `claude`; its client is never called. |
-| `MeridianModel` | `meridian.py` | `AnthropicModel` | Anthropic-compatible Meridian transport with a profile for client-side tool execution. |
-| `MeridianProvider` | `meridian.py` | `AnthropicProvider` | Points the Anthropic client at Meridian. |
-| `AnthropicOAuthModel` | `anthropic_oauth.py` | `SubscriptionOAuthWire`, `AnthropicModel` | Anthropic over pcode's own stored subscription login. |
 | `ProxiedCodexProvider` | `llm_proxy.py` | `OpenAICodexProvider` | Codex through a proxy on a dedicated HTTP client, without touching process-wide HTTP settings. |
 | `DisplayFileSystemToolset` | `filesystem.py` | Harness `FileSystemToolset` | Snapshots a file under Harness's write lock to build before/after diffs. |
 | `JobShellToolset` | `shell_tools.py` | Harness `ShellToolset` | Replaces the persistent shell tool with `shell`, `wait_for_job`, `job_output`, `stop_job`, `list_jobs`. |

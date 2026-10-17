@@ -44,7 +44,6 @@ from pcode.job_notices import JobNotices
 from pcode.jobs import isolated_registry
 from pcode.mcp import configured_servers
 from pcode.mcp_notice import MCPServers
-from pcode.meridian import MeridianSessionIdentity
 from pcode.output_limits import ModelOutputLimits
 from pcode.planning import IdentifiedPlanning
 from pcode.preferences import SETTINGS, load_preferences, subagent_models
@@ -277,7 +276,6 @@ def _worker_capabilities(capabilities: Sequence) -> list:
     """
     shared_types = (
         ToolOutputLimits,
-        MeridianSessionIdentity,
         ModelOutputLimits,
         CacheBustReporting,
         TurnLimits,
@@ -335,7 +333,6 @@ def _delegation(
         shared_capabilities=[
             # Extension sub-agents have no coder of their own to set it.
             ClaudeWorkspace(workspace, fallback=True),
-            MeridianSessionIdentity(),
             ModelOutputLimits(),
             *([replace(cache_notices)] if cache_notices else []),
             ProviderCacheSettings(),
@@ -358,7 +355,7 @@ def create_coder(
     _ensure_bundled_rg()
     # Delegation is pcode's own `WorkspaceSubAgents`, added below. Caching is
     # `ProviderCacheSettings`' per-provider choice: Coder's default `cache=True`
-    # would also reach Meridian and OpenAI's explicit-breakpoint models.
+    # would also reach OpenAI's explicit-breakpoint models.
     coder = Coder(sub_agents=False, caching=False)
     output_limits = create_tool_output_limits()
     # Keep Coder's tool selection, including its persistent shell (as a
@@ -377,7 +374,6 @@ def create_coder(
         ClaudeWorkspace(workspace),
         IdentifiedPlanning(),
         DelegationReporting(),
-        MeridianSessionIdentity(),
         ModelOutputLimits(),
         *turn_limits(),
     ]
@@ -480,33 +476,16 @@ def resolve_model(model: str) -> Model | str:
     """
     if model.startswith("openai-codex:"):
         return codex_model(model)
-    if model.startswith("meridian:"):
-        from pcode.models import LEGACY_ANTHROPIC_AUTH
-
-        if not LEGACY_ANTHROPIC_AUTH:
-            name = model.removeprefix("meridian:")
-            raise ValueError(f"Meridian is turned off; switch to claude:{name} with /model.")
-        from pcode.meridian import meridian_model
-
-        return meridian_model(model)
     if model.startswith("claude:"):
         from pcode.claude_sdk import claude_model
 
         return claude_model(model)
     if not model.startswith("anthropic:"):
         return model
-    from pcode.anthropic_oauth import anthropic_auth_source
     from pcode.auth import anthropic_model
 
-    auth_source = anthropic_auth_source()
-    if auth_source == "oauth":
-        from pcode.anthropic_oauth import AnthropicOAuthModel
-
-        return AnthropicOAuthModel(model)
-    if auth_source == "api-key":
-        key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-        return anthropic_model(model, key) if key else model
-    raise ValueError("PCODE_ANTHROPIC_AUTH must be api-key or oauth.")
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    return anthropic_model(model, key) if key else model
 
 
 @dataclass(frozen=True)

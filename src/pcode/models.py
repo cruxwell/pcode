@@ -25,7 +25,6 @@ PROVIDERS = {
     "google-cloud": "Google Cloud",
     "groq": "Groq",
     "heroku": "Heroku",
-    "meridian": "Meridian",
     "moonshotai": "Moonshot",
     "nebius": "Nebius",
     "ollama": "Ollama",
@@ -80,42 +79,26 @@ ENV_PROVIDERS: dict[str, tuple[tuple[str, ...], ...]] = {
     "zai": (("ZAI_API_KEY",),),
 }
 
-# The subscription routes that predate `claude:` models (the Claude Agent SDK):
-# `meridian:` models and pcode's own Anthropic browser sign-in. Off while
-# `claude:` is tried as the way forward; True restores both unchanged.
-# `anthropic:` models on ANTHROPIC_API_KEY work either way.
-LEGACY_ANTHROPIC_AUTH = False
-
 
 def login_sources() -> tuple[str, ...]:
     """What `/login` accepts; the first is what a bare `/login` signs in to."""
-    if LEGACY_ANTHROPIC_AUTH:
-        return ("anthropic", "openai-codex", "claude", "meridian")
     return ("claude", "openai-codex")
 
 
 def logout_sources() -> tuple[str, ...]:
-    """What `/logout` offers; the first is what a bare `/logout` removes.
-
-    `/logout anthropic` is accepted either way, so a sign-in stored while the
-    legacy route was on can still be cleared.
-    """
-    if LEGACY_ANTHROPIC_AUTH:
-        return ("anthropic", "openai-codex")
+    """What `/logout` offers; the first is what a bare `/logout` removes."""
     return ("openai-codex",)
 
 
 def anthropic_credential_hint() -> str:
     """How to give an `anthropic:` model that has no credential one."""
-    if LEGACY_ANTHROPIC_AUTH:
-        return "Run /login, or set ANTHROPIC_API_KEY."
     return "Set ANTHROPIC_API_KEY, or switch to a claude: model."
 
 
 # Catalog prefix -> KnownModelName prefixes whose IDs it accepts. Codex has no
 # separate SDK catalog, so expose every OpenAI model ID and let the provider
-# enforce account access; Meridian and Claude Code front Anthropic models.
-CATALOG_SOURCES = {"openai-codex": "openai", "meridian": "anthropic", "claude": "anthropic"}
+# enforce account access; Claude Code fronts Anthropic models.
+CATALOG_SOURCES = {"openai-codex": "openai", "claude": "anthropic"}
 
 
 def claude_code_configured() -> bool:
@@ -148,18 +131,10 @@ def active_providers(current: str | None) -> set[str]:
     active = set()
     if current and current.partition(":")[0] in PROVIDERS:
         active.add(current.partition(":")[0])
-    if os.environ.get("PCODE_MERIDIAN_BASE_URL", "").strip() or shutil.which("meridian"):
-        active.add("meridian")
     if claude_sdk_installed() and claude_code_configured():
         active.add("claude")
     active.update(name for name, needs in ENV_PROVIDERS.items() if _configured(needs))
-    from pcode.anthropic_oauth import anthropic_auth_source
-
-    # Resolution checks for a stored login file, never its contents.
-    source = anthropic_auth_source()
-    if source == "oauth" or (
-        source == "api-key" and os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    ):
+    if os.environ.get("ANTHROPIC_API_KEY", "").strip():
         active.add("anthropic")
     from pcode.codex_login import have_credentials
 
@@ -176,9 +151,6 @@ def active_providers(current: str | None) -> set[str]:
     allowed = load_preferences().get("model_providers", "")
     if allowed:
         active.intersection_update(name.strip() for name in allowed.split(","))
-    if not LEGACY_ANTHROPIC_AUTH:
-        # Even when the current model is a saved `meridian:` one.
-        active.discard("meridian")
     return active
 
 

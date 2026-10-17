@@ -141,9 +141,6 @@ def test_defaults_and_path_do_not_create_files():
         ("repo_context_nested", "off"),
         ("repo_context_nested", "pointer"),
         ("repo_context_nested", "contents"),
-        ("meridian_managed", "auto"),
-        ("meridian_managed", "on"),
-        ("meridian_managed", "off"),
         ("transcript_max_chars", "4000000"),
         ("theme", "light"),
         ("editing_mode", "vi"),
@@ -211,25 +208,10 @@ def test_reset_clears_known_settings_and_keeps_unknown_keys():
 
 
 def test_reset_names_the_settings_whose_loss_needs_action():
-    save_preferences(anthropic_auth="oauth", trusted_projects="/repo")
+    save_preferences(trusted_projects="/repo")
     message = configure(["reset"])
-    assert "/login" in message and "trusted again" in message
+    assert "trusted again" in message
     assert read_preferences() == {}
-
-
-def test_legacy_auth_settings_are_unlisted_but_still_work(monkeypatch):
-    legacy = ("anthropic_auth", "meridian_managed")
-    assert not set(legacy) & set(json.loads(configure(["list"])))
-    assert not [arg for arg in config_arguments() if any(key in arg for key in legacy)]
-    with pytest.raises(ValueError) as error:
-        configure(["get", "unknown"])
-    assert "meridian_managed" not in str(error.value)
-    configure(["set", "meridian_managed", "off"])
-    assert configure(["get", "meridian_managed"]) == "off"
-
-    monkeypatch.setattr("pcode.models.LEGACY_ANTHROPIC_AUTH", True)
-    assert set(legacy) <= set(json.loads(configure(["list"])))
-    assert "set meridian_managed on" in config_arguments()
 
 
 def test_reset_without_a_file_writes_nothing():
@@ -242,7 +224,6 @@ def test_reset_without_a_file_writes_nothing():
     [
         ["set", "repo_context_walk_up", "true"],
         ["set", "repo_context_nested", "on"],
-        ["set", "meridian_managed", "true"],
         ["set", "unknown", "value"],
         ["get", "unknown"],
         ["unset", "unknown"],
@@ -321,7 +302,7 @@ def test_invalid_saved_values_report_builtin_defaults():
     path.write_text(json.dumps({"theme": [], "effort": 42, "autocompact": True, "model": ""}))
     listed = json.loads(configure([]))
     assert listed == {key: SETTINGS[key].default for key in listed}
-    assert set(SETTINGS) - set(listed) == {"anthropic_auth", "meridian_managed"}
+    assert set(listed) == set(SETTINGS)
 
 
 def test_failed_atomic_write_keeps_old_file_and_cleans_temporary_file():

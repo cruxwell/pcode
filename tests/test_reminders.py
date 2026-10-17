@@ -4,7 +4,6 @@ import asyncio
 import json
 
 import httpx2
-import pytest
 from anthropic import AsyncAnthropic
 from anthropic_mock import anthropic_response
 from pydantic_ai import Agent
@@ -17,8 +16,7 @@ from pcode.cache_settings import ANTHROPIC_CACHE_SETTINGS
 from pcode.planning import IdentifiedPlanning
 
 
-@pytest.mark.parametrize("provider_name", ["meridian", "anthropic"])
-def test_wire_prefix_tools_plan_changes_and_saved_resume(provider_name):
+def test_wire_prefix_tools_plan_changes_and_saved_resume():
     async def run():
         bodies = []
         store = InMemoryPlanStore()
@@ -46,15 +44,10 @@ def test_wire_prefix_tools_plan_changes_and_saved_resume(provider_name):
                 },
             )
 
-        class Provider(AnthropicProvider):
-            @property
-            def name(self):
-                return provider_name
-
         async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http:
             model = AnthropicModel(
                 "claude-opus-5",
-                provider=Provider(
+                provider=AnthropicProvider(
                     anthropic_client=AsyncAnthropic(api_key="test", http_client=http)
                 ),
             )
@@ -63,9 +56,7 @@ def test_wire_prefix_tools_plan_changes_and_saved_resume(provider_name):
                 return Agent(
                     model,
                     capabilities=[IdentifiedPlanning(store=store)],
-                    model_settings=ANTHROPIC_CACHE_SETTINGS
-                    if provider_name == "anthropic"
-                    else None,
+                    model_settings=ANTHROPIC_CACHE_SETTINGS,
                 )
 
             agent = make_agent()
@@ -94,10 +85,7 @@ def test_wire_prefix_tools_plan_changes_and_saved_resume(provider_name):
 
         assert len(bodies) == 5
         assert "<plan-reminder>" not in json.dumps(bodies)
-        if provider_name == "anthropic":
-            assert all(
-                body["cache_control"] == {"type": "ephemeral", "ttl": "5m"} for body in bodies
-            )
+        assert all(body["cache_control"] == {"type": "ephemeral", "ttl": "5m"} for body in bodies)
         for before, after in zip(bodies, bodies[1:]):
             assert after["messages"][: len(before["messages"])] == before["messages"]
 
@@ -109,7 +97,7 @@ def test_append_reminder_skips_a_history_ending_in_a_response():
 
     from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
-    from pcode.meridian_reminders import append_reminder
+    from pcode.reminders import append_reminder
 
     def context(messages):
         ctx = SimpleNamespace(run_id="run", conversation_id="conv", messages=list(messages))

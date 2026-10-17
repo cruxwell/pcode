@@ -2,9 +2,9 @@
 
 Anthropic returns each server-side `web_search` hit as an opaque
 `encrypted_content` blob that only the organization it was issued to can
-decrypt. Replay is therefore credential-bound: sign in as a different account
--- a second `/login`, another `PCODE_CONFIG_DIR`, an API key in place of a
-subscription -- and the request comes back as
+decrypt. Replay is therefore credential-bound: switch to a key from a different
+organization (a new `ANTHROPIC_API_KEY`, another `PCODE_CONFIG_DIR`) and the
+request comes back as
 `400 Invalid encrypted_content in search_result block`. The blobs live in the
 message history, so without a repair every later request in that session fails
 the same way and the conversation is stranded.
