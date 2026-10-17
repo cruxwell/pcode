@@ -49,15 +49,16 @@ went right, and do not restate what the harness already says clearly.
 For each moment write one row: what happened, where (quote or cite the step), what the session \
 did about it, and a verdict on that response as the session shows it: `worked` (a later attempt \
 succeeded because of it), `made it worse`, `no observed effect`, or `confounded`. Only a \
-divergence can show `worked`. Prefer `confounded` when several things changed at once or one \
-attempt is all the evidence: a made-up attribution misleads every later session.
+divergence can show `worked`; a risk that did not bite gets `no observed effect`. Prefer \
+`confounded` when several things changed at once or one attempt is all the evidence: a made-up \
+attribution misleads every later session.
 
 # Earlier lessons
 
 Read the lesson log at `{log}` (it may not exist yet). Do not re-propose a lesson the user \
 declined unless this session adds new evidence. If a lesson that was applied failed to prevent \
-the same mistake here, the form it took is too weak: move it up the ladder below rather than \
-restating it.
+the same mistake here, the form it took is too weak: use a stronger form from the list below \
+(a skill, script or hook instead of an instruction line) rather than restating it.
 
 # Where a change goes
 
@@ -74,8 +75,7 @@ would find anyway. When adding to a file that already has rules, look for one to
 tighten in the same change.
 
 Then pick the narrowest scope that covers the lesson: a habit that would help in any project \
-goes to the user scope; anything about this codebase goes to the project scope. Label facts \
-about this workspace as such and do not put them in user scope.
+goes to the user scope; anything about this codebase goes to the project scope.
 
 Targets on this machine, as pcode loads them for this workspace:
 {targets}
@@ -95,8 +95,8 @@ not "be thorough", not "the fee is 250"), `lesson` (the change, naming the file)
 `confounded` rows must be narrowed to what the evidence shows, or dropped.
 - The exact diff of every file the lesson changes.
 
-"Nothing worth changing" is a real answer, not a failure. Then stop and ask the user whether \
-to apply it.
+"Nothing worth changing" is a real answer, not a failure. If you proposed a lesson, stop and \
+ask the user whether to apply it.
 
 # After the user answers
 
@@ -144,7 +144,9 @@ def main_checkout(workspace: Path) -> tuple[Path, Path] | None:
 
 
 def instruction_files(directory: Path) -> list[Path]:
-    return [directory / name for name in INSTRUCTION_NAMES if (directory / name).is_file()]
+    """The instruction files in `directory`, symlinks resolved to the file an edit must reach."""
+    paths = [directory / name for name in INSTRUCTION_NAMES]
+    return list(dict.fromkeys(path.resolve() for path in paths if path.is_file()))
 
 
 def _instructions(directory: Path) -> str:
@@ -159,11 +161,14 @@ def _paths(paths) -> str:
     return ", ".join(f"`{path}`" for path in dict.fromkeys(paths))
 
 
-def targets(workspace: Path) -> str:
-    """Describe where each kind of change goes, mirroring how pcode loads this workspace."""
+def targets(workspace: Path, worktree: tuple[Path, Path] | None = None) -> str:
+    """Describe where each kind of change goes, mirroring how pcode loads this workspace.
+
+    `worktree` is `main_checkout(workspace)`, passed in by a caller that has it.
+    """
     from pcode.ext import user_extension_dir
     from pcode.preferences import SETTINGS, load_preferences
-    from pcode.skills import skill_dirs
+    from pcode.skills import ASSET_ROOTS, skill_dirs
 
     workspace = workspace.resolve()
     home = Path.home().resolve()
@@ -178,7 +183,7 @@ def targets(workspace: Path) -> str:
         above = [d for d in reversed(workspace.parents) if d.is_relative_to(top)]
     user_dir = home if under_home and walk_up == "on" and workspace != home else None
     # A worktree's instruction file is a copy of the main checkout's above it.
-    worktree = main_checkout(workspace)
+    worktree = worktree or main_checkout(workspace)
     main = worktree[1] if worktree else None
     between = [
         path
@@ -201,11 +206,13 @@ def targets(workspace: Path) -> str:
             f"none, because {reason}; put cross-project habits in a user skill instead"
         )
 
-    skills = skill_dirs(workspace)
-    project_skills = [workspace / ".agents" / "skills"] + [
-        d for d in skills if d.is_relative_to(workspace)
-    ]
-    user_skills = [d for d in skills if not d.is_relative_to(workspace)]
+    # Workspace asset roots that already hold skills, else the cross-tool default.
+    roots = [workspace / root / "skills" for root in ASSET_ROOTS]
+    project_skills = [d for d in roots if d.is_dir()] or [workspace / ".agents" / "skills"]
+    user_skills = []
+    for directory in (d.resolve() for d in skill_dirs(workspace)):
+        inside = directory.is_relative_to(workspace) and workspace != home
+        (project_skills if inside else user_skills).append(directory)
 
     lines = [f"- User instructions (every project): {user_instructions}"]
     if between:
@@ -235,7 +242,7 @@ def build_prompt(workspace: Path, focus: str = "") -> str:
         focus=f"\nThe user asked you to focus on: {focus.strip()}\n" if focus.strip() else "",
         log=log_path(),
         guide=BUNDLED_DIR.parent / "extension_guide.md",
-        targets=targets(workspace),
+        targets=targets(workspace, worktree),
         project=project,
     )
 

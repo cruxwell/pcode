@@ -92,7 +92,7 @@ the workspace:
 | Scope | Instructions | Skills | Extensions |
 | --- | --- | --- | --- |
 | User | `CLAUDE.md` / `AGENTS.md` in your home directory | `skill_dirs` entries outside the workspace (default `~/.agents/skills`) | `extensions/` in pcode's config directory |
-| Project | `CLAUDE.md` / `AGENTS.md` in the workspace | `.agents/skills` and relative `skill_dirs` entries | `.pcode/extensions` |
+| Project | `CLAUDE.md` / `AGENTS.md` in the workspace | `.agents/skills` (or the `.claude`, `.codex` or `.grok` one already in use) and `skill_dirs` entries inside the workspace | `.pcode/extensions` |
 
 Instruction files pcode loads from directories between the two (the root of a
 monorepo, or a folder holding all of one employer's repositories) are offered

@@ -163,5 +163,22 @@ def test_skill_dirs_split_by_where_they_resolve(tmp_path, home):
     save_preferences(skill_dirs=f" ~/s2 :tools/skills:{shared}")
 
     text = reflect.targets(workspace)
-    assert line(text, "User skills") == f"- User skills: `{home / 's2'}`, `{shared}`"
+    assert line(text, "User skills") == f"- User skills: `{home / 's2'}`, `{shared.resolve()}`"
     assert f"`{workspace / 'tools' / 'skills'}`" in line(text, "Project skills")
+
+
+def test_a_project_already_using_another_skill_root_keeps_it(home):
+    workspace = repo(home / "app")
+    (workspace / ".claude" / "skills").mkdir(parents=True)
+    assert line(reflect.targets(workspace), "Project skills").startswith(
+        f"- Project skills: `{workspace / '.claude' / 'skills'}`, "
+    )
+
+
+def test_a_symlinked_instruction_file_is_listed_once(home):
+    workspace = repo(home / "app")
+    write(workspace / "AGENTS.md", "rules")
+    (workspace / "CLAUDE.md").symlink_to("AGENTS.md")
+    assert line(reflect.targets(workspace), "Project instructions") == (
+        f"- Project instructions ({workspace}): `{workspace / 'AGENTS.md'}`"
+    )
