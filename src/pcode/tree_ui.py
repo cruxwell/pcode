@@ -1,5 +1,7 @@
 """Temporary conversation tree chooser; never executes a model request."""
 
+from collections.abc import Callable
+
 from prompt_toolkit.application import Application, get_app
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Always, Condition, Never, has_focus
@@ -50,6 +52,11 @@ class TreeBrowser:
     the branch through the selected row, root to leaf, and scrolls so the
     selected prompt or response is at the top, with what led there above and
     what followed below.
+
+    With `finish`, another popup hosts the browser instead of it running an
+    application of its own: the host mounts `container`, which carries the
+    browser's keys behind the host's `shortcuts`, and `finish(result)` stands in
+    for exiting with that result.
     """
 
     def __init__(
@@ -61,11 +68,14 @@ class TreeBrowser:
         code_theme: str = "ansi_dark",
         color_system: str | None = "truecolor",
         key_prefix: str | None = None,
+        finish: Callable[[object], None] | None = None,
+        shortcuts: PrefixKeys | None = None,
         **app_options,
     ) -> None:
         self.tree = tree
         self.navigable = navigable
         self.code_theme = code_theme
+        self.finish = finish or (lambda result: self.app.exit(result=result))
         self.rows = self.list_rows()
         self.selected = self.first_selection()
         self.notice = ""
@@ -94,25 +104,31 @@ class TreeBrowser:
         @keys.add("escape", eager=True)
         @keys.add("c-c")
         def cancel(event):
-            event.app.exit(result=None)
+            self.finish(None)
 
         bind_list_paging(keys, self.list, has_focus(self.list))
 
         @keys.add("enter")
         def accept(event):
-            self.accept(event.app)
+            self.accept()
 
         keys.add("tab")(focus_next)
         keys.add("s-tab")(focus_previous)
 
-        self.prefix_keys = shortcuts = PrefixKeys(key_prefix)
-        shortcuts.set_help(
-            lambda: self.picker.help() if self.picker is not None else self.help_rows()
-        )
+        hosted = finish is not None
+        if not hosted:
+            shortcuts = PrefixKeys(key_prefix)
+            shortcuts.set_help(
+                lambda: self.picker.help() if self.picker is not None else self.help_rows()
+            )
 
-        @shortcuts.add("y", "Copy selection", filter=Condition(lambda: self.picker is None))
-        def copy_selection(event):
-            self.copy(event.app.output)
+            @shortcuts.add("y", "Copy selection", filter=Condition(lambda: self.picker is None))
+            def copy_selection(event):
+                self.copy(event.app.output)
+
+        elif shortcuts is None:
+            raise ValueError("A hosted browser needs its host's shortcuts")
+        self.prefix_keys = shortcuts
 
         header = Label(lambda: self.header_text() + (f" · {self.notice}" if self.notice else ""))
         wide = VSplit(
@@ -146,6 +162,12 @@ class TreeBrowser:
             root_container,
             floats=[Float(ConditionalContainer(picker, Condition(lambda: bool(self.picker))))],
         )
+        if hosted:
+            # Modal, so the host's own editor and list keys stay out; gated, so
+            # a waiting leader still owns Enter and Esc.
+            self.container = HSplit([overlaid], key_bindings=shortcuts.gate(keys), modal=True)
+            self.refresh()
+            return
         self.app = Application(
             layout=Layout(popup_container(overlaid, shortcuts), focused_element=self.list),
             key_bindings=shortcuts.key_bindings(keys),
@@ -191,11 +213,11 @@ class TreeBrowser:
             ("Esc/Ctrl+C", "Cancel" if self.navigable else "Close"),
         ]
 
-    def accept(self, app: Application) -> None:
+    def accept(self) -> None:
         # A running turn will overwrite the history a checkout installs, so
         # the picker reads instead of navigating until the turn ends.
         if self.navigable:
-            app.exit(result=self.selected)
+            self.finish(self.selected)
 
     def show(self, value) -> None:
         """Bring the selected row's block into the Conversation pane."""
@@ -260,6 +282,8 @@ class TreeBrowser:
         self.notice = f"Copied {name}{limit}" if copied else f"Could not copy {name}"
 
     def open_picker(self, choices: list[Snippet], output=None) -> None:
+        # Only `/tree` opens this, which runs standalone: `CopyBrowser`, the one
+        # browser another popup hosts, copies without it.
         def close() -> None:
             self.picker = None
             self.app.layout.focus(self.list)
@@ -394,12 +418,12 @@ class CopyBrowser(TreeBrowser):
             return Snippet("prompt", literal(self.tree.nodes[identity].prompt))
         return self._snippets[identity][part]
 
-    def accept(self, app: Application) -> None:
+    def accept(self) -> None:
         if (choice := self.chosen()) is not None:
-            app.exit(result=choice)
+            self.finish(choice)
 
     def copy(self, output=None) -> None:
-        self.accept(self.app)
+        self.accept()
 
     def show(self, value) -> None:
         if value in self._values:

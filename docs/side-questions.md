@@ -34,15 +34,14 @@ streams it.
 - **Ctrl+R:** type a [follow-up](#following-up) to the selected answer.
 - **Ctrl+S / Ctrl+T:** [bring the thread into the conversation](#keeping-a-thread),
   as a summary or merged into the tree.
-- **Ctrl+Y:** choose an answer from the selected thread to copy as markdown.
-  Answers appear newest first, with the newest selected; type to search
-  questions or answer text, then use ↑/↓ and Enter to choose. With only one
-  answer, skip the answer picker. Copying also works mid-stream, taking what
-  has arrived so far. As with `/copy`, an answer holding quotes or code blocks
-  moves to a second screen in the same popup to copy one of them or the whole
-  answer. Escape from that screen returns to the answer list, keeping your search
-  and selection; Escape from the answer list cancels copying. With a single answer,
-  Escape closes the snippet screen. Neither changes the thread or follow-up draft.
+- **Ctrl+Y:** copy from the selected thread with the same layout as
+  [`/copy`](commands.md#slash-commands): the list holds each question and
+  answer in the thread, with a row for every quote and code block under its
+  answer, and the pane beside it highlights exactly what Enter copies. The
+  newest answer is selected first. Copying also works mid-stream, taking what
+  has arrived so far. Escape or Ctrl+C goes back to the thread without copying,
+  and neither changes the thread or the follow-up draft. A thread holding a
+  single plain answer is copied straight away.
 - **Ctrl+O:** pick a link from the selected thread's questions and answers and
   open it in the browser, as `/links` does for the conversation.
 - **Ctrl+K:** stop every running side question, keeping the records.
@@ -65,7 +64,7 @@ single name (`/co`) is enough on its own:
 
 | Command | Does |
 | --- | --- |
-| `/copy` | Choose an answer from this thread to copy, as Ctrl+Y |
+| `/copy` | Choose a question, answer, quote or code block from this thread to copy, as Ctrl+Y |
 | `/links` | Open a link from the thread, as Ctrl+O |
 | `/summarize [focus]` | Summarize into the conversation, keeping what *focus* says, as Ctrl+S |
 | `/merge` | Merge into the conversation, as Ctrl+T |

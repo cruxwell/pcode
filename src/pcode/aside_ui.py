@@ -33,7 +33,8 @@ from rich.theme import Theme
 
 from pcode.aside import Aside, Asides, Bridge
 from pcode.clipboard import copy as copy_to_clipboard
-from pcode.copy_ui import Answer, CopyPicker, Snippet, snippets
+from pcode.conversation_tree import ConversationTree, TurnNode
+from pcode.copy_ui import Snippet, snippets
 from pcode.frame import Frame
 from pcode.links import Link, extract_links, open_link, remember_link
 from pcode.links_ui import LinkPicker
@@ -53,6 +54,7 @@ from pcode.session_ui import literal
 from pcode.task_prompt import TaskPrompt
 from pcode.text_selection import copy_drags
 from pcode.tool_display import plain
+from pcode.tree_ui import CopyBrowser
 from pcode.ui import StatusLine, status_parts, status_spinner
 
 # A streaming answer should look live without repainting the pane every token.
@@ -69,6 +71,24 @@ def row(thread: list[Aside], width: int = 90) -> str:
     bridged = next((aside.bridged for aside in reversed(thread) if aside.bridged), "")
     kept = f" · {bridged}" if bridged else ""
     return f"{model}{question}  ({newest.state()}{follow_ups}{kept})"
+
+
+def thread_tree(thread: list[Aside]) -> ConversationTree:
+    """The thread as a one-branch conversation, for `/copy`'s browser.
+
+    A question with no answer text yet is left out, as `/copy` leaves out an
+    empty turn; a partial answer is in, marked with its state.
+    """
+    tree = ConversationTree()
+    for aside in thread:
+        if not literal(aside.answer).strip():
+            continue
+        status = "completed" if aside.status == "answered" else aside.status
+        tree.nodes[aside.id] = TurnNode(
+            aside.id, tree.active, aside.question, status=status, response=aside.answer
+        )
+        tree.active = aside.id
+    return tree
 
 
 def exchange(aside: Aside, *, code_theme: str, first: bool = True) -> list:
@@ -114,8 +134,9 @@ class AsideBrowser:
     returning a `Bridge` from `run`; `check_bridge(thread)` raises `ValueError`
     when it cannot yet.
 
-    Prefix `y` chooses an answer to copy and prefix `o` opens a link from the
-    thread, with the same pickers as `/copy` and `/links`, over the viewer.
+    Prefix `y` opens `/copy`'s browser over the thread, in place of the viewer
+    until something is copied or it is cancelled, and prefix `o` opens a link
+    from the thread with `/links`'s picker over the viewer.
     The editor takes each action as a slash command too: see `commands`.
 
     `stop` stops every running answer; Ctrl+C does that while one runs, and
@@ -153,6 +174,8 @@ class AsideBrowser:
         self.check_bridge = check_bridge
         self.stop_running = stop or asides.cancel
         self.code_theme = code_theme
+        self.rich_theme = rich_theme
+        self.color_system = color_system
         self.spinner = status_spinner()
         self.threads = asides.threads()
         # `selected` names a question; the list selects the thread it is in.
@@ -171,8 +194,10 @@ class AsideBrowser:
         self.reading = len(self.threads) <= 1 or self.edit
         self._ids: list[str] = []
         self.notice = ""
-        # The copy or link picker over the viewer, while one is open.
-        self.picker: CopyPicker | LinkPicker | None = None
+        # The link picker over the viewer, while one is open.
+        self.picker: LinkPicker | None = None
+        # `/copy`'s browser in place of the viewer, while one is open.
+        self.copying: CopyBrowser | None = None
         self.list = TextArea(read_only=True, wrap_lines=False, scrollbar=True)
         copy_drags(self.list, lambda text: setattr(self, "notice", text))
         self.list.window.cursorline = Always()
@@ -220,9 +245,9 @@ class AsideBrowser:
             else:
                 event.app.exit(result=None)
 
-        # Shortcuts are inert while a copy or link picker is over the viewer:
-        # one would otherwise act, or move focus, behind it.
-        idle = Condition(lambda: self.picker is None)
+        # Shortcuts are inert while a copy browser or link picker is open: one
+        # would otherwise act, or move focus, behind it.
+        idle = Condition(lambda: self.picker is None and self.copying is None)
 
         if ask is not None:
 
@@ -313,7 +338,7 @@ class AsideBrowser:
         )
         picker = Frame(
             DynamicContainer(lambda: self.picker.container if self.picker else HSplit([])),
-            title=lambda: self.picker.title if isinstance(self.picker, CopyPicker) else "Links",
+            title="Links",
         )
         overlaid = FloatContainer(
             root_container,
@@ -325,7 +350,13 @@ class AsideBrowser:
         self.app = Application(
             # Opens in the editor only with `edit`: the viewer can also open by
             # itself when an answer lands, mid-keystroke at the main prompt.
-            layout=Layout(popup_container(overlaid, shortcuts), focused_element=self.start()),
+            layout=Layout(
+                popup_container(
+                    DynamicContainer(lambda: self.copying.container if self.copying else overlaid),
+                    shortcuts,
+                ),
+                focused_element=self.start(),
+            ),
             key_bindings=shortcuts.key_bindings(keys),
             full_screen=True,
             mouse_support=popup_mouse(shortcuts),
@@ -394,6 +425,8 @@ class AsideBrowser:
 
     def help(self) -> list[tuple[str, str]]:
         """Describe the active picker, editor, or reader, including its current focus."""
+        if self.copying is not None:
+            return self.copying.help_rows()
         if self.picker is not None:
             return self.picker.help()
         interrupt = ("Ctrl+C", "Stop running answers" if self.asides.running else "Close")
@@ -444,7 +477,7 @@ class AsideBrowser:
             self.finish(Bridge(self.selected, kind, focus))
 
         commands = [
-            PopupCommand("/copy", "Choose an answer to copy", lambda _: self.copy(self.app.output)),
+            PopupCommand("/copy", "Choose what to copy", lambda _: self.copy(self.app.output)),
             PopupCommand("/links", "Open a link from this thread", lambda _: self.choose_link()),
         ]
         if self.check_bridge is not None:
@@ -552,33 +585,40 @@ class AsideBrowser:
         self.refresh()
 
     def copy(self, output=None) -> None:
-        """Choose an answer from this thread, newest first, including partial text."""
-        answered = [
-            Answer(aside.question, aside.answer)
-            for aside in reversed(self.current())
-            if aside.answer.strip()
-        ]
-        answered = [answer for answer in answered if answer.text.strip()]
-        if not answered:
+        """Copy from this thread with `/copy`'s browser, including partial answers.
+
+        As `/copy` does, a lone answer with no quote or code block is copied
+        at once, without the browser.
+        """
+        tree = thread_tree(self.current())
+        if not tree.nodes:
             self.notice = "No answer to copy"
             return
-        if len(answered) > 1 or len(snippets(answered[0].text)) > 1:
-            self.open_picker(
-                lambda close: CopyPicker(
-                    answered,
-                    on_pick=lambda snippet: self.copy_snippet(close, snippet, output),
-                    on_cancel=close,
-                    shortcuts=self.prefix_keys,
-                )
-            )
+        # What is on screen is what leaves the viewer: the sanitized text.
+        if (
+            len(tree.nodes) == 1
+            and len(found := snippets(literal(tree.nodes[tree.active].response))) == 1
+        ):
+            self.copy_text("answer", found[0].text, output)
             return
-        self.copy_text("answer", answered[0].text, output)
+        previous = self.app.layout.current_window
 
-    def copy_snippet(self, close, snippet: Snippet, output=None) -> None:
-        close()
-        self.copy_text(
-            "answer" if snippet.kind == "response" else snippet.kind, snippet.text, output
+        def finish(choice: Snippet | None) -> None:
+            self.copying = None
+            focus_overlay(self.app, previous)
+            if choice is not None:
+                name = "answer" if choice.kind == "response" else choice.kind
+                self.copy_text(name, choice.text, output)
+
+        self.copying = CopyBrowser(
+            tree,
+            finish=finish,
+            shortcuts=self.prefix_keys,
+            rich_theme=self.rich_theme,
+            code_theme=self.code_theme,
+            color_system=self.color_system,
         )
+        focus_overlay(self.app, self.copying.list)
 
     def copy_text(self, name: str, text: str, output=None) -> None:
         copied, truncated = copy_to_clipboard(text, output)

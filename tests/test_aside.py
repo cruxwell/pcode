@@ -724,10 +724,10 @@ def test_aside_copy_skips_answers_that_are_empty_after_sanitizing(monkeypatch):
     assert browser.picker is None  # One usable answer bypasses the history picker.
 
 
-def test_aside_browser_copies_a_code_block_through_the_picker(monkeypatch):
+def test_aside_browser_copies_through_the_copy_browser(monkeypatch):
     from pcode import aside_ui
     from pcode.aside_ui import AsideBrowser
-    from pcode.copy_ui import CopyPicker, SnippetPicker
+    from pcode.tree_ui import CopyBrowser
 
     copies: list[str] = []
     monkeypatch.setattr(
@@ -741,13 +741,20 @@ def test_aside_browser_copies_a_code_block_through_the_picker(monkeypatch):
     asides.items.append(aside)
     browser = AsideBrowser(asides, output=None, input=None)
     browser.copy()
-    assert isinstance(browser.picker, CopyPicker)
-    assert isinstance(browser.picker.picker, SnippetPicker)
+    assert isinstance(browser.copying, CopyBrowser)
+    assert browser.app.layout.has_focus(browser.copying.list)
+    assert [label for _, label in browser.copying.rows] == [
+        "user: how?",
+        "assistant: Run this: ```sh make test ```",
+        "  └─ Code (sh): make test",
+    ]
     assert copies == []
-    # The picker starts on the code block, as /copy's does.
-    browser.picker.picker.on_pick(browser.picker.picker.selected())
+    # The same browser as /copy: it starts on the newest response.
+    assert browser.copying.chosen().kind == "response"
+    browser.copying.list.buffer.cursor_down()
+    browser.copying.accept()
     assert copies == ["make test"]
-    assert browser.picker is None
+    assert browser.copying is None
     assert browser.notice == "Copied code"
 
 
@@ -855,19 +862,29 @@ def test_aside_browser_pickers_by_keyboard(monkeypatch, prefix, copy_key, link_k
             await send("q.test\r")
             await wait_until(lambda: bool(opened) and browser.picker is None)
             assert opened == ["https://q.test"]
-            # A lone answer has no answer screen: either cancel key closes the copy overlay.
+            # Either cancel key closes the copy browser, back where focus was.
             for cancel in ("\x1b", "\x03"):
                 focus = browser.app.layout.current_control
                 await send(copy_key)
-                await wait_until(lambda: browser.picker is not None)
+                await wait_until(lambda: browser.copying is not None)
                 await send(cancel)
-                await wait_until(lambda: browser.picker is None)
+                await wait_until(lambda: browser.copying is None)
                 assert browser.app.layout.current_control is focus
                 assert not copies and not task.done()
             await send(copy_key)
-            await wait_until(lambda: browser.picker is not None)
+            await wait_until(lambda: browser.copying is not None)
+            # Viewer shortcuts are inert under the copy browser too.
+            await send(follow_up_key)
+            assert not browser.editing() and browser.copying is not None
+            if prefix != "ctrl":
+                await wait_until(lambda: browser.prefix_keys.pending)
+                await send("\x03")
+                await wait_until(lambda: not browser.prefix_keys.pending)
+            # It starts on the response; the code block is the row under it.
+            pipe.send_text("\x1b[B")
+            await wait_until(lambda: browser.copying.chosen().kind == "code")
             await send("\r")
-            await wait_until(lambda: bool(copies) and browser.picker is None)
+            await wait_until(lambda: bool(copies) and browser.copying is None)
             assert copies == ["make test"]
             assert browser.notice == "Copied code"
             # Esc backs out of a picker, leaving the viewer open.
@@ -882,17 +899,12 @@ def test_aside_browser_pickers_by_keyboard(monkeypatch, prefix, copy_key, link_k
     asyncio.run(run())
 
 
-@pytest.mark.parametrize(
-    ("prefix", "copy_key", "follow_up_key"),
-    [("ctrl", "\x19", "\x12"), ("ctrl+p", "\x10y", "\x10r")],
-)
-def test_aside_copy_history_by_keyboard(monkeypatch, prefix, copy_key, follow_up_key):
+def test_aside_copy_browser_holds_the_selected_thread(monkeypatch):
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
 
     from pcode import aside_ui
     from pcode.aside_ui import AsideBrowser
-    from pcode.copy_ui import AnswerPicker, CopyPicker, SnippetPicker
 
     copied = []
     monkeypatch.setattr(
@@ -905,10 +917,9 @@ def test_aside_copy_history_by_keyboard(monkeypatch, prefix, copy_key, follow_up
     code = Aside(
         question="shell question", answer="Run:\n```sh\nmake history\n```", thread=first.id
     )
-    quote = Aside(question="quote question", answer="> older quotation", thread=first.id)
     newest = Aside(question="latest question", answer="Newest answer", thread=first.id)
     other = Aside(question="unrelated question", answer="Excluded answer")
-    for aside in (first, code, quote, newest, other):
+    for aside in (first, code, newest, other):
         aside.settle("answered")
         asides.items.append(aside)
 
@@ -918,7 +929,6 @@ def test_aside_copy_history_by_keyboard(monkeypatch, prefix, copy_key, follow_up
                 asides,
                 selected=first.id,
                 ask=lambda thread, question: None,
-                key_prefix=prefix,
                 input=pipe,
                 output=DummyOutput(),
             )
@@ -947,159 +957,41 @@ def test_aside_copy_history_by_keyboard(monkeypatch, prefix, copy_key, follow_up
 
             try:
                 await wait_until(lambda: browser.app.is_running)
-                await send(copy_key)
-                await wait_until(
-                    lambda: (
-                        isinstance(browser.picker, CopyPicker)
-                        and isinstance(browser.picker.picker, AnswerPicker)
-                    )
-                )
-                assert browser.picker.picker.selected().text == newest.answer
-                assert [answer.text for answer in browser.picker.picker.choices] == [
-                    newest.answer,
-                    quote.answer,
-                    code.answer,
-                    first.answer,
+                await send("\x19")
+                await wait_until(lambda: browser.copying is not None)
+                # Only the selected thread, oldest first, as /copy lists a branch.
+                assert [label for _, label in browser.copying.rows] == [
+                    "user: original question",
+                    "assistant: Older plain answer",
+                    "user: shell question",
+                    "assistant: Run: ```sh make history ```",
+                    "  └─ Code (sh): make history",
+                    "user: latest question",
+                    "assistant: Newest answer",
                 ]
-                # Viewer shortcuts cannot open an editor through the answer picker.
-                await send(follow_up_key)
-                assert not browser.editing()
-                if prefix != "ctrl":
-                    assert browser.prefix_keys.pending
-                    await send("\x03")
-                    assert not browser.prefix_keys.pending
-                    assert isinstance(browser.picker, CopyPicker) and isinstance(
-                        browser.picker.picker, AnswerPicker
-                    )
                 await send("\r")
-                await wait_until(lambda: browser.picker is None)
+                await wait_until(lambda: browser.copying is None)
                 assert copied == [newest.answer]
                 assert browser.app.layout.has_focus(browser.list)
 
-                # Back keeps the same overlay, answer search, selection and focus.
-                for back_key, focus_list in [("\x1b", False), ("\x03", True)]:
-                    await send(copy_key)
-                    await wait_until(lambda: isinstance(browser.picker, CopyPicker))
-                    popup = browser.picker
-                    answers = popup.picker
-                    await send("question")
-                    # Pick a non-default answer with the list focused or from search.
-                    if focus_list:
-                        await send("\t")
-                    pipe.send_text("\x1b[B\x1b[B")
-                    await wait_until(lambda: answers.selected().text == code.answer)
-                    focus = browser.app.layout.current_control
-                    position = answers.list.buffer.cursor_position
-                    await send("\r")
-                    await wait_until(lambda: isinstance(popup.picker, SnippetPicker))
-                    assert browser.picker is popup
-                    count = len(copied)
-                    await send(back_key)
-                    await wait_until(lambda: popup.picker is answers)
-                    assert browser.picker is popup
-                    assert popup.query is answers.query and popup.list is answers.list
-                    assert answers.query.text == "question"
-                    assert answers.list.buffer.cursor_position == position
-                    assert answers.selected().text == code.answer
-                    assert browser.app.layout.current_control is focus
-                    assert len(copied) == count
-                    # Choose a different answer and copy its quote, without reopening.
-                    pipe.send_text("\x1b[A")
-                    await wait_until(lambda: answers.selected().text == quote.answer)
-                    await send("\r")
-                    await wait_until(lambda: isinstance(popup.picker, SnippetPicker))
-                    assert browser.picker is popup
-                    assert popup.picker.selected().kind == "quote"
-                    await send("\r")
-                    await wait_until(lambda: browser.picker is None)
-                    assert copied[-1] == "older quotation"
-
-                # Search full answers as well as questions, then copy plain/code/quote.
-                for term, expected, kind in [
-                    ("Older plain", first.answer, None),
-                    ("shell question", "make history", "code"),
-                    ("older quotation", "older quotation", "quote"),
-                    ("shell question", code.answer, "response"),
-                ]:
-                    await send(copy_key)
-                    await wait_until(
-                        lambda: (
-                            isinstance(browser.picker, CopyPicker)
-                            and isinstance(browser.picker.picker, AnswerPicker)
-                        )
-                    )
-                    await send(term + "\r")
-                    if kind:
-                        await wait_until(
-                            lambda: (
-                                isinstance(browser.picker, CopyPicker)
-                                and isinstance(browser.picker.picker, SnippetPicker)
-                            )
-                        )
-                        if kind == "response":
-                            pipe.send_text("\x1b[A")
-                            await wait_until(lambda: browser.picker.picker.selected().kind == kind)
-                        assert browser.picker.picker.selected().kind == kind
-                        await send("\r")
-                    await wait_until(lambda: browser.picker is None)
-                    assert copied[-1] == expected
-                    assert browser.app.layout.has_focus(browser.list)
-
-                count = len(copied)
-                await send(copy_key)
-                await wait_until(
-                    lambda: (
-                        isinstance(browser.picker, CopyPicker)
-                        and isinstance(browser.picker.picker, AnswerPicker)
-                    )
-                )
-                await send("\x1b")
-                await wait_until(lambda: browser.picker is None)
-                assert browser.app.layout.has_focus(browser.list)
-                assert len(copied) == count
-
-                # /copy restores the editor on cancel, including after the second picker.
-                await send(follow_up_key)
+                # /copy from the editor puts the cursor back in the draft on cancel.
+                await send("\x12")
                 await wait_until(browser.editing)
-                for selection in ("", "shell question\r"):
-                    await send("/copy\r")
-                    await wait_until(
-                        lambda: (
-                            isinstance(browser.picker, CopyPicker)
-                            and isinstance(browser.picker.picker, AnswerPicker)
-                        )
-                    )
-                    if selection:
-                        await send(selection)
-                        await wait_until(
-                            lambda: (
-                                isinstance(browser.picker, CopyPicker)
-                                and isinstance(browser.picker.picker, SnippetPicker)
-                            )
-                        )
-                        await send("\x1b")
-                        await wait_until(lambda: isinstance(browser.picker.picker, AnswerPicker))
-                    await send("\x1b")
-                    await wait_until(lambda: browser.picker is None)
-                    assert browser.app.layout.has_focus(browser.input.area)
-                    assert len(copied) == count
-
-                # Cancelling back through both screens restores a nonempty draft.
-                await send("unfinished follow-up")
-                draft = browser.input.area.text
-                cursor = browser.input.area.buffer.cursor_position
-                await send(copy_key)
-                await wait_until(lambda: isinstance(browser.picker, CopyPicker))
-                await send("shell question\r")
-                await wait_until(lambda: isinstance(browser.picker.picker, SnippetPicker))
-                await send("\x03")
-                await wait_until(lambda: isinstance(browser.picker.picker, AnswerPicker))
-                await send("\x03")
-                await wait_until(lambda: browser.picker is None)
+                await send("/copy\r")
+                await wait_until(lambda: browser.copying is not None)
+                await send("\x1b")
+                await wait_until(lambda: browser.copying is None)
                 assert browser.app.layout.has_focus(browser.input.area)
-                assert browser.input.area.text == draft == "unfinished follow-up"
+                await send("unfinished follow-up")
+                cursor = browser.input.area.buffer.cursor_position
+                await send("\x19")
+                await wait_until(lambda: browser.copying is not None)
+                await send("\x03")
+                await wait_until(lambda: browser.copying is None)
+                assert browser.app.layout.has_focus(browser.input.area)
+                assert browser.input.area.text == "unfinished follow-up"
                 assert browser.input.area.buffer.cursor_position == cursor
-                assert len(copied) == count
+                assert len(copied) == 1
                 await send("\x15")
 
                 # An unfinished answer is copyable, while an empty follow-up is skipped.
@@ -1107,15 +999,11 @@ def test_aside_copy_history_by_keyboard(monkeypatch, prefix, copy_key, follow_up
                 asides.items.extend([live, Aside(question="no text yet", thread=first.id)])
                 browser.refresh()
                 await send("/copy\r")
-                await wait_until(
-                    lambda: (
-                        isinstance(browser.picker, CopyPicker)
-                        and isinstance(browser.picker.picker, AnswerPicker)
-                    )
-                )
-                assert browser.picker.picker.selected().text == "Live partial"
+                await wait_until(lambda: browser.copying is not None)
+                labels = [label for _, label in browser.copying.rows]
+                assert labels[-2:] == ["user: still working", "assistant: Live partial"]
                 await send("\r")
-                await wait_until(lambda: browser.picker is None)
+                await wait_until(lambda: browser.copying is None)
                 assert copied[-1] == "Live partial"
                 assert browser.app.layout.has_focus(browser.input.area)
                 assert not task.done()

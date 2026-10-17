@@ -4,19 +4,18 @@ The transcript draws a Markdown quote with a `▌` rail and hard-wraps it to the
 terminal, so selecting it with the mouse picks up both. The source still has
 the text as written: this pulls each top-level quote and fenced code block out
 of it, for `/copy`'s rows (see `tree_ui.CopyBrowser`, which `SnippetMarkdown`
-highlights them for) and for the small pickers in `/tree` and `/btw`.
+highlights them for) and for the small picker in `/tree`.
 """
 
 import re
 from dataclasses import dataclass, field
 
 from markdown_it import MarkdownIt
-from prompt_toolkit.application import Application, get_app
+from prompt_toolkit.application import Application
 from prompt_toolkit.document import Document
-from prompt_toolkit.filters import Always, has_focus
+from prompt_toolkit.filters import Always
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.key_binding.bindings.focus import focus_next, focus_previous
-from prompt_toolkit.layout import DynamicContainer, HSplit, Layout
+from prompt_toolkit.layout import HSplit, Layout
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import Label, TextArea
 from rich.console import Group
@@ -25,12 +24,10 @@ from rich.markdown import BlockQuote, CodeBlock, Markdown
 from pcode.frame import Dialog
 from pcode.popup_ui import (
     bind_list_paging,
-    focus_overlay,
     marked,
     popup_container,
     popup_mouse,
     popup_style,
-    steer_list_from_query,
 )
 from pcode.prefix_keys import PrefixKeys
 
@@ -269,165 +266,6 @@ class SnippetPicker:
     def selected(self) -> Snippet:
         row = self.list.document.cursor_position_row
         return self.choices[min(row, len(self.choices) - 1)]
-
-
-def answer_row(answer: Answer) -> str:
-    # Reserve space for both fields: a long question must not hide the answer.
-    def preview(text: str, width: int) -> str:
-        text = " ".join(text.split())
-        return text if len(text) <= width else text[: width - 1] + "…"
-
-    return f"Q: {preview(answer.prompt, 30)}  A: {preview(answer.text, 42)}"
-
-
-class AnswerPicker:
-    """Search question or full answer text; Enter picks an answer, Esc backs out.
-
-    Hosts may focus ``query`` to start filtering immediately, or ``list`` to
-    navigate first. Tab switches between them, including inside an overlay.
-    The host retains ownership of its prefix help provider.
-    """
-
-    def __init__(self, choices: list[Answer], on_pick, on_cancel, *, shortcuts=None) -> None:
-        self.choices = choices
-        self.on_pick = on_pick
-        self.visible: list[Answer] = []
-        self.query = TextArea(height=1, prompt="Search: ", multiline=False)
-        self.list = TextArea(
-            read_only=True,
-            wrap_lines=False,
-            scrollbar=True,
-            width=Dimension(min=40, preferred=_ROW_WIDTH + 1),
-            height=Dimension(min=1, preferred=max(1, len(choices))),
-        )
-        self.list.window.cursorline = Always()
-        keys = self.key_bindings = KeyBindings()
-        self.query.buffer.on_text_changed += lambda _: self.refresh()
-        steer_list_from_query(keys, self.query, self.list)
-        bind_list_paging(keys, self.list, has_focus(self.list) | has_focus(self.query))
-        keys.add("tab")(focus_next)
-        keys.add("s-tab")(focus_previous)
-
-        @keys.add("enter", eager=True)
-        def pick(event):
-            if (answer := self.selected()) is not None:
-                on_pick(answer)
-
-        @keys.add("escape", eager=True)
-        @keys.add("c-c")
-        def cancel(event):
-            on_cancel()
-
-        self.container = HSplit(
-            [self.query, self.list],
-            padding=1,
-            key_bindings=shortcuts.gate(keys) if shortcuts else keys,
-            modal=True,
-        )
-        self.refresh()
-
-    def help(self) -> list[tuple[str, str]]:
-        return [
-            ("Type", "Search questions and answers in the search field"),
-            ("↑/↓", "Select answer"),
-            ("PgUp/PgDn", "Page"),
-            ("Ctrl+U/D", "Half page"),
-            ("Tab/Shift+Tab", "Switch search / list"),
-            ("Enter", "Choose answer"),
-            ("Esc / Ctrl+C", "Cancel"),
-        ]
-
-    def selected(self) -> Answer | None:
-        row = self.list.document.cursor_position_row
-        return self.visible[row] if row < len(self.visible) else None
-
-    def refresh(self) -> None:
-        previous = self.selected()
-        term = self.query.text.casefold()
-        self.visible[:] = [
-            answer
-            for answer in self.choices
-            if term in answer.prompt.casefold() or term in answer.text.casefold()
-        ]
-        selected = next((i for i, answer in enumerate(self.visible) if answer == previous), 0)
-        rows = [answer_row(answer) for answer in self.visible]
-        position = sum(len(row) + 1 for row in rows[:selected])
-        self.list.buffer.set_document(
-            Document("\n".join(rows) or "No matching answers.", position), bypass_readonly=True
-        )
-
-
-class CopyPicker:
-    """One overlay for choosing an answer and then a snippet from that answer.
-
-    Hosts mount ``container`` once, focus ``query or list``, and read ``title``
-    and ``help()`` dynamically. Back restores the same answer screen and focus.
-    A lone answer starts at snippets; callers can copy lone plain answers directly.
-    """
-
-    def __init__(self, choices: list[Answer], on_pick, on_cancel, *, shortcuts=None) -> None:
-        self.on_pick = on_pick
-        self.on_cancel = on_cancel
-        self.shortcuts = shortcuts
-        self._answer: Answer | None = None
-        self._answers: AnswerPicker | None = None
-        self._answer_focus = None
-        self.picker: AnswerPicker | SnippetPicker
-        if len(choices) == 1:
-            self._answer = choices[0]
-            self.picker = SnippetPicker(
-                snippets(choices[0].text), on_pick, self._back, shortcuts=shortcuts
-            )
-        else:
-            self._answers = AnswerPicker(
-                choices, self._choose_answer, on_cancel, shortcuts=shortcuts
-            )
-            self.picker = self._answers
-        self.container = DynamicContainer(lambda: self.picker.container)
-
-    @property
-    def query(self) -> TextArea | None:
-        return self.picker.query if isinstance(self.picker, AnswerPicker) else None
-
-    @property
-    def list(self) -> TextArea:
-        return self.picker.list
-
-    @property
-    def title(self) -> str:
-        if isinstance(self.picker, AnswerPicker):
-            return "Copy answer"
-        preview = " ".join(self._answer.prompt.split()) if self._answer else ""
-        if len(preview) > 60:
-            preview = preview[:59] + "…"
-        return f"Copy — {preview}" if preview else "Copy response"
-
-    def help(self) -> list[tuple[str, str]]:
-        rows = self.picker.help()
-        if isinstance(self.picker, SnippetPicker) and self._answers is not None:
-            rows[-1] = ("Esc / Ctrl+C", "Back to answers")
-        return rows
-
-    def _choose_answer(self, answer: Answer) -> None:
-        choices = snippets(answer.text)
-        if len(choices) <= 1:
-            self.on_pick(Snippet("response", answer.text))
-            return
-        app = get_app()
-        self._answer_focus = app.layout.current_control
-        self._answer = answer
-        self.picker = SnippetPicker(choices, self.on_pick, self._back, shortcuts=self.shortcuts)
-        focus_overlay(app, self.list)
-        app.invalidate()
-
-    def _back(self) -> None:
-        if self._answers is None:
-            self.on_cancel()
-            return
-        self.picker = self._answers
-        app = get_app()
-        focus_overlay(app, self._answer_focus or self.query)
-        app.invalidate()
 
 
 def snippet_dialog(choices: list[Snippet], *, input=None, output=None, style=None):

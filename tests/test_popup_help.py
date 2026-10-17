@@ -8,9 +8,9 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
 from pcode.aside import Aside, Asides
-from pcode.aside_ui import AsideBrowser
-from pcode.copy_ui import Answer, CopyPicker
+from pcode.aside_ui import AsideBrowser, thread_tree
 from pcode.links_ui import LinkPicker
+from pcode.tree_ui import CopyBrowser
 
 
 def test_aside_help_follows_reader_editor_and_nested_picker_focus():
@@ -43,9 +43,12 @@ def test_aside_help_follows_reader_editor_and_nested_picker_focus():
             assert ("Enter", "Summarize (empty: as is)") in browser.help()
             browser.picker = LinkPicker([], lambda _: None, lambda: None)
             assert browser.help() == browser.picker.help()
-            browser.picker = CopyPicker([Answer("question", "text")], lambda _: None, lambda: None)
-            assert ("Enter", "Copy selected snippet") in browser.help()
-            assert ("Esc / Ctrl+C", "Cancel") in browser.help()
+            browser.picker = None
+            browser.copying = CopyBrowser(
+                thread_tree(browser.current()), finish=lambda _: None, shortcuts=browser.prefix_keys
+            )
+            assert ("Enter", "Copy highlighted text") in browser.help()
+            assert ("Esc/Ctrl+C", "Cancel") in browser.help()
 
 
 def test_aside_help_describes_interrupt_only_while_answers_are_running():
@@ -75,11 +78,11 @@ def test_session_help_lists_delete_binding(tmp_path):
             assert "Delete" not in browser.prefix_keys.summary()
 
 
-@pytest.mark.parametrize("picker", [None, "links", "snippets", "answers"])
+@pytest.mark.parametrize("picker", [None, "links", "copy"])
 def test_help_is_modal_in_reader_and_nested_pickers(picker):
     async def run():
         asides = Asides()
-        aside = Aside(question="Question?", answer="Answer")
+        aside = Aside(question="Question?", answer="Answer\n\n> quoted")
         aside.settle("answered")
         asides.items.append(aside)
         with create_pipe_input() as pipe:
@@ -89,17 +92,9 @@ def test_help_is_modal_in_reader_and_nested_pickers(picker):
                     [], lambda _: None, lambda: None, shortcuts=browser.prefix_keys
                 )
                 browser.app.layout.focus(browser.picker.query)
-            elif picker in ("snippets", "answers"):
-                choices = [Answer("question", "text")]
-                if picker == "answers":
-                    choices.append(Answer("older question", "older text"))
-                browser.picker = CopyPicker(
-                    choices,
-                    lambda _: None,
-                    lambda: None,
-                    shortcuts=browser.prefix_keys,
-                )
-                browser.app.layout.focus(browser.picker.query or browser.picker.list)
+            elif picker == "copy":
+                browser.copy()
+                assert browser.app.layout.has_focus(browser.copying.list)
             focused = browser.app.layout.current_control
             rendered = asyncio.Event()
             browser.app.after_render += lambda _: rendered.set()
