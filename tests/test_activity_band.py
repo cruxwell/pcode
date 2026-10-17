@@ -130,10 +130,22 @@ def test_hiding_the_panel_hides_the_thought_and_tool_rows_too(attached):
 
     lines, _ = render(configure=hide)
     status = status_index(lines)
-    assert not any("∴" in line or "make test" in line or "Read the" in line for line in lines)
-    # The status row stays, naming the active step the hidden tasks would show.
-    assert "Fix the parser" in lines[status]
+    # The status row stays, carrying the running call's command the hidden
+    # tool row would have shown.
+    assert "Run shell · make test" in lines[status]
+    rest = lines[:status] + lines[status + 1 :]
+    assert not any("∴" in line or "make test" in line or "Read the" in line for line in rest)
     assert lines[status + 1].startswith("│❯")
+
+
+def test_a_hidden_panel_leaves_parallel_calls_the_plans_step():
+    def hide(activity):
+        activity.tools.record(ToolStarted("shell", "make lint", "three"))
+        activity.show_tasks = False
+
+    lines, _ = render(configure=hide)
+    status = next(line for line in lines if "Running 2 tools" in line)
+    assert "Fix the parser" in status and "make" not in status
 
 
 @pytest.mark.usefixtures("true_color")
@@ -224,6 +236,31 @@ def test_a_height_cap_gives_the_thought_up_first(layout):
     assert layout.band_height() == 3
     activity.tasks_max_height = 4
     assert layout.band_rows() == []
+
+
+@pytest.mark.parametrize("attached", [True, False])
+def test_a_sub_agent_without_a_plan_keeps_the_box_under_its_cap(attached):
+    def delegate(activity):
+        activity.attach_tasks = attached
+        activity.plan.clear()
+        activity.tasks_max_height = 10
+        activity.tools.record(
+            ToolStarted(
+                "delegate_task",
+                "explorer · look around",
+                "agent",
+                activity="Working",
+                agent="explorer",
+                task="look around",
+            )
+        )
+
+    lines, _ = render(configure=delegate)
+    top = next(i for i, line in enumerate(lines) if line.startswith("┌"))
+    bottom = max(i for i, line in enumerate(lines) if line.startswith("└"))
+    assert "» Explorer" in "\n".join(lines), lines
+    # The cap covers the editor box and a detached task box together.
+    assert bottom - top + 1 <= 10, lines
 
 
 def test_show_activity_toggles_the_panel_and_show_tasks_still_works():

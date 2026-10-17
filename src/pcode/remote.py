@@ -205,7 +205,7 @@ def _proxy(state: dict, controller: "RemoteController") -> Command:
         tuple(state.get("aliases") or ()),
         free_arguments=bool(state.get("free_arguments")),
         # The host sends a list only for commands whose arguments change; the
-        # rest (/worktree, /show-tasks, ...) complete from their fixed list.
+        # rest (/worktree, /show-activity, ...) complete from their fixed list.
         argument_provider=lambda: tuple(controller.arguments.get(name, arguments)),
         group=state.get("group") or "Other",
         argument_descriptions=state.get("argument_descriptions") or None,

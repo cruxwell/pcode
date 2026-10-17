@@ -532,10 +532,16 @@ def test_status_row_names_the_active_step_only_while_the_panel_hides_it():
     parts = styled(activity.status_fragments("⠋", 80))
     assert parts["activity.phase"] == "Thinking"
     assert parts["activity.detail"] == " · Adding the migration"
-    # A running tool keeps its verb as the phase; the step is still the why.
+    # A running tool keeps its verb as the phase. Its tool row went with the
+    # panel, so the row says what it works on instead of the step.
     activity.tools.record(ToolStarted("read_file", "example.py", "one"))
     parts = styled(activity.status_fragments("⠋", 80))
     assert parts["activity.phase"] == "Read file"
+    assert parts["activity.detail"] == " · example.py"
+    # Parallel calls have no one detail: the step is the why again.
+    activity.tools.record(ToolStarted("read_file", "other.py", "two"))
+    parts = styled(activity.status_fragments("⠋", 80))
+    assert parts["activity.phase"] == "Running 2 tools"
     assert parts["activity.detail"] == " · Adding the migration"
     # A status with its own detail keeps it.
     activity.tools.clear()

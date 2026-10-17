@@ -321,8 +321,9 @@ one header block above the plan and your draft. With `frame_style borders` a
 divider line separates them instead.
 
 `/config set attach_activity off` moves the thought and tool rows back above
-the editor box, where the status row is the line under them; `attach_tasks off`
-gives the task list a box of its own above the editor. Both apply immediately.
+the editor box, where the status row is the line under them; they still show
+and hide with the rest of the panel. `attach_tasks off` gives the task list a
+box of its own above the editor. Both apply immediately.
 
 ### Status and tool rows
 
@@ -358,9 +359,11 @@ the footer below the editor as `1 job` or `N jobs`, including jobs being waited
 on; the count is hidden at zero. Use `/jobs` for individual job details.
 The phase is the one highlighted word, and a stall shows as its clock climbing
 (`Thinking · 40s`). With the activity panel hidden (Ctrl+O or
-`/show-activity off`, or a pane too small for it), the plan's active step follows the phase as its detail
+`/show-activity off`, or a pane too small for it), the status row carries what
+the panel would have: a lone running call's command or path
+(`Run shell · make test`), else the plan's active step
 (`Waiting for model · Adding the migration`), so the row still says what the
-turn is for. Each row holds what it says for a moment, so a burst of
+turn is doing. Each row holds what it says for a moment, so a burst of
 quick calls reads as progress rather than flicker. `◈` marks work pcode runs
 itself, such as compaction.
 The thought is the model's newest, kept until its answer starts streaming;
@@ -394,8 +397,9 @@ list when the model finishes a turn, keeping the idle prompt compact. It
 returns on the next turn, and Ctrl+O brings it back immediately. Default off.
 
 The panel also hides in a pane shorter than `tasks_min_rows` (default 30) or narrower
-than `tasks_min_columns` (default 100), and returns when the pane grows back, so
-a split in either direction keeps the transcript readable. Each attached
+than `tasks_min_columns` (default 100), thinking and tool rows included, and
+returns when the pane grows back, so a split in either direction keeps the
+transcript readable and the status row says what is running. Each attached
 terminal checks its own pane. Ctrl+O shows it in a small pane anyway until the
 pane crosses the threshold again; `0` turns either check off. `tasks_min_rows` and
 `tasks_min_columns` apply immediately through `/config`.
@@ -403,7 +407,7 @@ pane crosses the threshold again; `0` turns either check off. `tasks_min_rows` a
 `pcode config set tasks_max_height 0.5` caps the editor box, panel included, at
 half the screen; a whole number such as `20` caps it at that many rows. Under a
 cap the thought gives way first, then the tool rows down to the running call;
-tasks get the room next and the editor keeps at least one text row, so a long
+tasks (and any running sub-agents) get the room next and the editor keeps at least one text row, so a long
 plan shows more steps while a long draft scrolls inside the editor. Unset (the
 default), the thought and tool rows share at most a quarter of the pane, the
 task list takes at most 10 rows or half the screen, whichever is smaller, and

@@ -175,7 +175,7 @@ def header_shade(background: str, theme: str) -> str:
 
     Dark, halfway back to the background, so the step scales with the box's
     own lift: a fixed share of the shade all but vanished there (three of
-    255 levels on a typical dark scheme, none on black). Light, a small
+    255 levels on a typical dark scheme, one on black). Light, a small
     share toward black, about as far as the dark step looks; the box's own
     share overdid it, reading as a stripe rather than a header.
     """
@@ -581,6 +581,9 @@ TOOL_LINGER_SECONDS = 10
 # Marks the first thought row in the spinner's column, without resembling
 # a stalled frame of the spinners below it.
 THOUGHT_ICON = "∴"
+# Where the editor box's band sets a thought's later rows and the tool rows:
+# under the thought's text, a level in from the column of icons.
+BAND_INDENT = " " * (cell_len(THOUGHT_ICON) + 1)
 # The tool row's stand-ins for common verbs (`tool_display.LABELS`), so it
 # says `$ make test` rather than `Run shell · make test`. A tool not listed
 # keeps its verb spelled out. Each is one cell wide, ambiguous-width or not.
@@ -874,10 +877,10 @@ class Activity:
     # the task list, shown and hidden together (Ctrl+O). The status row is not
     # part of it: it says the turn is running whatever the panel shows.
     show_tasks: bool = True
-    # Hide the widget again as soon as a turn ends, without forgetting that the
+    # Hide the task list again as soon as a turn ends, without forgetting that the
     # user wants it shown while the model works.
     autohide_tasks: bool = False
-    # Draw the widget as the top section of the editor box instead of its own box.
+    # Draw the task list as a section of the editor box instead of its own box.
     attach_tasks: bool = True
     # Draw the thought and tool rows in the editor box, under its status row,
     # instead of above the box (see `PromptLayout.band_rows`).
@@ -895,17 +898,18 @@ class Activity:
     # The `tool_linger_seconds` setting: how long a finished call keeps its
     # tool row; 0 keeps it until newer calls push it out.
     tool_linger_seconds: int = TOOL_LINGER_SECONDS
-    # Cap on the task widget plus the editor box: whole rows, or a share of the
-    # screen below 1 (0.5 is half). None keeps the default layout.
+    # Cap on the editor box, the panel in it included, plus any detached task
+    # box: whole rows, or a share of the screen below 1 (0.5 is half). None
+    # keeps the default layout.
     tasks_max_height: float | None = None
     tasks_autohidden: bool = False
-    # Hide the widget in a pane shorter or narrower than these (0 never hides),
+    # Hide the panel in a pane shorter or narrower than these (0 never hides),
     # so one preference suits a full screen and a split alike. Each terminal
     # measures its own pane: see `fit_screen`.
     tasks_min_rows: int = 0
     tasks_min_columns: int = 0
     screen_small: bool = False
-    # Ctrl+O showed the widget in a small pane; dropped when the pane crosses
+    # Ctrl+O showed the panel in a small pane; dropped when the pane crosses
     # the threshold, so the next split or unsplit decides afresh.
     tasks_unhidden: bool = False
     # Inline shortcut hints, such as the key that hides the task list.
@@ -1017,13 +1021,15 @@ class Activity:
             return []
         thought = latest_thought(self.thought)
         if hanging:
-            indent = " " * (cell_len(THOUGHT_ICON) + 1)
             return [
                 [
-                    ("class:activity.thinking.icon", f"{THOUGHT_ICON} " if index == 0 else indent),
+                    (
+                        "class:activity.thinking.icon",
+                        f"{THOUGHT_ICON} " if index == 0 else BAND_INDENT,
+                    ),
                     ("class:activity.thinking", row),
                 ]
-                for index, row in enumerate(head_rows(thought, width - len(indent), rows))
+                for index, row in enumerate(head_rows(thought, width - len(BAND_INDENT), rows))
             ]
         # Wrap the marker with the text so continuation rows use the full
         # width, without a hanging indent. Only the first row has an upright
@@ -1155,12 +1161,12 @@ class Activity:
         self.tools.turn_calls.clear()
 
     def height_cap(self, rows: int) -> int | None:
-        """The task widget plus editor box's row limit on a screen this tall."""
+        """The editor box's row limit, panel included, on a screen this tall."""
         cap = self.tasks_max_height
         return None if cap is None else screen_rows(cap, rows)
 
     def fit_screen(self, columns: int, rows: int) -> None:
-        """Note whether this pane is below the widget's size thresholds."""
+        """Note whether this pane is below the panel's size thresholds."""
         small = rows < self.tasks_min_rows or columns < self.tasks_min_columns
         if small != self.screen_small:
             self.screen_small = small
@@ -1181,7 +1187,7 @@ class Activity:
         """Ctrl+O acts on what is on screen, so auto-hidden reads as hidden.
 
         In a small pane it only overrides the size rule for that pane, leaving
-        `show_tasks` on so a larger pane still shows the widget.
+        `show_tasks` on so a larger pane still shows the panel.
         """
         shown = self.panel_shown
         self.tasks_autohidden = False
@@ -1290,9 +1296,12 @@ class Activity:
             # The clock is the call's own, whatever the model said last.
             self._phase_seconds("")
             phase = call_parts(call)[0] if running < 2 else f"Running {running} tools"
-            return StatusLine(
-                phase, self.hidden_step(), tally=tally, elapsed=call.elapsed, call=call
-            )
+            detail = ""
+            if not self.panel_shown:
+                # The tool rows went with the panel, so a lone call's own
+                # detail says what runs; else the plan's step says what for.
+                detail = (call_parts(call)[1] if running < 2 else "") or self.hidden_step()
+            return StatusLine(phase, detail, tally=tally, elapsed=call.elapsed, call=call)
         clock, hue = phase, None
         if agents := self.tools.delegates:
             # The panel lists the agents themselves, so this row just says
@@ -1321,7 +1330,7 @@ class Activity:
     def tool_rows(
         self, line: StatusLine, width: int, limit: int | None = None, spinner: str = "·"
     ) -> list[list[tuple[str, str]]]:
-        """The tool rows between the thought and the status row: `◜ $ ls -la`.
+        """The activity panel's tool rows, under the thought: `◜ $ ls -la`.
 
         `spinner` marks a running call: the tool spinner's current frame.
 
@@ -2534,7 +2543,7 @@ class PromptLayout:
 
     def size(self):
         size = self.session.app.output.get_size()
-        # Every layout read comes through here, so the task widget's size rule
+        # Every layout read comes through here, so the activity panel's size rule
         # follows a resize or split before anything is measured against it.
         self.activity.fit_screen(size.columns, size.rows)
         return size
@@ -2778,12 +2787,13 @@ class PromptLayout:
             if budget < 1:
                 return []
             limit = min(limit, budget)
-        # Indented under the thought's text, a level below the column of icons.
-        indent = " " * (cell_len(THOUGHT_ICON) + 1)
         rows = self.activity.tool_rows(
-            self.status_line(), self.band_width() - len(indent), limit, self.tool_spinner_frame()
+            self.status_line(),
+            self.band_width() - len(BAND_INDENT),
+            limit,
+            self.tool_spinner_frame(),
         )
-        return [[("", indent), *row] for row in rows]
+        return [[("", BAND_INDENT), *row] for row in rows]
 
     def band_width(self) -> int:
         """Cells across a band row: inside the box's sides, in from them like the
@@ -2803,7 +2813,8 @@ class PromptLayout:
         cap = activity.height_cap(self.size().rows)
         if cap is None:
             return None
-        tasks = activity.panel_shown and bool(activity.displayed_plan)
+        # Running sub-agents get task rows with no plan at all.
+        tasks = activity.panel_shown and bool(activity.displayed_plan or activity.tools.delegates)
         return cap - 4 - (1 + self.task_chrome() if tasks else 0)
 
     @_per_render
@@ -2815,8 +2826,9 @@ class PromptLayout:
         padding the gap with blank rows: a new thought starting over on one
         row, or a call that stops lingering, would otherwise jolt the status
         row and the tasks up and down on every step. With nothing left to
-        show (the answer is streaming, or Ctrl+O hid the panel) it goes at
-        once: a band of blank rows would only look stuck.
+        show (the thought gave way to the answer and the calls stopped
+        lingering, or Ctrl+O hid the panel) it goes at once: a band of blank
+        rows would only look stuck.
         """
         rows = (
             [*self.thought_rows(), *self.tool_rows()]
