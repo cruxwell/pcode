@@ -78,8 +78,9 @@ def claude_usage() -> list[str]:
             timeout=CLAUDE_USAGE_TIMEOUT,
             stdin=subprocess.DEVNULL,
             cwd=tempfile.gettempdir(),
-            # Scrubbed as `claude:` requests are, so an API key cannot answer for the plan.
-            env={**os.environ, **LOGIN_ENV},
+            # Scrubbed as `claude:` requests are, so an API key cannot answer for the
+            # plan; and a `claude` found on PATH must not update itself mid-command.
+            env={**os.environ, **LOGIN_ENV, "DISABLE_AUTOUPDATER": "1"},
         )
     except subprocess.TimeoutExpired:
         raise UsageUnavailable("Claude Code did not answer in time.") from None
@@ -90,7 +91,9 @@ def claude_usage() -> list[str]:
     except ValueError:
         data = None
     if not isinstance(data, dict) or not isinstance(data.get("result"), str):
-        raise UsageUnavailable(f"Claude Code's /usage failed (exit {result.returncode}).")
+        detail = (result.stderr or "").strip().splitlines()[:1]
+        reason = f": {detail[0]}" if detail else ""
+        raise UsageUnavailable(f"Claude Code's /usage failed (exit {result.returncode}){reason}.")
     if data.get("is_error"):
         first = data["result"].strip().splitlines()[:1]
         raise UsageUnavailable(first[0] if first else "Claude Code's /usage failed.")

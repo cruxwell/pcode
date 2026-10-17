@@ -1294,7 +1294,7 @@ def error_message(error: Exception, *, unexpected: str | None = None) -> str:
         # the failure then surfaces here, on the first prompt.
         from pcode.models import anthropic_credential_hint
 
-        return f"No Anthropic credential is selected. {anthropic_credential_hint()}"
+        return f"ANTHROPIC_API_KEY is not set. {anthropic_credential_hint()}"
     if name == "CredentialsRefreshError":
         # Recognize only fixed public error codes, never echo token-endpoint bodies.
         for code in (

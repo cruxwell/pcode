@@ -567,8 +567,8 @@ The working window is the same one compaction uses. pcode takes it from the
 serving provider when it can (Codex's models endpoint or Anthropic's Models
 API), otherwise from an exact provider/model match on
 [Models.dev](https://models.dev/). Codex never borrows ordinary OpenAI API
-limits, and custom proxies don't inherit direct-API limits. When separate input and total-context limits are known, the
-smaller one is used. Public metadata is cached for 24 hours in
+limits, and custom proxies don't inherit direct-API limits. When separate input and
+total-context limits are known, the smaller one is used. Public metadata is cached for 24 hours in
 `$XDG_CACHE_HOME/pcode/model-context-v1.json` (default `~/.cache/pcode/`).
 Unknown limits show `?`, so a first run offline can show `?`, and Codex needs a
 successful lookup or an explicit override.

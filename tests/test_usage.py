@@ -21,7 +21,7 @@ CLI_REPORT = (
 )
 
 
-def fake_cli(monkeypatch, stdout="", returncode=0, error=None):
+def fake_cli(monkeypatch, stdout="", returncode=0, error=None, stderr=""):
     """Stand in for `claude -p /usage`; records the command and environment."""
     calls = []
 
@@ -29,7 +29,7 @@ def fake_cli(monkeypatch, stdout="", returncode=0, error=None):
         calls.append((args, kwargs))
         if error is not None:
             raise error
-        return SimpleNamespace(stdout=stdout, returncode=returncode)
+        return SimpleNamespace(stdout=stdout, stderr=stderr, returncode=returncode)
 
     monkeypatch.setattr("pcode.models.claude_sdk_installed", lambda: True)
     monkeypatch.setattr("pcode.claude_sdk.cli_path", lambda: "/bin/claude")
@@ -52,6 +52,9 @@ def test_claude_usage_asks_the_cli_with_a_scrubbed_environment(monkeypatch):
     ((args, kwargs),) = calls
     assert args[:3] == ["/bin/claude", "-p", "/usage"]
     assert "--no-session-persistence" in args
+    # No user or project hooks run, and the CLI never waits on input.
+    assert args[-2:] == ["--setting-sources", ""]
+    assert kwargs["stdin"] is subprocess.DEVNULL
     # An API key must not answer for the subscription.
     assert kwargs["env"]["ANTHROPIC_API_KEY"] == ""
 
@@ -64,7 +67,8 @@ def test_claude_usage_without_a_subscription_login(monkeypatch):
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
-        ({"stdout": "not json", "returncode": 1}, "failed \\(exit 1\\)"),
+        ({"stdout": "not json", "returncode": 1}, "failed \\(exit 1\\)\\.$"),
+        ({"returncode": 2, "stderr": "boom\nmore"}, "failed \\(exit 2\\): boom\\.$"),
         ({"stdout": cli_json("Not logged in\nmore", is_error=True)}, "^Not logged in$"),
         ({"error": subprocess.TimeoutExpired("claude", 30)}, "did not answer"),
         ({"error": FileNotFoundError()}, "Could not run Claude Code"),

@@ -626,8 +626,7 @@ class SessionController:
                 f"Remove a stored login ({' or '.join(logout_sources())})",
                 self.logins.logout,
                 logout_sources(),
-                # The handler validates, so `/logout anthropic` still clears an
-                # old sign-in when the legacy route is off and unadvertised.
+                # The handler validates, so its own usage message wins.
                 free_arguments=True,
                 group="Model",
             ),
@@ -2913,10 +2912,10 @@ class SessionController:
     def warn_without_credentials(self) -> None:
         """Say so at startup, not on the first prompt.
 
-        An `anthropic:` model with no selected credential is built with
+        An `anthropic:` model without `ANTHROPIC_API_KEY` is built with
         `defer_model_check`, so its agent keeps the unresolved model string and
-        the terminal opens looking healthy. Report it while /login is still the
-        obvious next step.
+        the terminal opens looking healthy. Report it before the first prompt
+        fails.
         """
         if not (self.model or "").startswith("anthropic:"):
             return
@@ -2926,8 +2925,7 @@ class SessionController:
         from pcode.models import anthropic_credential_hint
 
         self.view.warning(
-            "No Anthropic credential is selected, so prompts will fail. "
-            + anthropic_credential_hint()
+            "ANTHROPIC_API_KEY is not set, so prompts will fail. " + anthropic_credential_hint()
         )
 
     def rename(self, argument: str) -> None:

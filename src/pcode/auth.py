@@ -1,4 +1,4 @@
-"""Shared authentication helpers for Anthropic access."""
+"""The login error every sign-in raises, and the API-key Anthropic model."""
 
 
 class LoginError(ValueError):
