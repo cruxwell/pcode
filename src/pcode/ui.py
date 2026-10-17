@@ -2900,24 +2900,36 @@ class PromptLayout:
         # Not before the thread is drawn, nor over the conversation it hides.
         if transcript is None or not getattr(transcript.output, "view_drawn", False):
             return []
-        from pcode.btw_view import current
+        from pcode.btw_view import current, next_thread
         from pcode.conversation_tree import excerpt
 
         thread = current(self.activity)
+        if not thread:
+            # The thread is gone; the conversation is on its way back.
+            return []
         columns = self.size().columns - 1
-        question = plain(excerpt(thread[0].question), max(10, columns // 4)) if thread else ""
+        question = plain(excerpt(thread[0].question), max(10, columns // 4))
         label = [
             ("class:btw.divider", f" ↑ btw: {question} "),
             ("class:frame.border", "·"),
             ("class:btw.conversation", " ↓ conversation "),
         ]
         key = self.shortcuts.label("q") if self.shortcuts is not None else "Ctrl+Q"
-        keys = [
-            ("class:btw.key", " Esc"),
-            ("class:btw.conversation", " back · "),
-            ("class:btw.key", key),
-            ("class:btw.conversation", " next thread "),
-        ]
+        if next_thread(self.activity) is None:
+            # The last stop of Ctrl+Q's cycle is the conversation, as Esc is.
+            keys = [
+                ("class:btw.key", f" {key}"),
+                ("class:btw.conversation", " or "),
+                ("class:btw.key", "Esc"),
+                ("class:btw.conversation", " back "),
+            ]
+        else:
+            keys = [
+                ("class:btw.key", " Esc"),
+                ("class:btw.conversation", " back · "),
+                ("class:btw.key", key),
+                ("class:btw.conversation", " next thread "),
+            ]
 
         def cells(fragments) -> int:
             return sum(get_cwidth(text) for _, text in fragments)

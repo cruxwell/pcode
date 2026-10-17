@@ -717,11 +717,8 @@ class SessionHost:
             (jobs is not None and jobs.running(), "a background command is running"),
             (controller.startup_pending, "it is starting up"),
             (controller.asides.running, "a side question is running"),
-            # A title asked for beside the first turn would be lost.
-            (
-                controller.naming_task is not None and not controller.naming_task.done(),
-                "it is naming the session",
-            ),
+            # A title asked for beside the first turn, or a name /rename asked for, would be lost.
+            (controller.naming(), "it is naming the session"),
         )
         return next((reason for busy, reason in work if busy), "")
 

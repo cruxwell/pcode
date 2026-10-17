@@ -624,7 +624,9 @@ def test_rename_names_the_session_for_resume(tmp_path):
         assert saved.info.updated == updated
         app.controller.rename("Cache work")
         assert dict(app.controller.session_overview())["Name"] == "Cache work"
-        app.controller.rename("")
+        # Bare asks the model, and a session with no conversation yet has nothing to show it.
+        with pytest.raises(ValueError, match="Nothing to name"):
+            app.controller.rename("")
         assert saved.info.name == "Cache work"
         app.controller.rename("-")
         assert [info.name for info in list_sessions(root)] == [None]

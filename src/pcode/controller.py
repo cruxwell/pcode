@@ -531,6 +531,8 @@ class SessionController:
         # not retried on every turn. Opening a session (/new, /resume) clears it.
         self.naming_task: asyncio.Task | None = None
         self._naming_tried: set[str] = set()
+        # A bare /rename asking the conversation's model for a name.
+        self.rename_task: asyncio.Task | None = None
         self._model_suggestions: tuple[str | None, float, list[str]] | None = None
         # Whether the owner is shutting down, so a cancelled turn is not a Ctrl+C.
         self.closing: Callable[[], bool] = lambda: False
@@ -672,7 +674,7 @@ class SessionController:
             ),
             Command(
                 "/rename",
-                "Name this conversation for /resume: NAME sets, - clears, bare shows",
+                "Name this conversation for /resume: NAME | ask model",
                 self.rename,
                 free_arguments=True,
                 group="Session",
@@ -1078,7 +1080,8 @@ class SessionController:
             for task in active:
                 if not task.cancelling():
                     task.cancel()
-        elif not self.cancel_asides():
+        # Nothing in the foreground: stop what runs beside it, each one saying so.
+        elif not (self.cancel_asides() + self.cancel_background_rename()):
             self.activity.busy = False
             # A command that ended the session cancels nothing the user ran.
             if self.running:
@@ -1088,6 +1091,12 @@ class SessionController:
         """Stop the running side questions alone; a running turn carries on."""
         if stopped := self.asides.cancel():
             self.view.note(f"Stopped {stopped} side question(s).")
+        return stopped
+
+    def cancel_background_rename(self) -> bool:
+        """Ctrl+C with no turn running: a bare /rename's request is what is left to stop."""
+        if stopped := self.cancel_rename():
+            self.view.note("Stopped asking the model for a name.")
         return stopped
 
     def _steering_limit(self) -> int | None:
@@ -2937,7 +2946,10 @@ class SessionController:
         )
 
     def rename(self, argument: str) -> None:
-        """Name the saved session, so /resume can list and find it by that name."""
+        """Name the saved session, so /resume can list and find it by that name.
+
+        Bare, the conversation's own model is asked for a name in the background.
+        """
         session = getattr(self.runtime, "session", None)
         if session is None:
             raise ValueError("Nothing is saved yet; /rename works after the first prompt.")
@@ -2946,24 +2958,92 @@ class SessionController:
         # One line, no control characters, and short enough for a list row.
         name = plain(" ".join(plain(argument, None).split()), 80)
         if not name:
-            current = session.info.name
-            title = session.info.title
-            self.view.flash(
-                f"Session name: {current}. /rename - clears it."
-                if current
-                else f"Session title: {title}. /rename NAME replaces it."
-                if title
-                else "This session has no name. Usage: /rename NAME"
-            )
+            self.start_rename(session)
             return
-        session.info.name = None if name == "-" else name
+        # A name typed now wins over one still being asked for.
+        self.cancel_rename()
+        self._save_name(session, None if name == "-" else name)
+        self.view.flash(f"Session named: {name}" if name != "-" else "Session name cleared.")
+
+    def _save_name(self, session, name: str | None) -> None:
+        session.info.name = name
         try:
             # A name is not activity: the session keeps its place and date in /resume.
             session.save_info(touch=False)
         except OSError as error:
             raise ValueError(f"Could not save the name: {error}") from error
         self.view.session_changed()
-        self.view.flash(f"Session named: {name}" if name != "-" else "Session name cleared.")
+
+    def start_rename(self, session) -> None:
+        """Ask the conversation's model to name `session`, beside whatever is running.
+
+        In a task, not awaited: a command holds queued prompts back until it
+        returns, and the answer can take as long as a model request does.
+        """
+        if not self.model:
+            raise ValueError("No model to ask for a name. Usage: /rename NAME")
+        if self.startup_pending or self.startup_error is not None:
+            raise ValueError("The model can name this once the agent has started; /rename NAME")
+        runtime = self.runtime
+        # Mid-turn, the request in flight counts: it is what a side question sees.
+        if not (getattr(runtime, "history", None) or getattr(runtime, "context_history", None)):
+            raise ValueError("Nothing to name yet. Usage: /rename NAME")
+        if self.rename_task is not None and not self.rename_task.done():
+            self.view.flash("Already asking the model for a name.")
+            return
+        self.rename_task = asyncio.create_task(self._suggest_name(session))
+        self.view.flash("Asking the model for a name…")
+
+    async def _suggest_name(self, session) -> None:
+        from pcode.aside import ASIDE_TIMEOUT_SECONDS
+        from pcode.diagnostics import provider_context
+        from pcode.error_report import error_message
+        from pcode.session_naming import RENAME_REQUEST, clean_title
+
+        try:
+            # A side question's deadline: a stalled provider must not hold off
+            # every later /rename, and a host's idle stop, for good.
+            async with asyncio.timeout(ASIDE_TIMEOUT_SECONDS):
+                # Sent as it is: the side question framing would ask for an answer.
+                reply = await self.runtime.aside(RENAME_REQUEST, framing=str)
+        except Exception as error:  # noqa: BLE001 - nobody else is waiting to report it.
+            # The warning is redacted as a turn's is, so the frames go where a turn's do.
+            agent = getattr(self.runtime, "agent", None)
+            session.record_error(
+                error,
+                run_id="rename",
+                provider_context=provider_context(agent.model) if agent is not None else None,
+                detail="Session name request (/rename)",
+            )
+            reason = (
+                f"no answer within {ASIDE_TIMEOUT_SECONDS}s"
+                if isinstance(error, TimeoutError)
+                else error_message(error)
+            )
+            self.view.warning(f"Could not name the session: {reason}")
+            return
+        name = clean_title(reply.answer)
+        if not name:
+            self.view.warning("Could not name the session: the model gave no name.")
+            return
+        # /new and /resume cancel this; anything else that swapped it is not ours.
+        if getattr(self.runtime, "session", None) is not session:
+            return
+        try:
+            self._save_name(session, name)
+        except ValueError as error:
+            self.view.warning(str(error))
+            return
+        self.view.flash(f"Session named: {name}")
+        self.view.redraw()
+
+    def cancel_rename(self) -> bool:
+        """Stop a bare /rename's request; whether one was running."""
+        task = self.rename_task
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
 
     def session_title(self) -> str:
         """What the session is called: its /rename name, else its asked-for title."""
@@ -3025,17 +3105,26 @@ class SessionController:
         self.view.redraw()
 
     def cancel_naming(self) -> None:
-        """Another conversation is opening: its title request goes, and may be asked again."""
+        """Another conversation is opening: its title and name requests go.
+
+        Its title may be asked again; a name only when /rename asks.
+        """
         if self.naming_task is not None and not self.naming_task.done():
             self.naming_task.cancel()
+        self.cancel_rename()
         self._naming_tried.clear()
 
+    def naming(self) -> bool:
+        """Whether a title or name is being asked for."""
+        return any(
+            task is not None and not task.done() for task in (self.naming_task, self.rename_task)
+        )
+
     async def stop_naming(self) -> None:
-        """Cancel a title request and wait it out, before provider processes are stopped."""
-        task = self.naming_task
+        """Cancel title and name requests and wait them out, before provider processes stop."""
+        tasks = [task for task in (self.naming_task, self.rename_task) if task is not None]
         self.cancel_naming()
-        if task is not None:
-            await asyncio.gather(task, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def new(self, argument: str) -> None:
         self.cancel_naming()

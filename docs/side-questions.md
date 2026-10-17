@@ -75,9 +75,8 @@ without any frame coming along.
 A running turn carries on while you read. Its spinner stays on the editor's
 border, and what it writes lands in the conversation, in order, when you go
 back. Meanwhile a divider under the thread points up to it and down to the
-conversation, with the keys back (`Esc`) and to the next thread, and the
-conversation's newest three lines stream in beneath it, above the turn's own
-tool rows:
+conversation, with what Esc and Ctrl+Q do from here, and the conversation's
+newest three lines stream in beneath it, above the turn's own tool rows:
 
 ```text
 because one token of lookahead decides every rule.
@@ -105,9 +104,11 @@ completion, vi mode, `@file`s):
   `/btw QUESTION`, means what it always does. So do a `!command`, which runs in
   the shell, and **Ctrl+Enter**, which interrupts the conversation's turn with
   your message.
-- **Ctrl+Q** shows the newest thread, then each older one, wrapping around.
-  With a [shortcut prefix](commands.md#shortcut-prefix), it is the prefix and
-  `q`.
+- **Ctrl+Q** shows the newest thread, then each older one, then the
+  conversation again, and from there starts over at the newest. With a single
+  thread it toggles between the thread and the conversation; the divider says
+  which comes next (`Ctrl+Q or Esc back` on the last thread). With a
+  [shortcut prefix](commands.md#shortcut-prefix), it is the prefix and `q`.
 - **Escape** goes back to the conversation, keeping your draft. In vi mode,
   Escape first leaves insert mode as usual, and a second one goes back.
 

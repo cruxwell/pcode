@@ -1,5 +1,7 @@
 """A short title for a saved session, asked of its own model beside the first turn.
 
+A bare /rename asks again with the whole conversation; see `RENAME_REQUEST`.
+
 One small request beside the conversation, not part of it: the first prompt
 goes to the session's model at low effort, and the answer is cleaned into one
 short line. The reply is not waited for: compared on saved sessions, it
@@ -15,11 +17,24 @@ returns nothing or fails; the instruction and low effort keep the answer short.
 import asyncio
 import re
 
+TITLE_RULES = (
+    "plain text, in sentence case, no quotes, no trailing punctuation, no prefix such as "
+    "'Title:'. Name the task or topic, not the assistant or the user."
+)
 INSTRUCTIONS = (
     "You name coding-assistant sessions so they can be found again later. "
-    "Reply with only a title of 3 to 6 words for the session below: plain text, "
-    "in sentence case, no quotes, no trailing punctuation, no prefix such as "
-    "'Title:'. Name the task or topic, not the assistant or the user."
+    "Reply with only a title of 3 to 6 words for the session below: " + TITLE_RULES
+)
+# Bare /rename asks the conversation to name itself. It goes as a side question
+# (`AgentRuntime.aside`), on the conversation's own agent and history, so it
+# reuses the prompt cache the conversation already paid for and can run beside
+# a turn. That is why this is a user message and not instructions: anything
+# added ahead of the history would miss the cache.
+RENAME_REQUEST = (
+    "[Session name] The user ran /rename to name this session so they can find it "
+    "again later. Reply with only a title of 3 to 6 words for the whole conversation "
+    "so far, not just its latest message: " + TITLE_RULES + " Do not use tools. "
+    "Your reply is not added to the conversation."
 )
 
 # How much of the first prompt the request carries.

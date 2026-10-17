@@ -53,13 +53,15 @@ def close(activity) -> None:
 
 
 def next_thread(activity) -> str | None:
-    """The thread before the one shown, wrapping to the newest; None with no threads."""
+    """Where Ctrl+Q goes: the newest thread, then each older one, then the conversation.
+
+    None is the conversation; from there the cycle starts again at the newest.
+    """
     ordered = [thread[0].thread for thread in threads(activity)]
-    if not ordered:
-        return None
     if activity.btw_thread not in ordered:
-        return ordered[-1]
-    return ordered[ordered.index(activity.btw_thread) - 1]
+        return ordered[-1] if ordered else None
+    index = ordered.index(activity.btw_thread)
+    return ordered[index - 1] if index else None
 
 
 def entry(*objects) -> Entry:
@@ -95,14 +97,17 @@ class ThreadView:
             return
         thread = current(self.activity)
         shown = thread[0].thread if thread else None
-        if shown != self._shown:
-            self._shown = shown
-            if shown is None:
-                output.close_view(self.transcript.replay)
-            else:
-                output.open_view(self.replay)
-            return
+        # Judged against the screen too, not only the last call: whatever
+        # left a view open, or replaced the output under one, this frame
+        # puts the screen back where `Activity` says it is. (`open_view` keeps
+        # the replay as `output.view`, so this settles after one call.)
         if shown is None:
+            self._shown = None
+            output.close_view(self.transcript.replay)
+            return
+        if shown != self._shown or output.view != self.replay:
+            self._shown = shown
+            output.open_view(self.replay)
             return
         entries = self._entries(thread)
         if entries is None:
@@ -128,10 +133,14 @@ class ThreadView:
             (model, "pcode.muted"),
         )
         key = self.key_label("q")
-        keys = (
-            f"Enter replies here · {key} next thread · Esc back to the conversation"
-            " · /merge /summarize /copy /links /stop"
+        # Written once, so it says what Ctrl+Q does now; the divider above the
+        # editor keeps up as threads come and go.
+        cycle = (
+            f"{key} or Esc back to the conversation"
+            if next_thread(self.activity) is None
+            else f"{key} next thread · Esc back to the conversation"
         )
+        keys = f"Enter replies here · {cycle} · /merge /summarize /copy /links /stop"
         return [entry(title), entry(Text(keys, style="pcode.muted")), entry()]
 
     def _entries(self, thread: list[Aside]) -> list[Entry] | None:
