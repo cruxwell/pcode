@@ -128,8 +128,9 @@ order, opening on the newest question. Each follow-up:
 
 Follow-ups are side questions in every other way: same limits, same refused
 tools, same footer counts and ready notices, and nothing joins the conversation
-until you [keep the thread](#keeping-a-thread). Up to 20 threads are kept; the
-oldest settled thread is dropped whole.
+until you [keep the thread](#keeping-a-thread). The viewer lists up to 20
+threads, dropping the oldest settled thread whole; the session keeps them all
+(see [saved with the session](#saved-with-the-session)).
 
 ## Keeping a thread
 
@@ -151,26 +152,26 @@ so the conversation's cache still covers everything before it. While the summary
 runs, the footer shows it like `/compact`, prompts you send wait behind it, and
 Ctrl+C cancels it with the conversation unchanged.
 
-**Ctrl+T: Merge into the conversation.** Every answered question in the thread becomes a node
-in the [conversation tree](conversation-tree.md), marked `btw:`, forked from the
-point where the thread was asked. Each one is a checkpoint like a turn's:
-selecting it in `/tree` continues from that answer, and it survives resuming the
-session. Where the conversation ends up depends on what happened since:
+**Ctrl+T: Merge into the conversation.** The thread is already a branch of the
+[conversation tree](conversation-tree.md), forked from the point where it was
+asked (see [saved with the session](#saved-with-the-session)). Merging moves the
+conversation onto it when that loses nothing. What happens depends on what
+happened since:
 
 - **Nothing:** the thread was asked while idle and the conversation has not
   moved, so the thread is simply its continuation. The conversation switches to
   its last answer and the transcript shows the questions and answers.
 - **Anything else** (the thread was asked mid-turn, or turns, `/compact` or a
-  `/tree` switch came after): the thread is a branch, and the conversation stays
-  where it is. Open `/tree` to switch to it. Moving there automatically would
-  drop whatever the conversation did after the question was asked.
+  `/tree` switch came after): the thread stays a branch, and the conversation
+  stays where it is. Open `/tree` to switch to it. Moving there automatically
+  would drop whatever the conversation did after the question was asked.
 
 Merged history is the thread's exactly, framing included, so the model can
 tell those exchanges were side questions. `/resend` refuses on a merged
 question or a summary, since resending would answer it again as a real turn;
 send a message instead. A thread asked before `/new` or `/resume` belongs to
 that other conversation and cannot be kept here. The viewer's list marks a kept
-thread `merged` or `summarized`; keeping it again adds it again.
+thread `merged` or `summarized`; summarizing it again adds another summary.
 
 ## What a side question can and cannot do
 
@@ -190,12 +191,25 @@ carries on answering. If the answer implies work, send it as a normal message.
 
 Nothing about a side question joins the conversation:
 
-- no conversation-tree node, so `/tree`, `/resend` and forking never see it;
-- no session-journal record, so resuming the session does not replay it;
-- no change to the model's history, so the next real turn is unaffected.
+- no change to the model's history, so the next real turn is unaffected;
+- no change to where the conversation is: its tree node is a branch beside it
+  (see below), and resuming or replaying the session draws the conversation
+  without it.
 
 That holds until you [keep the thread](#keeping-a-thread), which is the one
 deliberate way in.
+
+### Saved with the session
+
+Each question is saved in the session when its answer settles (answered,
+stopped or failed), as a node in the [conversation tree](conversation-tree.md):
+a `btw:` row forked from where the thread was asked, with each follow-up under
+the answer it continued. That happens even while a turn is running, without
+touching the turn. So a thread outlives the session: after `/resume`, `/btw`
+lists it again, read, and a follow-up continues from its saved history.
+`/tree` shows it as a branch you can switch to, like any turn, and the
+session's search finds it. A question still running when pcode exits is not
+saved.
 
 What it does share is the context it was asked against and the session's token
 totals: the request really happened, so `/status` counts it.

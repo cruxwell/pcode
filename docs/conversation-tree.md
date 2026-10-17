@@ -82,10 +82,12 @@ or wait for the turn to end to fork, or ask about the branch with a
 [side question](side-questions.md) (`/btw`), which runs in parallel without
 touching the conversation.
 
-A `/btw` thread worth keeping can be
-[merged into the tree](side-questions.md#keeping-a-thread) from its viewer. Its
-questions appear as `btw:` rows forked where the thread was asked, and each is a
-checkpoint you can continue from like any turn.
+Every `/btw` thread is
+[saved in the tree](side-questions.md#saved-with-the-session) as it is answered:
+its questions appear as `btw:` rows forked where the thread was asked, and each
+is a checkpoint you can continue from like any turn. They never move the
+conversation; [merging](side-questions.md#keeping-a-thread) a thread from its
+viewer does, when that loses nothing.
 
 ## Persistence
 

@@ -775,3 +775,19 @@ def test_edits_filter_shows_only_calls_that_changed_files():
     app = PreviewApp(console=Console(file=StringIO()))
     app.handle("/tools edits")
     assert app.inspector_requested == "edits"
+
+
+def test_a_side_question_journaled_mid_turn_leaves_its_running_calls_alone():
+    archive = ToolArchive()
+    archive.record({"kind": "turn_started", "run_id": "main", "prompt": "work"})
+    archive.record(
+        {"kind": "ToolStarted", "name": "run_command", "call_id": "one", "run_id": "main"}
+    )
+    # A /btw answer lands while the call runs (see `side_record`).
+    archive.record(
+        {"kind": "turn_started", "run_id": "side", "prompt": "why?", "side": {"thread": "side"}}
+    )
+    archive.record({"kind": "turn_completed", "run_id": "side"})
+    assert [call.state for call in archive.calls] == ["running"]
+    archive.record({"kind": "turn_completed", "run_id": "main"})
+    assert [call.state for call in archive.calls] == ["unknown"]

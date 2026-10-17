@@ -452,6 +452,8 @@ class SessionBrowser:
             # The same quote rail scrollback draws, so a remembered turn looks
             # here the way it looked when it was live, blank line included.
             blocks.append(TaskPrompt(literal(turn.prompt)))
+            if turn.side:
+                blocks.append(Text("  a /btw side question, beside the conversation", style="dim"))
             blocks.append(Text(""))
             # Consecutive tool lines stay flush and a blank row marks entering or
             # leaving that run, the rule Transcript.print applies to scrollback.

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from pcode.conversation_tree import side_record
 from pcode.diagnostics import redact
 from pcode.history_cursor import JournalReader, advance
 from pcode.sessions import SessionInfo, SessionReadBudget, list_sessions
@@ -176,9 +177,14 @@ class TurnReader:
                 parent,
                 str(record.get("time", self.journal.info.created)),
                 active=None,
-                blocks=["User: " + record["prompt"]],
+                blocks=[
+                    ("User (side question): " if record.get("side") else "User: ")
+                    + record["prompt"]
+                ],
             )
-            self.active = self.recording = identity
+            # A side question is a branch beside the conversation, never its head.
+            if not side_record(record):
+                self.active = self.recording = identity
         elif kind == "compaction_checkpoint":
             identity, parent = record.get("node_id"), record.get("parent_id")
             if isinstance(identity, str) and (parent is None or isinstance(parent, str)):

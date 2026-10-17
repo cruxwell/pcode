@@ -629,7 +629,8 @@ class SessionHost:
             "conversation": aside.conversation,
             "base": aside.base,
             "bridged": aside.bridged,
-            "replied": aside.reply is not None,
+            # Whether it can be followed up: a reply held here, or a saved node.
+            "replied": aside.continuable,
             "read": aside.read,
         }
 
@@ -776,6 +777,8 @@ class SessionHost:
             task.cancel()
         await asyncio.gather(*self.tasks, *controller.tasks(), return_exceptions=True)
         await controller.asides.close()
+        # Stopping them settled them: their journal entries go in before the session closes.
+        await controller.side_records_settled()
         await controller.stop_naming()
         if self.server is not None:
             self.server.close()

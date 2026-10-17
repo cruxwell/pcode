@@ -303,7 +303,12 @@ class TreeBrowser:
         for node in self.tree.nodes.values():
             children.setdefault(node.parent, []).append(node)
         while descendants := children.get(path[-1] if path else None):
-            chosen = next((n for n in descendants if n.id in active), descendants[-1])
+            # Off the active branch, follow the conversation, never a side question.
+            ordinary = [n for n in descendants if not n.side]
+            chosen = next((n for n in descendants if n.id in active), None)
+            if chosen is None and not ordinary:
+                break
+            chosen = chosen or ordinary[-1]
             path.append(chosen.id)
         return tuple(path)
 

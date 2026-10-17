@@ -450,17 +450,28 @@ def digest(info, root: Path, max_chars: int = 16000) -> str:
     from pcode.sessions import session_records
 
     turns: list[dict] = []
+    # By run id: a side question's records land in the middle of a running turn's.
+    by_run: dict[str, dict] = {}
+    current: dict | None = None
     for record in session_records(info, root):
         kind = record.get("kind")
+        run_id = record.get("run_id")
         if kind == "turn_started" and isinstance(record.get("prompt"), str):
-            turns.append(
-                {"id": record.get("run_id") or "", "prompt": record["prompt"], "parts": []}
-            )
-        elif turns and kind == "Message" and isinstance(record.get("markdown"), str):
-            turns[-1]["parts"].append(record["markdown"])
-        elif turns and kind == "ToolSummary":
+            turn = {"id": run_id or "", "prompt": record["prompt"], "parts": []}
+            turns.append(turn)
+            if isinstance(run_id, str):
+                by_run[run_id] = turn
+            if not record.get("side"):
+                current = turn
+            continue
+        turn = (by_run.get(run_id) if isinstance(run_id, str) else None) or current
+        if turn is None:
+            continue
+        if kind == "Message" and isinstance(record.get("markdown"), str):
+            turn["parts"].append(record["markdown"])
+        elif kind == "ToolSummary":
             detail = record.get("command") or record.get("detail") or ""
-            turns[-1]["parts"].append(f"[{record.get('name', 'tool')}] {str(detail)[:160]}")
+            turn["parts"].append(f"[{record.get('name', 'tool')}] {str(detail)[:160]}")
     per_turn = max(600, max_chars // max(1, len(turns)))
     blocks = [
         f"Session {info.id} · {info.name or info.title or '(untitled)'} · {info.workspace} · "

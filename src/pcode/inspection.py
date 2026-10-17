@@ -11,6 +11,7 @@ from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from pcode.conversation_tree import side_record
 from pcode.edits import change_from_record
 from pcode.runtime import EditCompleted, ToolStarted, ToolSummary
 from pcode.tool_display import command_text
@@ -127,6 +128,9 @@ class ToolArchive:
         self._payloads: deque[tuple[Payload, int]] = deque()
         self._bytes = 0
         self.run_id = "unavailable"
+        # Side questions journaled beside a running turn: their start and end
+        # must not settle that turn's calls (see `side_record`).
+        self._side_runs: set[str] = set()
         self._path: Path | None = None
         self._file_id: tuple[int, int] | None = None
         self._offset = 0
@@ -172,6 +176,11 @@ class ToolArchive:
         ):
             if key in record and not isinstance(record[key], str):
                 return
+        if side_record(record):
+            self._side_runs.add(record.get("run_id") or "")
+            return
+        if record.get("run_id") in self._side_runs:
+            return
         if kind == "turn_started":
             self.settle("unknown")
             self.run_id = record.get("run_id", str(offset))

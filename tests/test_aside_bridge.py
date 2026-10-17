@@ -37,7 +37,7 @@ from pcode.aside import (
 )
 from pcode.aside_ui import AsideBrowser
 from pcode.live import AgentRuntime
-from pcode.sessions import SavedSession, SessionError
+from pcode.sessions import SavedSession, SessionError, first_prompt, session_turns
 from pcode.ui import create_prompt
 
 
@@ -84,13 +84,6 @@ async def turn(runtime, prompt):
     return [event async for event in runtime.stream(prompt)]
 
 
-def steps_for(thread: list[Aside], reply: SideReply):
-    return [
-        (aside.question, aside.answer, reply.messages[:end])
-        for aside, end in exchanges(thread, reply.messages)
-    ]
-
-
 async def ask_thread(runtime, *questions) -> tuple[list[Aside], SideReply]:
     """Ask a question and its follow-ups, returning the thread's records and newest reply."""
     thread: list[Aside] = []
@@ -132,6 +125,63 @@ def test_exchanges_cut_the_newest_history_at_each_answered_question():
     assert exchanges([Aside(question="unrelated")], messages) == []
 
 
+async def record_thread(runtime, *questions) -> tuple[list[Aside], SideReply]:
+    """Ask a thread and journal each question as it settles, the way the app does."""
+    base = runtime.tree.active
+    thread: list[Aside] = []
+    reply = None
+    for question in questions:
+        reply = await runtime.aside(question, after=reply)
+        aside = Aside(
+            question=question,
+            answer=reply.answer,
+            thread=thread[0].id if thread else "",
+            base=None if thread else base,
+            parent=thread[-1].id if thread else base,
+        )
+        aside.reply = reply
+        aside.settle("answered")
+        assert await runtime.record_aside(aside, runtime.conversation_id)
+        thread.append(aside)
+    return thread, reply
+
+
+def test_a_side_question_is_a_branch_that_never_moves_the_conversation(tmp_path):
+    requests = []
+    runtime = runtime_for(tmp_path, requests)
+
+    async def run():
+        await turn(runtime, "Main task")
+        base, history = runtime.tree.active, list(runtime.history)
+        thread, reply = await record_thread(runtime, "Why?", "And then?")
+        assert runtime.tree.active == base
+        assert runtime.history == history
+        first, second = (runtime.tree.nodes[aside.id] for aside in thread)
+        assert (first.kind, first.parent, first.prompt, first.status) == (
+            "aside",
+            base,
+            "Why?",
+            "completed",
+        )
+        assert first.side["thread"] == second.side["thread"] == thread[0].id
+        assert (second.parent, second.response) == (first.id, "Side answer to And then?")
+        assert second.history == reply.messages
+        rows = [label for _, label in runtime.tree.rows()]
+        # A branch under the turn it was asked in, never in line as its next turn.
+        assert "└─ btw: Why?" in rows and "   btw: And then?" in rows
+        # The next turn continues the conversation, not the thread.
+        await turn(runtime, "Next")
+        assert runtime.tree.nodes[runtime.tree.active].parent == base
+        assert framed("Why?") not in prompts(requests[-1])
+        # Recording twice, or from another conversation, adds nothing.
+        assert not await runtime.record_aside(thread[0], runtime.conversation_id)
+        stray = Aside(question="Elsewhere?", parent=base)
+        stray.settle("answered")
+        assert not await runtime.record_aside(stray, "another")
+
+    asyncio.run(run())
+
+
 def test_a_thread_that_extends_the_conversation_becomes_its_continuation(tmp_path):
     requests = []
     runtime = runtime_for(tmp_path, requests)
@@ -139,16 +189,14 @@ def test_a_thread_that_extends_the_conversation_becomes_its_continuation(tmp_pat
     async def run():
         await turn(runtime, "Main task")
         base = runtime.tree.active
-        thread, reply = await ask_thread(runtime, "Why?", "And then?")
-        moved = await runtime.merge_aside(steps_for(thread, reply), base)
+        thread, reply = await record_thread(runtime, "Why?", "And then?")
+        moved = await runtime.merge_aside(thread[-1].id, base)
         assert moved
         first, second = (runtime.tree.nodes[i] for i in runtime.tree.path(runtime.tree.active)[1:])
         assert (first.kind, first.parent, first.prompt) == ("aside", base, "Why?")
         assert (second.kind, second.parent, second.prompt) == ("aside", first.id, "And then?")
-        assert second.response == "Side answer to And then?"
+        assert second.side["kept"] == "merged"
         assert runtime.history == reply.messages
-        rows = [label for _, label in runtime.tree.rows()]
-        assert any(label.startswith("btw: Why?") for label in rows)
 
         # The next turn continues from the thread's last answer.
         await turn(runtime, "Next")
@@ -164,50 +212,112 @@ def test_a_thread_that_extends_the_conversation_becomes_its_continuation(tmp_pat
     asyncio.run(run())
 
 
-def test_a_thread_the_conversation_moved_past_becomes_a_branch(tmp_path):
+def test_a_thread_the_conversation_moved_past_stays_a_branch(tmp_path):
     requests = []
     runtime = runtime_for(tmp_path, requests)
 
     async def run():
         await turn(runtime, "Main task")
         base = runtime.tree.active
-        thread, reply = await ask_thread(runtime, "Why?")
+        thread, reply = await record_thread(runtime, "Why?")
         await turn(runtime, "Later work")
         later, history = runtime.tree.active, list(runtime.history)
-        moved = await runtime.merge_aside(steps_for(thread, reply), base)
+        moved = await runtime.merge_aside(thread[-1].id, base)
         assert not moved
         # The conversation stays where it was; the thread forks where it was asked.
         assert runtime.tree.active == later
         assert runtime.history == history
-        (merged,) = [node for node in runtime.tree.nodes.values() if node.kind == "aside"]
-        assert merged.parent == base
-        await runtime.navigate(merged.id)
+        assert "kept" not in runtime.tree.nodes[thread[-1].id].side
+        await runtime.navigate(thread[-1].id)
         assert runtime.history == reply.messages
 
     asyncio.run(run())
 
 
-def test_a_merged_thread_survives_resume(tmp_path):
+def test_side_threads_survive_resume_off_the_conversation(tmp_path):
     requests = []
     saved = SavedSession.create("test:local", tmp_path, tmp_path / "sessions")
     runtime = runtime_for(tmp_path, requests, saved)
 
     async def run():
         await turn(runtime, "Main task")
-        base = runtime.tree.active
-        thread, reply = await ask_thread(runtime, "Why?", "And then?")
-        assert await runtime.merge_aside(steps_for(thread, reply), base)
-        return runtime.tree.active, reply
+        main = runtime.tree.active
+        history = list(runtime.history)
+        thread, reply = await record_thread(runtime, "Why?", "And then?")
+        return main, history, thread, reply
 
-    last, reply = asyncio.run(run())
-    identity = saved.info.id
+    main, history, thread, reply = asyncio.run(run())
+    identity, info = saved.info.id, saved.info
     saved.close()
 
     reopened = SavedSession.open(identity, tmp_path / "sessions")
     try:
-        assert reopened.tree.active == last
-        assert reopened.tree.nodes[last].kind == "aside"
-        assert asyncio.run(reopened.recover()) == reply.messages
+        tree = reopened.tree
+        assert tree.active == main
+        assert asyncio.run(reopened.recover()) == history
+        leaf = tree.nodes[thread[-1].id]
+        assert (leaf.kind, leaf.parent, leaf.status) == ("aside", thread[0].id, "completed")
+        assert leaf.side["thread"] == thread[0].id and leaf.side["status"] == "answered"
+        assert asyncio.run(reopened.history_at(leaf.id)) == reply.messages
+        # Replay draws the conversation, not the threads beside it.
+        shown = [
+            (record["kind"], record.get("prompt") or record.get("markdown"))
+            for record in reopened.transcript_records()
+            if record["kind"] in ("turn_started", "Message")
+        ]
+        assert shown == [("turn_started", "Main task"), ("Message", "Main answer to Main task")]
+    finally:
+        reopened.close()
+    assert first_prompt(info, tmp_path / "sessions") == "Main task"
+
+
+def test_a_side_question_recorded_mid_turn_leaves_the_turn_its_records(tmp_path):
+    """The point of /btw: it settles while a turn streams, between that turn's records."""
+    saved = SavedSession.create("test:local", tmp_path, tmp_path / "sessions")
+
+    async def run():
+        streaming, release = asyncio.Event(), asyncio.Event()
+
+        async def model(messages, info):
+            asked = prompts(messages[-1:])
+            if asked and asked[-1].startswith(ASIDE_FRAMING):
+                yield f"Side answer to {question_of(asked[-1])}"
+                return
+            yield "Main part one. "
+            streaming.set()
+            await release.wait()
+            yield "Main part two."
+
+        runtime = AgentRuntime(
+            Agent(FunctionModel(stream_function=model), capabilities=[create_coder(tmp_path)]),
+            saved,
+        )
+        main_turn = asyncio.create_task(turn(runtime, "Main task"))
+        await asyncio.wait_for(streaming.wait(), 5)
+        running = runtime.tree.active
+        thread, _ = await record_thread(runtime, "Why?")
+        release.set()
+        await asyncio.wait_for(main_turn, 5)
+        return runtime, running, thread[0]
+
+    runtime, running, side = asyncio.run(run())
+    tree = runtime.tree
+    assert tree.active == running
+    assert tree.nodes[running].response == "Main part one. Main part two."
+    assert tree.nodes[running].status == "completed"
+    assert (tree.nodes[side.id].parent, tree.nodes[side.id].response) == (
+        running,
+        "Side answer to Why?",
+    )
+    info = saved.info
+    saved.close()
+    turns = session_turns(info, tmp_path / "sessions")
+    assert [(turn.prompt, turn.response, turn.status, turn.side) for turn in turns] == [
+        ("Main task", "Main part one. Main part two.", "complete", False),
+        ("Why?", "Side answer to Why?", "complete", True),
+    ]
+    reopened = SavedSession.open(info.id, tmp_path / "sessions")
+    try:
         shown = [
             (record["kind"], record.get("prompt") or record.get("markdown"))
             for record in reopened.transcript_records()
@@ -215,11 +325,7 @@ def test_a_merged_thread_survives_resume(tmp_path):
         ]
         assert shown == [
             ("turn_started", "Main task"),
-            ("Message", "Main answer to Main task"),
-            ("turn_started", "Why?"),
-            ("Message", "Side answer to Why?"),
-            ("turn_started", "And then?"),
-            ("Message", "Side answer to And then?"),
+            ("Message", "Main part one. Main part two."),
         ]
     finally:
         reopened.close()
@@ -323,6 +429,48 @@ def test_the_app_merges_a_thread_and_shows_it(tmp_path):
     printed = app.transcript.console.file.getvalue()
     assert "Side answer to And then?" in printed
     assert "Merged 2 side questions into the conversation" in printed
+
+
+def test_a_thread_read_back_from_the_tree_takes_follow_ups(tmp_path):
+    requests = []
+    app = settled_app(tmp_path, requests)
+
+    async def run():
+        await turn(app.runtime, "Main task")
+        await app.controller.start_aside("Why?")
+        await settle(app)
+        root = app.asides.items[0]
+        app.controller.follow_up_aside(root.thread, "And then?")
+        await settle(app)
+        await app.controller.side_records_settled()
+        asked = [(aside.id, aside.question, aside.answer) for aside in app.asides.items]
+        assert all(aside.recorded for aside in app.asides.items)
+
+        # As after a resume: nothing in memory, the tree holds the thread.
+        app.asides.items.clear()
+        app.controller.restore_side_threads()
+        assert [(a.id, a.question, a.answer) for a in app.asides.items] == asked
+        first, second = app.asides.items
+        assert (first.thread, second.thread) == (root.thread, root.thread)
+        assert (first.base, second.parent) == (app.runtime.tree.active, first.id)
+        assert all(a.status == "answered" and a.read and a.reply is None for a in (first, second))
+        assert app.asides.follows(root.thread) is second
+        # Restoring again adds nothing.
+        app.controller.restore_side_threads()
+        assert len(app.asides.items) == 2
+
+        app.controller.follow_up_aside(root.thread, "Third?")
+        await settle(app)
+        third = app.asides.items[-1]
+        assert third.answer == "Side answer to Third?"
+        # It continued from the saved history of the answer it follows.
+        sent = prompts(requests[-1])
+        assert sent[-1] == framed_follow_up("Third?")
+        assert framed("Why?") in sent and framed_follow_up("And then?") in sent
+        await app.controller.side_records_settled()
+        assert app.runtime.tree.nodes[third.id].parent == second.id
+
+    asyncio.run(run())
 
 
 def test_btw_summarizes_a_thread_into_the_conversation_from_the_viewer(tmp_path):

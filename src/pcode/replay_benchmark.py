@@ -13,6 +13,7 @@ from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
 
 from pcode import runtime
+from pcode.conversation_tree import side_record
 from pcode.stream_display import present_events, present_stream_event
 from pcode.ui import Activity, TerminalOutput, Transcript
 
@@ -159,10 +160,17 @@ async def replay_journal(
             current["render_cpu_seconds"] += cpu
         open_turn = False
 
+    side_runs: set = set()
     for record in snapshot.records():
         kind = record.get("kind")
         if not isinstance(kind, str):
             skipped["malformed"] += 1
+            continue
+        if side_record(record):
+            side_runs.add(record.get("run_id"))
+        if record.get("run_id") in side_runs:
+            # A side question, journaled beside the turn: never main output.
+            skipped["side_question"] += 1
             continue
         if kind in METADATA:
             skipped["metadata"] += 1
@@ -249,8 +257,13 @@ def journal_turns(snapshot: JournalSnapshot) -> list[JournalTurn]:
     """Split a journal into prompts and their timestamped display events."""
     turns: list[JournalTurn] = []
     previous = None
+    side_runs: set = set()
     for record in snapshot.records():
         kind = record.get("kind")
+        if side_record(record):
+            side_runs.add(record.get("run_id"))
+        if record.get("run_id") in side_runs:
+            continue
         if kind == "turn_started":
             prompt = record.get("prompt", "")
             turns.append(JournalTurn(prompt if isinstance(prompt, str) else "", []))

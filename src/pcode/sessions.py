@@ -24,7 +24,7 @@ from pydantic_ai_harness.step_persistence import (
     ToolEffectRecord,
 )
 
-from pcode.conversation_tree import ConversationTree
+from pcode.conversation_tree import ConversationTree, side_record
 from pcode.diagnostics import error_report, redact, versions
 
 
@@ -207,6 +207,8 @@ class Turn:
     # can be replayed in the order it happened. `response` stays the last text
     # block: the session list and the conversation tree want that one alone.
     blocks: list["str | ToolCall"] = field(default_factory=list)
+    # A /btw side question journaled beside the conversation (`side_record`).
+    side: bool = False
 
 
 _TURN_KINDS = (
@@ -269,28 +271,43 @@ def session_turns(info: SessionInfo, root: Path | None = None) -> list[Turn] | N
     still worth finding.
     """
     turns: list[Turn] = []
+    # By run id: a side question's records land in the middle of a running
+    # turn's. Records without one belong to the last ordinary turn started.
+    by_run: dict[str, Turn] = {}
+    current: Turn | None = None
     try:
         for record in session_records(info, root):
             kind = record["kind"]
+            run_id = record.get("run_id")
             if kind == "turn_started":
                 prompt = record.get("prompt")
                 if not isinstance(prompt, str):
                     continue
                 # A /resend retry reuses the prompt; its outcome belongs to the same turn.
-                if record.get("continuation") and turns and turns[-1].prompt == prompt:
-                    turns[-1].status = "running"
+                if record.get("continuation") and current is not None and current.prompt == prompt:
+                    current.status = "running"
+                    if isinstance(run_id, str):
+                        by_run[run_id] = current
                     continue
-                turns.append(Turn(prompt))
-            elif not turns:
+                turn = Turn(prompt, side=side_record(record))
+                turns.append(turn)
+                if isinstance(run_id, str):
+                    by_run[run_id] = turn
+                if not side_record(record):
+                    current = turn
                 continue
-            elif kind == "Message":
+            turn = by_run.get(run_id) if isinstance(run_id, str) else None
+            turn = turn or current
+            if turn is None:
+                continue
+            if kind == "Message":
                 markdown = record.get("markdown")
                 if isinstance(markdown, str):
-                    turns[-1].response = markdown
-                    turns[-1].blocks.append(markdown)
+                    turn.response = markdown
+                    turn.blocks.append(markdown)
             elif kind == "ToolSummary":
                 elapsed = record.get("elapsed_seconds")
-                turns[-1].blocks.append(
+                turn.blocks.append(
                     ToolCall(
                         str(record.get("name") or ""),
                         str(record.get("detail") or ""),
@@ -300,11 +317,11 @@ def session_turns(info: SessionInfo, root: Path | None = None) -> list[Turn] | N
                     )
                 )
             elif kind == "turn_completed":
-                turns[-1].status = "complete"
+                turn.status = "complete"
             elif kind == "turn_cancelled":
-                turns[-1].status = "cancelled"
+                turn.status = "cancelled"
             elif kind == "turn_failed":
-                turns[-1].status = "failed"
+                turn.status = "failed"
     except OSError:
         return None
     return turns
@@ -314,7 +331,12 @@ def first_prompt(info: SessionInfo, root: Path | None = None) -> str:
     """The first submitted prompt, stopping at the first record so listing stays cheap."""
     try:
         for record in session_records(info, root):
-            if record["kind"] == "turn_started" and isinstance(record.get("prompt"), str):
+            # A side question is not what the conversation was about.
+            if (
+                record["kind"] == "turn_started"
+                and isinstance(record.get("prompt"), str)
+                and not side_record(record)
+            ):
                 return record["prompt"]
     except OSError:
         return "(Prompt unavailable)"
@@ -728,7 +750,7 @@ class SessionJournal:
         selected = set(self.tree.path(self.tree.active))
         recording = None
         for record in self.records(end):
-            if record.get("kind") == "turn_started":
+            if record.get("kind") == "turn_started" and not side_record(record):
                 recording = record.get("run_id")
             if not self.tree.nodes or (record.get("run_id") or recording) in selected:
                 yield record

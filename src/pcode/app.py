@@ -2485,6 +2485,8 @@ class PreviewApp:
             task.cancel()
         # Side questions outlive turns, not the terminal; nor does a title request.
         await controller.asides.close()
+        # Stopping them settled them: their journal entries go in before the session closes.
+        await controller.side_records_settled()
         await controller.stop_naming()
         for task in controller.tasks():
             if not task.done() and not task.cancelling():

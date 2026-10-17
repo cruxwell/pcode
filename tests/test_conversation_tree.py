@@ -641,3 +641,61 @@ def test_marker_looks_past_a_compaction_and_is_dropped_if_the_turn_never_sends()
             runtime.close()
 
     asyncio.run(run())
+
+
+def test_a_side_question_branches_without_moving_the_conversation():
+    tree = ConversationTree()
+    tree.consume({"kind": "turn_started", "run_id": "main", "parent_id": None, "prompt": "work"})
+    side = {"thread": "btw", "model": "", "label": "", "effort": ""}
+    tree.consume(
+        {
+            "kind": "turn_started",
+            "run_id": "btw",
+            "parent_id": "main",
+            "prompt": "why?",
+            "aside": True,
+            "side": side,
+        }
+    )
+    assert tree.active == tree.recording == "main"
+    # A record without a run id still belongs to the conversation's turn.
+    tree.consume({"kind": "Message", "markdown": "main answer"})
+    tree.consume({"kind": "Message", "run_id": "btw", "markdown": "side answer"})
+    tree.consume(
+        {"kind": "turn_failed", "run_id": "btw", "side_status": "timed out", "side_error": "slow"}
+    )
+    tree.consume({"kind": "side_kept", "run_id": "btw", "how": "summarized"})
+    main, btw = tree.nodes["main"], tree.nodes["btw"]
+    assert (main.response, main.side) == ("main answer", {})
+    assert (btw.kind, btw.parent, btw.response, btw.status) == (
+        "aside",
+        "main",
+        "side answer",
+        "failed",
+    )
+    assert btw.side == {**side, "status": "timed out", "error": "slow", "kept": "summarized"}
+
+
+def test_tree_rows_draw_a_side_thread_as_a_branch_with_its_follow_ups_in_line():
+    tree = ConversationTree()
+    tree.consume({"kind": "turn_started", "run_id": "main", "parent_id": None, "prompt": "work"})
+    for identity, parent in (("why", "main"), ("then", "why")):
+        tree.consume(
+            {
+                "kind": "turn_started",
+                "run_id": identity,
+                "parent_id": parent,
+                "prompt": identity,
+                "aside": True,
+                "side": {"thread": "why"},
+            }
+        )
+    labels = [label for _, label in tree.rows()]
+    assert labels[1:] == [
+        "user: work",
+        "assistant: [interrupted; last safe checkpoint] ← active",
+        "└─ btw: why",
+        "   assistant: [interrupted; last safe checkpoint]",
+        "   btw: then",
+        "   assistant: [interrupted; last safe checkpoint]",
+    ]

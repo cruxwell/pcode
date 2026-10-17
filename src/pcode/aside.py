@@ -1,8 +1,9 @@
 """Side questions asked beside a running turn; no terminal imports.
 
 A side question ("btw") reuses the conversation's context but is never part of
-it: it is not written to the session journal, does not appear in the
-conversation tree, and cannot be steered or resent. It runs on the
+it: once settled it is journaled as a branch of the conversation tree that never
+becomes the active one (see `conversation_tree.side_record`), and it cannot be
+steered or resent. It runs on the
 conversation's own agent, with the same instructions and tool definitions, so
 its requests reuse the provider cache the conversation has already paid for.
 That is also why its framing travels in the question rather than the system
@@ -352,6 +353,14 @@ class Aside:
     # node active then. Merging forks the thread from that node.
     conversation: str = ""
     base: str | None = None
+    # The tree node this question continues: `base` for a thread's first, the
+    # answer it follows up for the rest. Its own node, once settled, is `id`.
+    parent: str | None = None
+    # Whether it is in the conversation tree, journaled when it settled: a
+    # branch off `parent` that outlives this process (see `side_record`).
+    recorded: bool = False
+    # The provider conversation id its run carried, for a follow-up's cache.
+    session_id: str = ""
     # How the thread was brought into the conversation, e.g. "merged".
     bridged: str = ""
     # What a follow-up continues from, once answered. Only a thread's newest
@@ -364,6 +373,15 @@ class Aside:
     @property
     def running(self) -> bool:
         return self.status == "running"
+
+    @property
+    def continuable(self) -> bool:
+        """Whether a follow-up can continue from this answer.
+
+        From its reply while this process holds one, else from its node: a
+        thread read back from the journal continues from the saved history.
+        """
+        return self.reply is not None or (self.recorded and self.status == "answered")
 
     @property
     def elapsed(self) -> float:
@@ -434,7 +452,7 @@ class Asides:
         if asked[-1].running:
             raise ValueError("Wait for this answer first")
         for aside in reversed(asked):
-            if aside.reply is not None:
+            if aside.continuable:
                 return aside
         raise ValueError("No answer to follow up on; ask again with /btw")
 
@@ -449,12 +467,14 @@ class Asides:
         thread: str = "",
         conversation: str = "",
         base: str | None = None,
+        parent: str | None = None,
     ) -> Aside:
         """Register a side question and run `work` for it in the background.
 
         `work` returns the reply a follow-up would continue from. `thread`
         makes it a follow-up in that thread rather than a new one;
-        `conversation` and `base` say where a new one was asked.
+        `conversation` and `base` say where a new one was asked. `parent` is
+        the node it continues, which defaults to `base`.
         """
         aside = Aside(
             question=question,
@@ -464,6 +484,7 @@ class Asides:
             thread=thread,
             conversation=conversation,
             base=base,
+            parent=parent if parent is not None else base,
         )
         self.items.append(aside)
         self._trim()
@@ -471,6 +492,19 @@ class Asides:
         # Shown as asked, before the first word of an answer arrives.
         self.on_update(aside)
         return aside
+
+    def restore(self, asides: list[Aside]) -> list[Aside]:
+        """Add threads read back from the journal, ahead of any asked since.
+
+        Questions already here are kept as they are. Returns the ones added.
+        """
+        known = {aside.id for aside in self.items}
+        added = [aside for aside in asides if aside.id not in known]
+        # In place: the live panel shares this list.
+        self.items[:0] = added
+        self._trim()
+        kept = {aside.id for aside in self.items}
+        return [aside for aside in added if aside.id in kept]
 
     def _trim(self) -> None:
         """Drop the oldest settled threads beyond `ASIDE_HISTORY`, whole.

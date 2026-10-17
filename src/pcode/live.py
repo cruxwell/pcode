@@ -549,29 +549,117 @@ class AgentRuntime:
         publish()
         return "\n\n".join(blocks), messages
 
-    async def merge_aside(self, steps: list[tuple[str, str, list]], parent: str | None) -> bool:
-        """Add a side thread to the tree under `parent`; whether the conversation moved onto it.
+    async def record_aside(self, aside, conversation: str) -> bool:
+        """Journal a settled side question as a branch off its parent; whether it was.
 
-        `steps` holds each answered question as `(question, answer, history)`,
-        the history being what that answer ended with. When the thread extends
-        the conversation exactly -- asked at the active node, with nothing
-        since -- the conversation continues from its last answer. Otherwise it
-        is a branch to check out from /tree, and the active node stays put:
-        moving there would drop what the conversation did after it was asked.
+        It becomes a node like a turn's, flagged `side` (see `side_record`):
+        the question, what of the answer arrived, the history a follow-up
+        continues from, and how it ended. The active node never moves, so a
+        turn running meanwhile records on as before. Nothing is recorded for
+        a question asked in another conversation, or before this one had a
+        turn, since there is no node here for it to branch from; nor for one
+        stopped before any answer arrived, which would only be clutter.
+        """
+        from pcode.diagnostics import strip_controls
+
+        session = self.session
+
+        def recordable() -> bool:
+            # Asked again after the snapshot's await: /new or /resume may have
+            # replaced the session meanwhile, and its journal is not ours.
+            return (
+                not self.recovery_blocked
+                and self.session is session
+                and conversation == self.conversation_id
+                and aside.id not in self.tree.nodes
+                and aside.parent in self.tree.nodes
+                and (session is not None or self.session_factory is None)
+            )
+
+        if not recordable() or (aside.status == "cancelled" and not aside.answer.strip()):
+            return False
+        reply = aside.reply
+        started = {
+            "prompt": aside.question,
+            "run_id": aside.id,
+            "parent_id": aside.parent,
+            "continuation": False,
+            "aside": True,
+            "side": {
+                "thread": aside.thread,
+                "model": aside.model,
+                "label": aside.label,
+                "effort": aside.effort,
+                "session_id": reply.conversation_id if reply is not None else "",
+                "elapsed": round(aside.elapsed, 1),
+            },
+        }
+        outcome = {"answered": "turn_completed", "cancelled": "turn_cancelled"}.get(
+            aside.status, "turn_failed"
+        )
+        ending = {
+            "run_id": aside.id,
+            "side_status": aside.status,
+            "side_error": strip_controls(aside.error),
+        }
+        messages = reply.messages if reply is not None else None
+        if session is not None:
+            if messages:
+                # First, and the only wait: the records below then go in
+                # together, so nothing can close the session between them.
+                await session.store.save_snapshot(
+                    ContinuableSnapshot(
+                        run_id=aside.id,
+                        step_index=0,
+                        messages=messages,
+                        conversation_id=self.conversation_id,
+                    )
+                )
+                if not recordable():
+                    return False
+            session.append("turn_started", sync=True, **started)
+            if aside.answer:
+                session.event(Message(aside.answer), run_id=aside.id)
+            session.append(outcome, sync=True, **ending)
+        else:
+            tree = self.tree
+            tree.consume({"kind": "turn_started", **started})
+            if aside.answer:
+                tree.consume({"kind": "Message", "run_id": aside.id, "markdown": aside.answer})
+            tree.consume({"kind": outcome, **ending})
+            tree.nodes[aside.id].history = deepcopy(messages) if messages else None
+        return True
+
+    async def side_history(self, identity: str) -> list[ModelMessage]:
+        """The history a recorded side question ended with, for a follow-up to continue."""
+        if self.session:
+            return await self.session.history_at(identity)
+        node = self.tree.nodes[identity]
+        return deepcopy(node.history or [])
+
+    def mark_side(self, identity: str, how: str) -> None:
+        """Note on a side question's node how its thread was kept: merged or summarized."""
+        if self.session:
+            self.session.append("side_kept", run_id=identity, how=how, sync=True)
+        else:
+            self.tree.consume({"kind": "side_kept", "run_id": identity, "how": how})
+
+    async def merge_aside(self, leaf: str, base: str | None) -> bool:
+        """Continue the conversation from a side thread's `leaf`, if it extends it exactly.
+
+        The thread is already a branch off `base`. When it was asked at the
+        active node with nothing since, the conversation moves onto it and
+        continues from its last answer. Otherwise the active node stays put --
+        moving would drop what the conversation did after the thread was
+        asked -- and the branch waits in /tree. Returns whether it moved.
         """
         if self.recovery_blocked:
             raise SessionError(self.recovery_blocked)
-        self._open_session()
-        previous = self.tree.active
-        final = steps[-1][2]
-        extends = parent == previous and final[: len(self.history)] == self.history
-        await self._add_aside_nodes(steps, parent)
+        history = await self.side_history(leaf)
+        extends = base == self.tree.active and history[: len(self.history)] == self.history
         if extends:
-            self.history = deepcopy(final)
-        elif self.session:
-            self.session.append("tree_selected", node_id=previous, sync=True)
-        else:
-            self.tree.active = previous
+            await self.navigate(leaf)
+            self.mark_side(leaf, "merged")
         return extends
 
     async def summarize_aside(

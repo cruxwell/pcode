@@ -9,7 +9,7 @@ import asyncio
 import inspect
 import threading
 from collections.abc import Callable
-from contextlib import aclosing
+from contextlib import aclosing, suppress
 from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
@@ -20,6 +20,7 @@ from pcode.aside import (
     Aside,
     Asides,
     Bridge,
+    SideReply,
     SideTarget,
     effort_fragment,
     exchanges,
@@ -518,6 +519,10 @@ class SessionController:
         self.asides.on_failure = self.record_aside_failure
         self.asides.on_update = lambda aside: self.view.aside_changed(aside)
         self.asides.on_settle = self.aside_settled
+        # Journaling settled side questions, one at a time and in the order
+        # they settled, so a follow-up's node always lands after its parent's.
+        self._side_lock = asyncio.Lock()
+        self._side_records: set[asyncio.Task] = set()
         # Titling a session beside its first turn (`session_naming`): the running
         # request, and the sessions asked already while open, so a failure is
         # not retried on every turn. Opening a session (/new, /resume) clears it.
@@ -2995,7 +3000,10 @@ class SessionController:
                 turns = await asyncio.to_thread(
                     session_turns, session.info, session.directory.parent
                 )
-                prompt = next((turn.prompt for turn in turns or () if turn.prompt.strip()), "")
+                prompt = next(
+                    (turn.prompt for turn in turns or () if turn.prompt.strip() and not turn.side),
+                    "",
+                )
             if not prompt:
                 return
             title = await suggest_title(model, prompt, workspace=self.workspace)
@@ -3084,6 +3092,7 @@ class SessionController:
             await self._finish_startup(runtime)
         elif self.resuming:
             await self.runtime.restore()
+            self.restore_side_threads()
 
     async def _finish_startup(self, runtime) -> None:
         """Adopt the first runtime: at launch, or from /model after launch failed."""
@@ -3092,6 +3101,7 @@ class SessionController:
         self.register_extension_commands()
         if self.resuming:
             await runtime.restore()
+            self.restore_side_threads()
             self._seen_stopped_host()
 
     def _seen_stopped_host(self) -> None:
@@ -3140,6 +3150,8 @@ class SessionController:
             # The worktree being left is tidied like at exit, but nobody is
             # asked: unmerged work stays put with a note on how to get back.
             leave_worktree(self.workspace, current, ask=None, notify=self.view.note)
+        # Side questions settled so far belong in the session being left.
+        await self.side_records_settled()
         close = getattr(self.runtime, "close", None)
         if close is not None:
             close()
@@ -3147,6 +3159,7 @@ class SessionController:
             self._switch_workspace(target, extensions)
         self.runtime = runtime
         self._seen_stopped_host()
+        self.restore_side_threads()
         self.model = saved.info.model
         self.session_dir = saved.directory.parent
         self.activity.prompt = ""
@@ -3207,6 +3220,7 @@ class SessionController:
     # --- Side questions (/btw) and conversation branches (/tree) ---
 
     def aside_settled(self, aside) -> None:
+        self.record_aside(aside)
         if aside.status == "answered":
             self.view.aside_answered(aside)
             return
@@ -3221,6 +3235,102 @@ class SessionController:
         # Not just a redraw: an attached terminal mirrors the status, and would
         # otherwise count a stopped or failed question as running forever.
         self.view.aside_changed(aside)
+
+    def record_aside(self, aside) -> None:
+        """Journal a settled side question as a branch of the conversation tree.
+
+        In the background, since a question settles from a callback; see
+        `AgentRuntime.record_aside`. A thread whose questions were not
+        recorded still works here, but is gone once the session closes.
+        """
+        record = getattr(self.runtime, "record_aside", None)
+        if record is None:
+            return
+        root = (self.asides.thread(aside.thread) or [aside])[0]
+
+        async def run():
+            async with self._side_lock:
+                try:
+                    aside.recorded = await record(aside, root.conversation)
+                except Exception as error:
+                    # The answer is still on screen; only its journal entry is lost.
+                    with suppress(Exception):
+                        self.record_aside_failure(aside, error)
+                    return
+            if aside.recorded:
+                # A terminal attached to a host learns it can be followed up.
+                self.view.aside_changed(aside)
+
+        task = asyncio.create_task(run())
+        self._side_records.add(task)
+        task.add_done_callback(self._side_records.discard)
+
+    async def side_records_settled(self) -> None:
+        """Wait until every settled side question is in the journal."""
+        if self._side_records:
+            await asyncio.gather(*self._side_records, return_exceptions=True)
+
+    def restore_side_threads(self) -> None:
+        """Read the conversation's side threads back from its tree into `/btw`.
+
+        After a resume: each recorded question returns as it settled, read,
+        and a follow-up continues from its saved history (`side_reply`).
+        """
+        from time import monotonic
+
+        tree = getattr(self.runtime, "tree", None)
+        if tree is None:
+            return
+        conversation = getattr(self.runtime, "conversation_id", "")
+        restored = []
+        for node in tree.nodes.values():
+            side = node.side
+            if not side:
+                continue
+            status = side.get("status") or {"completed": "answered"}.get(node.status, node.status)
+            aside = Aside(
+                question=node.prompt,
+                id=node.id,
+                model=side.get("model", ""),
+                label=side.get("label", ""),
+                effort=side.get("effort", ""),
+                status=status,
+                answer=node.response,
+                activity="",
+                error=side.get("error", ""),
+                read=True,
+                thread=side.get("thread") or node.id,
+                conversation=conversation,
+                parent=node.parent,
+                bridged=side.get("kept", ""),
+                recorded=True,
+                session_id=side.get("session_id", ""),
+            )
+            if aside.thread == aside.id:
+                aside.base = node.parent
+            aside.finished = monotonic()
+            aside.started = aside.finished - float(side.get("elapsed") or 0)
+            restored.append(aside)
+        for aside in self.asides.restore(restored):
+            self.view.aside_changed(aside)
+
+    async def side_reply(self, follows: Aside) -> SideReply:
+        """What a follow-up to `follows` continues from: its reply, else its saved node."""
+        if follows.reply is not None:
+            return follows.reply
+        messages = await self.runtime.side_history(follows.id)
+        chosen = (
+            await self.target_options(SideTarget(follows.model, follows.effort))
+            if follows.model or follows.effort
+            else {}
+        )
+        return SideReply(
+            answer=follows.answer,
+            messages=messages,
+            conversation_id=follows.session_id or getattr(self.runtime, "conversation_id", ""),
+            model=chosen.get("model"),
+            settings=chosen.get("settings"),
+        )
 
     async def aside(self, argument: str) -> None:
         """`/btw [$MODEL[+EFFORT] | +EFFORT ...] QUESTION` asks beside the turn.
@@ -3324,11 +3434,19 @@ class SessionController:
                 "this question does not join it. /btw opens the answer."
             )
 
-    def _aside_work(self, question: str, options: dict, target: SideTarget | None = None):
+    def _aside_work(
+        self,
+        question: str,
+        options: dict,
+        target: SideTarget | None = None,
+        follows: Aside | None = None,
+    ):
         """The background run for one side question, streaming into its record.
 
         `target` is resolved in the run, so a follow-up naming a model it
-        cannot use fails in its thread, where it was asked.
+        cannot use fails in its thread, where it was asked. So is what a
+        follow-up to `follows` continues from, read back from its node when
+        the thread came from the journal.
         """
 
         async def work(aside):
@@ -3336,8 +3454,10 @@ class SessionController:
                 self.asides.update(aside, answer=answer, activity=activity)
 
             chosen = options
+            if follows is not None:
+                chosen = {**chosen, "after": await self.side_reply(follows)}
             if target is not None:
-                chosen = {**options, **await self.target_options(target)}
+                chosen = {**chosen, **await self.target_options(target)}
             return await self.runtime.aside(question, report=report, **chosen)
 
         return work
@@ -3356,16 +3476,17 @@ class SessionController:
             raise ValueError("A follow-up asks one model; start a new /btw to ask several.")
         follows = self.asides.follows(thread)
         target = self.follow_up_target(follows, models[0]) if models else None
-        options = {"after": follows.reply}
+        options = {}
         if target is not None:
             options["fresh"] = True
         self.asides.start(
             question,
-            self._aside_work(question, options, target),
+            self._aside_work(question, options, target, follows),
             model=target.model if target else follows.model,
             label=model_labels([target])[target] if target else follows.label,
             effort=target.effort if target else follows.effort,
             thread=thread,
+            parent=follows.id,
         )
 
     def follow_up_target(self, follows: Aside, target: SideTarget) -> SideTarget | None:
@@ -3404,44 +3525,49 @@ class SessionController:
         return follows
 
     async def merge_thread(self, thread: str) -> None:
-        """Add a side thread to the conversation tree where it was asked."""
+        """Continue the conversation from a side thread, which is already a branch of it."""
         from pcode.diagnostics import strip_controls
 
         follows = self.check_bridge(thread)
-        asked = self.asides.thread(thread)
-        messages = follows.reply.messages
-        steps = [
-            (aside.question, aside.answer, messages[:end])
-            for aside, end in exchanges(asked, messages)
-        ]
-        if not steps:
-            raise ValueError("Nothing in that side thread to merge.")
-        moved = await self.runtime.merge_aside(steps, asked[0].base)
+        await self.side_records_settled()
+        if not follows.recorded:
+            raise ValueError("This thread is not in the conversation tree, so it cannot be merged")
+        root = self.asides.thread(thread)[0]
+        moved = await self.runtime.merge_aside(follows.id, root.base)
+        if not moved:
+            self.view.note(
+                "This side thread is a branch in /tree where it was asked, and the "
+                "conversation has moved on since, so it stays where it is. /tree switches to it."
+            )
+            return
         follows.bridged = "merged"
         self.view.aside_changed(follows)
+        tree = self.runtime.tree
+        steps = [
+            tree.nodes[identity]
+            for identity in tree.path(follows.id)
+            if tree.nodes[identity].side.get("thread") == thread
+        ]
+        for node in steps:
+            self.view.user(strip_controls(node.prompt))
+            self.view.show_events((Message(strip_controls(node.response)),))
         count = f"{len(steps)} side question{'s' if len(steps) > 1 else ''}"
-        if moved:
-            for question, answer, _ in steps:
-                self.view.user(strip_controls(question))
-                self.view.show_events((Message(strip_controls(answer)),))
-            self.view.note(
-                f"Merged {count} into the conversation, which continues from the last answer."
-            )
-        else:
-            self.view.note(
-                f"Merged {count} into /tree as a branch where the thread was asked; the "
-                "conversation stays where it is. /tree switches to it."
-            )
+        self.view.note(
+            f"Merged {count} into the conversation, which continues from the last answer."
+        )
 
     async def summarize_thread(self, follows: Aside, instructions: str) -> None:
         """Add a summary of `follows`'s thread to the conversation, and show it."""
         from pcode.diagnostics import strip_controls
 
         asked = self.asides.thread(follows.thread)
-        questions = [aside.question for aside, _ in exchanges(asked, follows.reply.messages)]
+        reply = await self.side_reply(follows)
+        questions = [aside.question for aside, _ in exchanges(asked, reply.messages)]
         request = summary_request(questions, instructions)
-        summary = await self.runtime.summarize_aside(follows.reply, request, instructions)
+        summary = await self.runtime.summarize_aside(reply, request, instructions)
         follows.bridged = "summarized"
+        if follows.recorded:
+            self.runtime.mark_side(follows.id, "summarized")
         self.view.aside_changed(follows)
         self.view.user(strip_controls(request))
         self.view.show_events((Message(strip_controls(summary)),))

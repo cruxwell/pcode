@@ -14,6 +14,18 @@ def excerpt(text: str) -> str:
     return plain(strip_controls(" ".join(text.split())), 100)
 
 
+def side_record(record: dict) -> bool:
+    """Whether `record` starts a /btw side question's node.
+
+    A side question runs beside the conversation, often while a turn is in
+    flight, and is journaled when it settles. Its node is a branch off where it
+    was asked: it never becomes the active node, and it is never the turn that
+    later records without a `run_id` belong to. Every reader that tracks "the
+    turn started last" must skip it, and attribute records by `run_id`.
+    """
+    return record.get("kind") == "turn_started" and bool(record.get("side"))
+
+
 @dataclass
 class TurnNode:
     id: str
@@ -24,9 +36,13 @@ class TurnNode:
     resend_blocked: bool = False
     response: str = ""
     plan: list[dict] = field(default_factory=list)
-    # "turn", "compaction", or "aside": a side question merged from /btw, or a
-    # side thread's summary, recorded like a turn that ran no tools.
+    # "turn", "compaction", or "aside": a /btw side question or a side
+    # thread's summary, recorded like a turn that ran no tools.
     kind: str = "turn"
+    # A side question's own details (see `side_record`): its thread, model,
+    # label, effort, provider conversation id, outcome and how it was kept.
+    # Empty for every other node, including a thread's summary.
+    side: dict = field(default_factory=dict)
     # Unsaved turns and durable compaction checkpoints carry message history.
     history: list | None = None
     links: dict[str, Link] = field(default_factory=dict)
@@ -67,6 +83,7 @@ class ConversationTree:
             identity = record["run_id"]
             parent = record.get("parent_id", self.active)  # Old sessions form a linear tree.
             self.path(parent)
+            side = record.get("side")
             self.nodes[identity] = TurnNode(
                 identity,
                 parent,
@@ -74,8 +91,10 @@ class ConversationTree:
                 continuation=record.get("continuation", False),
                 plan=deepcopy(self.nodes[parent].plan) if parent else [],
                 kind="aside" if record.get("aside") else "turn",
+                side=dict(side) if isinstance(side, dict) else {},
             )
-            self.active = self.recording = identity
+            if not side_record(record):
+                self.active = self.recording = identity
         elif kind == "compaction_checkpoint":
             from pydantic_ai.messages import ModelMessagesTypeAdapter
 
@@ -118,6 +137,12 @@ class ConversationTree:
             elif kind in {"turn_completed", "turn_failed", "turn_cancelled"}:
                 node.status = kind.removeprefix("turn_")
                 node.resend_blocked = record.get("resend_blocked", False)
+                if node.side:
+                    # The side question's own words for it: "timed out" is a failure.
+                    node.side["status"] = record.get("side_status", "")
+                    node.side["error"] = record.get("side_error", "")
+            elif kind == "side_kept" and node.side:
+                node.side["kept"] = record.get("how", "")
 
     def rows(self) -> list[tuple[tuple[str | None, bool], str]]:
         """Depth-first user/edit and assistant/continue rows, with stable IDs."""
@@ -130,8 +155,17 @@ class ConversationTree:
         # Iterative traversal also handles very long sessions. Only a fork adds
         # a level: user/assistant pairs and single-child continuations stay aligned.
         roots = children.get(None, [])
+
+        def forks(nodes: list[TurnNode], parent: TurnNode | None = None) -> bool:
+            # A side question is drawn as a branch even as the only child: in
+            # line, it would read as the conversation's next turn. Its own
+            # follow-ups continue its thread, so they stay in line under it.
+            if len(nodes) > 1:
+                return True
+            return (parent is None or not parent.side) and any(node.side for node in nodes)
+
         pending = [
-            (node, "", len(roots) > 1, i == len(roots) - 1)
+            (node, "", forks(roots), i == len(roots) - 1)
             for i, node in reversed(list(enumerate(roots)))
         ]
         while pending:
@@ -156,7 +190,7 @@ class ConversationTree:
             )
             descendants = children.get(node.id, [])
             pending.extend(
-                (child, continuation, len(descendants) > 1, i == len(descendants) - 1)
+                (child, continuation, forks(descendants, node), i == len(descendants) - 1)
                 for i, child in reversed(list(enumerate(descendants)))
             )
         return rows
