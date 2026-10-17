@@ -81,14 +81,13 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   [Where the fixed prompt goes](context.md#where-the-fixed-prompt-goes)). Opens a popup in
   the interactive editor; prints inline otherwise.
 - `/usage`: plan limits and spend for the Claude Code and Codex logins, fetched when you
-  run it. Subscription seats show the session (5h) and weekly percentages with their resets,
-  including per-model weekly caps. Seats billed at API rates show monthly spend against
-  its cap (for example `Spend: $130.00 of $500.00 (26%)`). No admin key is needed: Claude
-  reads the login of the current `CLAUDE_CONFIG_DIR` (from the Keychain on macOS, else
-  `.credentials.json`), and Codex uses pcode's `/login openai-codex` or the Codex CLI's
-  `auth.json`, through `PCODE_LLM_PROXY` when set. Both endpoints are undocumented and can
-  change. An expired Claude Code token is reported, never refreshed, so Claude Code stays
-  signed in. Plain API keys have no per-user usage endpoint and aren't covered.
+  run it. No admin key is needed. For Claude, pcode runs Claude Code's own `/usage`
+  headless (`claude -p /usage`) and shows its session and weekly limits; the CLI answers
+  from its own login, so pcode never reads Claude Code's token. Codex shows the session
+  (5h) and weekly percentages with their resets, plus spend against a cap where the seat
+  has one, using pcode's `/login openai-codex` or the Codex CLI's `auth.json`, through
+  `PCODE_LLM_PROXY` when set. The Codex endpoint is undocumented and can change. Plain
+  API keys have no per-user usage endpoint and aren't covered.
 - `/worktree [status|merge|resolve|finish|remove|list|clean]`: manage this session's git
   worktree ([details](workspace.md#one-git-worktree-per-session)).
 - `/plan [--obsidian|--local] [request]`: discuss a change and keep a written plan
