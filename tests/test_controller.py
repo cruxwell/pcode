@@ -1,6 +1,7 @@
 """The parts of the session controller, tested without a terminal."""
 
 import asyncio
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from pcode.controller import PromptQueue, SessionController
@@ -22,7 +23,7 @@ def test_queue_keeps_the_panel_in_step():
         assert activity.queued_modes == ["resend", "queue", "steering"]
         assert activity.queued == len(prompts) == 3
         item = await prompts.get()
-        assert item == (0, "again", "resend", None) and prompts.current(item)
+        assert item[:4] == (0, "again", "resend", None) and prompts.current(item)
         prompts.taken()
         assert activity.queued_prompts == ["one", "two"] and activity.queued == 2
 
@@ -71,6 +72,16 @@ def test_steering_is_taken_out_of_line_and_the_rest_keep_their_order():
         assert [(await prompts.get())[1] for _ in range(2)] == ["queued first", "queued second"]
 
     asyncio.run(run())
+
+
+def test_taken_steering_says_when_it_was_sent():
+    prompts = PromptQueue(panel())
+    before = datetime.now(timezone.utc)
+    prompts.put("steer me", "steering")
+    after = datetime.now(timezone.utc)
+    [steer] = prompts.take_steering()
+    assert steer == "steer me"
+    assert before <= datetime.fromisoformat(steer.sent_at) <= after
 
 
 def test_clear_starts_a_generation_that_makes_fetched_items_stale():
