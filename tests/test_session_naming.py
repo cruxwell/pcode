@@ -2,10 +2,13 @@
 
 import asyncio
 import os
+from copy import deepcopy
 from io import StringIO
 
 import pytest
 from pydantic_ai import Agent
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from rich.console import Console
 
@@ -14,7 +17,13 @@ from pcode.app import PreviewApp
 from pcode.live import AgentRuntime
 from pcode.preferences import save_preferences
 from pcode.runtime import Message
-from pcode.session_naming import INSTRUCTIONS, clean_title, request_text, suggest_title
+from pcode.session_naming import (
+    INSTRUCTIONS,
+    RENAME_REQUEST,
+    clean_title,
+    request_text,
+    suggest_title,
+)
 from pcode.sessions import SavedSession, list_sessions
 from pcode.terminal_notify import RESTORE_TITLE, SAVE_TITLE, TabTitle, title
 
@@ -224,6 +233,188 @@ def test_new_cancels_a_title_request_and_reopening_asks_again(tmp_path, monkeypa
         asyncio.run(run())
         assert started == ["Fix the parser", "Fix the parser"]
         assert list_sessions(root)[0].title is None
+    finally:
+        saved.close()
+
+
+def conversation_app(tmp_path, stream):
+    """A saved session with one exchange, on a model that answers with `stream`."""
+    root = tmp_path / "sessions"
+    app = PreviewApp(workspace=tmp_path, session_dir=root, console=Console(file=StringIO()))
+    app.model = "test:local"
+    app.runtime = AgentRuntime(Agent(FunctionModel(stream_function=stream)))
+    saved = SavedSession.create("test:local", tmp_path, root)
+    saved.save_info()
+    app.runtime.session = saved
+    app.runtime.history = [
+        ModelRequest([UserPromptPart("Fix the parser")]),
+        ModelResponse([TextPart("Patched parser.py")]),
+    ]
+    return app, saved, root
+
+
+def test_bare_rename_asks_the_conversation_for_a_name_beside_it(tmp_path, monkeypatch):
+    sent = []
+
+    async def stream(messages, info):
+        sent.append(deepcopy(messages))
+        yield 'Title: "Parser fix."'
+
+    app, saved, root = conversation_app(tmp_path, stream)
+    history = deepcopy(app.runtime.history)
+    updated = saved.info.updated
+    flashed = []
+    monkeypatch.setattr(app, "flash", flashed.append)
+
+    async def run():
+        app.controller.rename("")
+        # The command is done before the answer: it holds nothing back meanwhile.
+        assert not app.controller.rename_task.done()
+        await app.controller.rename_task
+
+    try:
+        asyncio.run(run())
+        (request,) = sent
+        # The whole conversation, then the request as it is, not framed as a side question.
+        assert request[: len(history)] == history
+        (asked,) = request[len(history) :]
+        assert [part.content for part in asked.parts] == [RENAME_REQUEST]
+        (info,) = list_sessions(root)
+        assert (info.name, info.updated) == ("Parser fix", updated)
+        assert flashed == ["Asking the model for a name…", "Session named: Parser fix"]
+        # Nothing joins the conversation, and it is no /btw thread either.
+        assert app.runtime.history == history
+        assert app.controller.asides.items == []
+    finally:
+        saved.close()
+
+
+def asks_for_a_name(messages) -> bool:
+    return any(
+        isinstance(part, UserPromptPart) and RENAME_REQUEST in str(part.content)
+        for message in messages
+        for part in message.parts
+    )
+
+
+def test_bare_rename_answers_while_a_turn_is_still_running(tmp_path):
+    main_started = []
+    release = None
+
+    async def stream(messages, info):
+        if asks_for_a_name(messages):
+            yield "Parser fix"
+            return
+        main_started.append(True)
+        await release.wait()
+        yield "Main answer."
+
+    app, saved, root = conversation_app(tmp_path, stream)
+    app.runtime.history = []  # The first turn is the one in flight.
+
+    async def run():
+        nonlocal release
+        release = asyncio.Event()
+
+        async def turn():
+            return [event async for event in app.runtime.stream("Fix the parser")]
+
+        running = asyncio.create_task(turn())
+        await until(lambda: main_started)
+        app.controller.rename("")
+        await app.controller.rename_task
+        # Named while the turn waits, and the turn then finishes as it would have.
+        assert saved.info.name == "Parser fix" and not running.done()
+        release.set()
+        await running
+        assert not asks_for_a_name(app.runtime.history)
+
+    try:
+        asyncio.run(run())
+        assert list_sessions(root)[0].name == "Parser fix"
+    finally:
+        saved.close()
+
+
+@pytest.mark.parametrize("how", ["typed", "new", "ctrl-c", "shutdown"])
+def test_a_typed_name_new_conversation_ctrl_c_or_exit_stops_the_request(tmp_path, monkeypatch, how):
+    started = []
+
+    async def stream(messages, info):
+        started.append(True)
+        await asyncio.Event().wait()  # Answers only when cancelled.
+        yield "Never"
+
+    app, saved, root = conversation_app(tmp_path, stream)
+    flashed, notes = [], []
+    monkeypatch.setattr(app, "flash", flashed.append)
+    monkeypatch.setattr(app, "note", notes.append)
+
+    async def run():
+        app.controller.rename("")
+        task = app.controller.rename_task
+        await until(lambda: started)
+        # One request at a time.
+        app.controller.rename("")
+        assert app.controller.rename_task is task
+        assert flashed[-1] == "Already asking the model for a name."
+        if how == "typed":
+            app.controller.rename("Typed meanwhile")
+        elif how == "new":
+            app.controller.new("")
+        elif how == "ctrl-c":
+            # No turn is running, so this is what Ctrl+C stops.
+            app.controller.cancel()
+            assert notes == ["Stopped asking the model for a name."]
+        else:
+            await app.controller.stop_naming()
+            assert task.done()
+        await asyncio.gather(task, return_exceptions=True)
+        assert task.cancelled() and not app.controller.naming()
+
+    try:
+        asyncio.run(run())
+        (info,) = list_sessions(root)
+        assert info.name == ("Typed meanwhile" if how == "typed" else None)
+    finally:
+        saved.close()
+
+
+@pytest.mark.parametrize("failure", ["error", "timeout", "empty"])
+def test_a_failed_name_request_warns_and_keeps_the_name(tmp_path, monkeypatch, failure):
+    monkeypatch.setattr("pcode.aside.ASIDE_TIMEOUT_SECONDS", 0.1)
+
+    async def stream(messages, info):
+        if failure == "error":
+            raise RuntimeError("provider down")
+        if failure == "timeout":
+            await asyncio.Event().wait()
+        yield "**"  # Nothing left once cleaned.
+
+    app, saved, root = conversation_app(tmp_path, stream)
+    app.controller.rename("Before")
+    warnings = []
+    monkeypatch.setattr(app, "warning", warnings.append)
+
+    async def run():
+        app.controller.rename("")
+        await app.controller.rename_task
+
+    try:
+        asyncio.run(run())
+        (warning,) = warnings
+        assert warning.startswith("Could not name the session: ")
+        # A provider's error text is redacted the way a turn's is, so its
+        # frames go where a turn's do.
+        reason = {"error": "RuntimeError", "timeout": "no answer within", "empty": "no name"}
+        assert reason[failure] in warning
+        errors = saved.directory / "errors.log"
+        if failure == "empty":
+            assert not errors.exists()
+        else:
+            assert "Session name request" in errors.read_text()
+        assert list_sessions(root)[0].name == "Before"
+        assert not app.controller.naming()
     finally:
         saved.close()
 

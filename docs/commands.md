@@ -117,8 +117,9 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
 - `/resume`: browse and search saved conversations (prompts, responses, tool calls,
   name, or session ID); resume one in place.
 - `/rename [NAME | -]`: name this conversation so `/resume` lists and finds it by that
-  name; `-` clears it, bare shows it. Available after the first prompt. A name
-  replaces the [title the model gives it](sessions.md#session-titles).
+  name; `-` clears it. Bare, it asks the conversation's model to name it from
+  everything so far, in the background, so a running turn carries on. Available after the
+  first prompt. A name replaces the [title the model gives it](sessions.md#session-titles).
 - `/switch [HOST | - | new [PROMPT]]`: pick another running
   [background session](sessions.md#background-sessions) and show it here, or start a new
   one; the session you leave keeps working if it runs in a host, and ends if it runs in

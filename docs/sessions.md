@@ -257,7 +257,16 @@ status row takes that border, and a session with no title or name yet keeps a
 plain rule.
 `/rename NAME` replaces it everywhere, and `/rename -` goes back to the title.
 
-The request carries only your first message, not the conversation or the
+A title only sees your first message, so it can miss where a long session ended
+up. A bare `/rename` asks again with the whole conversation. Like a
+[side question](side-questions.md), the request goes beside the conversation and
+is not added to it, so a turn in progress keeps running, and it uses the
+session's own model, so the prompt cache the conversation already built covers
+most of it. It still sends the whole conversation, so it costs more than the
+automatic title. The answer becomes the session's name. A `/rename NAME` typed
+while it runs wins, and Ctrl+C with no turn running stops it.
+
+The automatic title request carries only your first message, not the conversation or the
 reply, so it costs well under a thousand tokens. If the request fails, nothing
 is shown and the session lists by its first prompt as before; pcode asks again
 the next time the session is opened, not on every turn. Sessions from before

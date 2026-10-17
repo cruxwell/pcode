@@ -816,10 +816,13 @@ def test_a_host_says_what_it_is_busy_with(tmp_path, host_dir):
             controller.startup_pending = True
             assert host.busy_with() == "it is starting up"
             controller.startup_pending = False
-            controller.naming_task = asyncio.get_running_loop().create_future()
-            assert host.busy_with() == "it is naming the session"
-            controller.naming_task.cancel()
-            assert host.busy_with() == ""
+            # A title asked for beside the first turn, or a name a bare /rename asked for.
+            for attribute in ("naming_task", "rename_task"):
+                task = asyncio.get_running_loop().create_future()
+                setattr(controller, attribute, task)
+                assert host.busy_with() == "it is naming the session"
+                task.cancel()
+                assert host.busy_with() == ""
         finally:
             await stop_host(host)
 
