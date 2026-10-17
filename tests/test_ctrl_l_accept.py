@@ -22,7 +22,7 @@ def run(text, setup, *keys, prefix="ctrl"):
     """Type ``keys`` into a prompt holding ``text``; return (text, menu open, picker opened)."""
 
     async def go():
-        activity = SimpleNamespace(thinking_mode="status-line", tasks_shown=True, busy=False)
+        activity = SimpleNamespace(thinking_mode="status-line", panel_shown=True, busy=False)
         opened = []
         bindings, shortcuts = prompt_key_bindings(
             activity, None, PromptCallbacks(on_model=lambda: opened.append(True)), prefix, None

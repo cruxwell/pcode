@@ -155,6 +155,10 @@ class PreviewApp:
             autohide_tasks=load_preferences().get("autohide_tasks", "off") == "on",
             attach_tasks=load_preferences().get("attach_tasks", SETTINGS["attach_tasks"].default)
             == "on",
+            attach_activity=load_preferences().get(
+                "attach_activity", SETTINGS["attach_activity"].default
+            )
+            == "on",
             task_style=load_preferences().get("task_style", SETTINGS["task_style"].default),
             frame_style=load_preferences().get("frame_style", SETTINGS["frame_style"].default),
             tool_glyphs=load_preferences().get("tool_glyphs", SETTINGS["tool_glyphs"].default),
@@ -391,15 +395,16 @@ class PreviewApp:
             self.controller.registry.find("/resend"),
             self.controller.registry.find("/worktree"),
             Command(
-                "/show-tasks",
-                "Tasks/Tools widget: on / off; bare toggles",
+                "/show-activity",
+                "Activity panel (thinking, tool calls, tasks): on / off; bare toggles",
                 self.show_tasks,
                 ("on", "off"),
+                aliases=("/show-tasks",),
                 group="Display",
             ),
             Command(
                 "/autohide-tasks",
-                "Hide the Tasks/Tools widget when a turn ends: on / off; bare toggles",
+                "Hide the task list when a turn ends: on / off; bare toggles",
                 self.autohide_tasks,
                 ("on", "off"),
                 group="Display",
@@ -774,6 +779,9 @@ class PreviewApp:
         self.activity.attach_tasks = (
             preferences.get("attach_tasks", SETTINGS["attach_tasks"].default) == "on"
         )
+        self.activity.attach_activity = (
+            preferences.get("attach_activity", SETTINGS["attach_activity"].default) == "on"
+        )
         self.activity.tasks_max_height = parse_height(preferences.get("tasks_max_height"))
         self.activity.tasks_min_rows = preference_count("tasks_min_rows")
         self.activity.tasks_min_columns = preference_count("tasks_min_columns")
@@ -811,7 +819,7 @@ class PreviewApp:
     def show_tasks(self, argument: str) -> None:
         activity = self.activity
         if argument:
-            shown = self.toggle_argument("/show-tasks", argument, activity.show_tasks)
+            shown = self.toggle_argument("/show-activity", argument, activity.show_tasks)
             # `on` means on screen now, even in a pane below the size thresholds.
             activity.tasks_unhidden = shown and activity.screen_small
         else:
@@ -823,7 +831,7 @@ class PreviewApp:
         if activity.show_tasks and activity.tasks_too_big:
             state += " (hidden in this pane: see tasks_min_rows and tasks_min_columns)"
         self.transcript.flash(
-            f"Show tasks: {state}. Usage: /show-tasks [on|off] ({self.shortcut('o')})"
+            f"Activity panel: {state}. Usage: /show-activity [on|off] ({self.shortcut('o')})"
         )
 
     def autohide_tasks(self, argument: str) -> None:

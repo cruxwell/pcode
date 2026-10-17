@@ -124,7 +124,9 @@ def _add_shortcuts(shortcuts: PrefixKeys, activity, transcript, callbacks: Promp
         on_effort(-1)
         event.app.invalidate()
 
-    @shortcuts.add("o", lambda: "Hide task panel" if activity.tasks_shown else "Show task panel")
+    @shortcuts.add(
+        "o", lambda: "Hide activity panel" if activity.panel_shown else "Show activity panel"
+    )
     def toggle_tasks(event: KeyPressEvent) -> None:
         shown = activity.toggle_tasks()
         if on_tasks is not None:

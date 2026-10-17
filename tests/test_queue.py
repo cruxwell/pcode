@@ -433,14 +433,15 @@ def test_tool_rows_skip_system_work_and_clear_for_each_turn():
     assert tool_row(activity) == ""
 
 
-def test_tool_rows_share_a_short_pane_with_the_thought():
+@pytest.mark.parametrize("attached", [False, True])
+def test_tool_rows_share_a_short_pane_with_the_thought(attached):
     from prompt_toolkit import PromptSession
     from prompt_toolkit.data_structures import Size
 
     from pcode.runtime import ToolStarted
     from pcode.ui import Activity, PromptLayout
 
-    activity = Activity(prompt="Fix bug", prompt_state="running")
+    activity = Activity(prompt="Fix bug", prompt_state="running", attach_activity=attached)
     for index in range(3):
         activity.tools.record(ToolStarted("read_file", f"{index}.py", str(index)))
     activity.think("Looking around " * 20)
@@ -452,8 +453,13 @@ def test_tool_rows_share_a_short_pane_with_the_thought():
         assert len(layout.thought_rows()) == 1
     with patch.object(layout, "size", return_value=Size(rows=40, columns=40)):
         assert len(layout.tool_rows()) == 3
+        row = layout.tool_rows()[0]
+        if attached:
+            # In the editor box's band, a level in under the thought's text.
+            assert row[0] == ("", "  ")
+            row = row[1:]
         # A running call spins with the tool spinner's frame.
-        assert layout.tool_rows()[0][0] == ("class:activity.tool", layout.tool_spinner_frame())
+        assert row[0] == ("class:activity.tool", layout.tool_spinner_frame())
 
 
 def test_tool_row_marks_a_failed_call_and_fits_the_width():

@@ -45,7 +45,7 @@ def test_thresholds_are_whole_numbers():
 def test_short_or_narrow_panes_hide_the_widget(columns, rows, shown):
     activity = Activity(tasks_min_rows=30, tasks_min_columns=100, plan=list(PLAN))
     activity.fit_screen(columns, rows)
-    assert activity.tasks_shown is shown
+    assert activity.panel_shown is shown
     assert bool(activity.plan_rows(10)) is shown
     assert activity.show_tasks  # The preference is never touched.
 
@@ -53,40 +53,40 @@ def test_short_or_narrow_panes_hide_the_widget(columns, rows, shown):
 def test_zero_never_hides():
     activity = Activity(plan=list(PLAN))
     activity.fit_screen(20, 5)
-    assert activity.tasks_shown
+    assert activity.panel_shown
 
 
 def test_toggle_in_a_small_pane_overrides_without_turning_tasks_off():
     activity = small_pane_activity()
-    assert not activity.tasks_shown
+    assert not activity.panel_shown
     assert activity.toggle_tasks() is True  # Persisted as on: nothing changes.
-    assert activity.tasks_shown
+    assert activity.panel_shown
     assert activity.toggle_tasks() is True  # Hiding again keeps the preference on.
-    assert not activity.tasks_shown and activity.show_tasks
+    assert not activity.panel_shown and activity.show_tasks
 
 
 def test_toggle_in_a_small_pane_turns_a_disabled_widget_on():
     activity = small_pane_activity(show_tasks=False)
     assert activity.toggle_tasks() is True
-    assert activity.tasks_shown
+    assert activity.panel_shown
 
 
 def test_crossing_the_threshold_drops_the_override():
     activity = small_pane_activity()
     activity.toggle_tasks()
     activity.fit_screen(80, 20)  # Still small: the override stands.
-    assert activity.tasks_shown
+    assert activity.panel_shown
     activity.fit_screen(200, 50)
-    assert activity.tasks_shown
+    assert activity.panel_shown
     activity.fit_screen(80, 24)  # A new split decides afresh.
-    assert not activity.tasks_shown
+    assert not activity.panel_shown
 
 
 def test_autohide_after_a_turn_still_applies_in_a_large_pane():
     activity = Activity(tasks_min_rows=30, autohide_tasks=True, plan=list(PLAN))
     activity.fit_screen(200, 50)
     activity.finish_prompt("done")
-    assert not activity.tasks_shown
+    assert not activity.panel_shown
 
 
 def render_tasks(size: list[Size]) -> list[int]:
@@ -141,10 +141,10 @@ def test_config_applies_thresholds_at_once():
     app = PreviewApp(console=Console(file=StringIO()))
     app.activity.plan = list(PLAN)
     app.activity.fit_screen(80, 24)
-    assert app.activity.tasks_shown
+    assert app.activity.panel_shown
     app.registry.dispatch("/config set tasks_min_rows 30")
     app.activity.fit_screen(80, 24)
-    assert not app.activity.tasks_shown
+    assert not app.activity.panel_shown
     assert PreviewApp().activity.tasks_min_rows == 30
 
 
@@ -154,15 +154,15 @@ def test_show_tasks_command_in_a_small_pane_never_saves_off():
     activity.plan = list(PLAN)
     activity.tasks_min_rows = 30
     activity.fit_screen(80, 24)
-    assert not activity.tasks_shown
+    assert not activity.panel_shown
     app.registry.dispatch("/show-tasks")  # Bare: show it here.
-    assert activity.tasks_shown and load_preferences().get("show_tasks", "on") == "on"
+    assert activity.panel_shown and load_preferences().get("show_tasks", "on") == "on"
     app.registry.dispatch("/show-tasks")  # And hide it again, still saved as on.
-    assert not activity.tasks_shown and load_preferences()["show_tasks"] == "on"
+    assert not activity.panel_shown and load_preferences()["show_tasks"] == "on"
     app.registry.dispatch("/show-tasks on")
-    assert activity.tasks_shown
+    assert activity.panel_shown
     app.registry.dispatch("/show-tasks off")
-    assert not activity.tasks_shown and load_preferences()["show_tasks"] == "off"
+    assert not activity.panel_shown and load_preferences()["show_tasks"] == "off"
 
 
 def test_a_running_turn_still_counts_tasks_hidden_by_size():
@@ -182,7 +182,7 @@ def test_a_running_turn_still_counts_tasks_hidden_by_size():
             )
             layout = PromptLayout(session, activity, view, session.shortcuts)
             border = layout.status_border().content.text()
-            return fragment_list_to_text(to_formatted_text(border)), activity.tasks_shown
+            return fragment_list_to_text(to_formatted_text(border)), activity.panel_shown
 
     border, shown = asyncio.run(run())
     assert not shown

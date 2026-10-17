@@ -79,6 +79,7 @@ def test_defaults_and_path_do_not_create_files():
         "tasks_min_columns": "0",
         "show_hints": "off",  # conftest's test default; the shipped one is "on".
         "attach_tasks": "on",
+        "attach_activity": "on",
         "task_style": "status",
         "frame_style": "borders",  # conftest's test default; the shipped one is "shaded".
         "tool_glyphs": "auto",
@@ -157,6 +158,7 @@ def test_defaults_and_path_do_not_create_files():
         ("autocompact_tokens", "200k"),
         ("attach_tasks", "on"),
         ("attach_tasks", "off"),
+        ("attach_activity", "off"),
         ("paced_scrollback", "off"),
         ("paced_scrollback", "rows"),
         ("effort", "high"),
@@ -384,25 +386,26 @@ def test_attach_tasks_startup_default_and_saved_preference(saved, attached):
     assert "/attach-tasks" not in [command.name for command in app.registry.commands]
 
 
+@pytest.mark.parametrize("setting", ["attach_tasks", "attach_activity"])
 @pytest.mark.parametrize("scope", ["", "project "])
-def test_slash_config_updates_task_attachment_immediately(tmp_path, scope):
+def test_slash_config_updates_task_attachment_immediately(tmp_path, scope, setting):
     set_project_root(tmp_path)
     output = StringIO()
     app = PreviewApp(console=Console(file=output, width=160))
-    assert app.activity.attach_tasks is True
+    assert getattr(app.activity, setting) is True
     for edit, attached in (
-        ("set attach_tasks off", False),
-        ("set attach_tasks on", True),
-        ("set attach_tasks off", False),
-        ("unset attach_tasks", True),
-        ("set attach_tasks off", False),
+        (f"set {setting} off", False),
+        (f"set {setting} on", True),
+        (f"set {setting} off", False),
+        (f"unset {setting}", True),
+        (f"set {setting} off", False),
         ("reset", True),
     ):
         app.handle(f"/config {scope}{edit}")
-        assert app.activity.attach_tasks is attached
-        assert PreviewApp(console=Console(file=StringIO())).activity.attach_tasks is attached
+        assert getattr(app.activity, setting) is attached
+        assert getattr(PreviewApp(console=Console(file=StringIO())).activity, setting) is attached
     assert "Layout settings apply immediately." in output.getvalue()
-    assert "attach_tasks" not in load_preferences()
+    assert setting not in load_preferences()
 
 
 def test_slash_config_switches_task_style_immediately(tmp_path):

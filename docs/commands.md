@@ -182,7 +182,7 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   [Regenerating the terminal transcript](transcript.md#regenerating-the-terminal-transcript).
 - `/quit` (alias `/exit`): exit. It cancels a running turn and waits for its cleanup first.
 
-Toggles such as `/show-thinking`, `/show-tasks`, `/show-edits`, `/show-commands`,
+Toggles such as `/show-thinking`, `/show-activity`, `/show-edits`, `/show-commands`,
 `/group-tools`, and `/autohide-tasks` are described with the features they control,
 on this page and in [the transcript](transcript.md).
 
@@ -232,7 +232,7 @@ it is open. Enter, the arrows, Ctrl+J, Ctrl+C, and Ctrl+D never change.
 | Ctrl+L | Choose a model (keeps the conversation; applies from the next request). While a completion menu or a grey history suggestion is showing, Ctrl+L accepts it instead, like Tab or → |
 | Ctrl+N / Ctrl+P | Raise / lower reasoning effort for the next turn |
 | Ctrl+^ | Back to the session this terminal showed before (`/switch -`) |
-| Ctrl+O | Show/hide the Tasks/Tools widget (saves the default) |
+| Ctrl+O | Show/hide the [activity panel](#activity-panel): thinking, tool calls and tasks (saves the default) |
 | Ctrl+T | Choose where thinking shows: `o` off, `s` status line, `b` scrollback (saves the default) |
 | Ctrl+Y | Copy the current draft to the system clipboard; with an empty editor, `/copy` chooses a response |
 | Ctrl+G | Mirror commands and their output to scrollback (saves the default) |
@@ -254,7 +254,7 @@ from it. Copying uses a local helper (`pbcopy`, `wl-copy`,
 `xclip`) or OSC 52 over ssh, like the popups, and truncates at 64 KiB.
 
 **Setting acknowledgements are transient.** Toggles and display settings
-(`/show-thinking`, `/show-tasks`, `/show-edits`, `/show-commands`,
+(`/show-thinking`, `/show-activity`, `/show-edits`, `/show-commands`,
 `/group-tools`, `/autohide-tasks`, `/autocompact`, `/theme`, `/syntax`,
 `/effort`) answer on a line just above the editor and clear after five seconds.
 They never enter scrollback, so flipping an option repeatedly doesn't litter the
@@ -279,63 +279,72 @@ history, slash completion, and `@` references. See
 [Sending while the agent is working](#sending-while-the-agent-is-working).
 Editor history is kept in memory only.
 
-## Tasks/Tools widget
+## Activity panel
 
-Tasks and running sub-agents share one compact widget at the top of the editor
-box (or above it, with `attach_tasks=off`). Task
-rows show status icons and keep the active item in view. By default the text is
-shaded by status too: the active task stands out and finished ones fade.
-`/config set task_style icons` gives every task's text the same weight instead,
-so only the coloured icon (`✔` done, `↺` in progress, `○` pending, `–`
-cancelled) says where it stands; `task_style status` brings the shading back.
-Both apply immediately. Running
-[sub-agents](#delegated-sub-agents) appear beneath the active task with tree
-guides (`├──`, `└──`, `│`); with no active task, they appear unparented.
-Tool calls never get rows here: most finish in milliseconds, so rows for them
-would flicker in and out. The status row is the editor box's top border, below
-thoughts, notices, side questions, and command previews. It names the
-newest running call's verb and counts the rest (`Running 3 tools`). A finished
-call gets its line in [scrollback](transcript.md).
+The activity panel is everything live about a turn, drawn inside the editor
+box under its status row: the model's newest thought, the tool calls it is
+making, and the task list. **Ctrl+O** shows or hides all of it at once.
 
-![A turn three steps into a five-step plan: done steps ticked, the test run in progress with its shell call above the status row, the last step still pending](assets/screenshots/tasks.svg)
+![A turn three steps into a four-step plan: the thought and its shell calls under the status row, then the task list, then the prompt](assets/screenshots/activity.svg)
 
-The status row always reads the same way: a spinner, what the turn is doing,
-and on the right the run's tool count and how long this phase has lasted.
-The command, path, or pattern a tool call works on gets its own row above,
-with the full width of the pane, so the status row stays short. While the
-call runs, the row spins in a muted shade with a round spinner, so it never
-reads as the status row's dotted one, which means the model is working:
+Each kind of row has its own place and look, so you can tell them apart at a
+glance:
 
 ```text
-∴ Checking where the config is loaded
-◜ ✎ src/app.py
-┌─ ⠋ Edit file ──────────────────────────────────── ✓ 7 ✗ 1 tools · 2s ─┐
+┌─ ⠋ Run shell ───────────────────────────── Tasks 2/4 · ✓ 3 tools · 4s ─┐
+│∴ Before running the suite, make sure nothing else reads discount       │
+│  as a flat amount.                                                     │
+│  √ ✎ acme/orders.py · +1 −1                                            │
+│  ◜ $ python3 -m unittest discover tests                                │
+├────────────────────────────────────────────────────────────────────────┤
+│✔ Find where the discount is applied                                    │
+│◜ Run the test suite                                                    │
+│○ Note the fix in the README                                            │
+├────────────────────────────────────────────────────────────────────────┤
+│❯                                                                       │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-Read top to bottom, that is why (the thought), what (the call), and how it is
-going (the status row). A glyph stands in for the call's verb: `$` runs a
-command, `⌕` searches, `✎` edits or writes a file, `⎘` reads one, and `⧖`
-waits on a job. A tool without one keeps its verb spelled out. Many fonts
-lack `⌕`, `⎘` and `⧖`, and the terminal borrows them from another font;
+- **The status row** is the box's top border: a spinner, what the turn is
+  doing, and on the right the plan's count, the run's tool count and how long
+  this phase has lasted.
+- **The thought**, marked `∴`, is faded and in italics. Its later rows indent
+  under its text, so the `∴` stands alone in the column the spinner, the task
+  icons and the prompt share.
+- **Tool calls** indent under the thought, one row each: why, then what.
+- **Tasks** sit below a divider, with their status icons in that left column.
+
+With the default `frame_style shaded`, the status row and the thought and tool
+rows under it share a slightly darker shade, so the turn's live rows read as
+one header block above the plan and your draft. With `frame_style borders` a
+divider line separates them instead.
+
+`/config set attach_activity off` moves the thought and tool rows back above
+the editor box, where the status row is the line under them; `attach_tasks off`
+gives the task list a box of its own above the editor. Both apply immediately.
+
+### Status and tool rows
+
+The status row always reads the same way. The command, path, or pattern a
+tool call works on gets its own row in the panel, with the full width of the
+box, so the status row stays short. While the call runs, its row spins in a
+muted shade with a round spinner, so it never reads as the status row's dotted
+one, which means the model is working. A glyph stands in for the call's verb:
+`$` runs a command, `⌕` searches, `✎` edits or writes a file, `⎘` reads one,
+and `⧖` waits on a job. A tool without one keeps its verb spelled out. Many
+fonts lack `⌕`, `⎘` and `⧖`, and the terminal borrows them from another font;
 if they look off in yours, `/config set tool_glyphs off` drops them and names
 the verb once the call settles. Shell calls keep `$`.
+
 Once a call finishes, its spinner turns into a light `√` (lighter than a
 finished task's `✔`, so the two never read alike) or `✗`, and the row stays
-while the next calls run, newest last, so parallel calls each get a row and
-line up whether or not a thought is showing:
-
-```text
-∴ Checking where the config is loaded
-√ ⎘ src/app.py
-√ ⌕ load_config
-◜ $ make test
-┌─ ◜ Run shell ────────────────────────────────────── ✓ 9 tools · 3s ─┐
-```
-
-The turn's three latest calls are shown, fewer in a short pane;
+while the next calls run, newest last, so parallel calls each get a row. The
+turn's three latest calls are shown, fewer in a short pane;
 `/config set tool_max_lines 1` keeps just the call the status row is on.
 A finished call's row clears after 10 seconds (`tool_linger_seconds`; `0` keeps
-it until newer calls push it out).
+it until newer calls push it out). The panel keeps the room it grew to for a
+moment after rows go, so the status row and the tasks don't jump on every
+step.
 
 Work pcode runs itself has no tool row, just its detail on the status row:
 
@@ -347,49 +356,58 @@ A spinner means the turn is waiting on that row. Running jobs are counted in
 the footer below the editor as `1 job` or `N jobs`, including jobs being waited
 on; the count is hidden at zero. Use `/jobs` for individual job details.
 The phase is the one highlighted word, and a stall shows as its clock climbing
-(`Thinking · 40s`). With the Tasks/Tools widget hidden (Ctrl+O or
-`/show-tasks off`, or a pane too small for it), the plan's active step follows the phase as its detail
+(`Thinking · 40s`). With the activity panel hidden (Ctrl+O or
+`/show-activity off`, or a pane too small for it), the plan's active step follows the phase as its detail
 (`Waiting for model · Adding the migration`), so the row still says what the
 turn is for. Each row holds what it says for a moment, so a burst of
 quick calls reads as progress rather than flicker. `◈` marks work pcode runs
 itself, such as compaction.
-Faded, indented rows above the status row show the model's newest thoughts, up
-to three of them, kept until the turn ends; that is the default
-`/show-thinking status-line` mode (see
+The thought is the model's newest, kept until its answer starts streaming;
+that is the default `/show-thinking status-line` mode (see
 [thinking](transcript.md#thinking-status-line-or-scrollback)).
 
-Press **Ctrl+O** or use `/show-tasks [on|off]` to hide or show the widget without
-stopping work or clearing tasks. The prompt and queue stay visible. Visibility
-is saved (default on); `pcode config set show_tasks off` sets it from the shell.
+### Tasks
 
-`/autohide-tasks on` (or `pcode config set autohide_tasks on`) hides the widget
-when the model finishes a turn, keeping the idle prompt compact. It returns on
-the next turn, and Ctrl+O brings it back immediately. Default off.
+Tasks and running sub-agents share the panel's lower section. Task
+rows show status icons and keep the active item in view. By default the text is
+shaded by status too: the active task stands out and finished ones fade.
+`/config set task_style icons` gives every task's text the same weight instead,
+so only the coloured icon (`✔` done, `↺` in progress, `○` pending, `–`
+cancelled) says where it stands; `task_style status` brings the shading back.
+Both apply immediately. Running
+[sub-agents](#delegated-sub-agents) appear beneath the active task with tree
+guides (`├──`, `└──`, `│`); with no active task, they appear unparented.
+Between turns the plan's heading (`Tasks 2/5`) takes the box's top border.
+A finished call gets its line in [scrollback](transcript.md).
 
-It also hides in a pane shorter than `tasks_min_rows` (default 30) or narrower
+### Showing, hiding and sizing
+
+Press **Ctrl+O** or use `/show-activity [on|off]` (`/show-tasks` still works) to
+hide or show the whole panel, thought, tool calls and tasks together, without
+stopping work or clearing tasks. The status row, prompt and queue stay
+visible. Visibility is saved (default on); `pcode config set show_tasks off`
+sets it from the shell.
+
+`/autohide-tasks on` (or `pcode config set autohide_tasks on`) hides the task
+list when the model finishes a turn, keeping the idle prompt compact. It
+returns on the next turn, and Ctrl+O brings it back immediately. Default off.
+
+The panel also hides in a pane shorter than `tasks_min_rows` (default 30) or narrower
 than `tasks_min_columns` (default 100), and returns when the pane grows back, so
 a split in either direction keeps the transcript readable. Each attached
 terminal checks its own pane. Ctrl+O shows it in a small pane anyway until the
 pane crosses the threshold again; `0` turns either check off. `tasks_min_rows` and
 `tasks_min_columns` apply immediately through `/config`.
 
-By default the widget is attached to the top of the editor box
-(`attach_tasks=on`), with a divider between tasks and your draft. The running
-status rides the box's top border above the tasks, with the plan's count
-(`Tasks 2/5`) at its right; between turns the widget's heading takes the
-border. Queued prompts sit above the combined box.
-`/config set attach_tasks off` draws it in a separate box above the editor, and
-`/config set attach_tasks on` attaches it again. Both apply immediately and save
-the preference; `pcode config set attach_tasks off` works from the shell.
-
-`pcode config set tasks_max_height 0.5` caps the widget and editor together at
-half the screen; a whole number such as `20` caps them at that many rows. Tasks
-get the room first and the editor keeps at least one text row, so a long plan
-shows more steps while a long draft scrolls inside the editor. Unset (the
-default), the widget takes at most 10 rows or half the screen, whichever is
-smaller, and the editor grows into what's left. In small panes the widget
-shrinks further, keeping the active task and its sub-agents; an empty widget is
-hidden.
+`pcode config set tasks_max_height 0.5` caps the editor box, panel included, at
+half the screen; a whole number such as `20` caps it at that many rows. Under a
+cap the thought gives way first, then the tool rows down to the running call;
+tasks get the room next and the editor keeps at least one text row, so a long
+plan shows more steps while a long draft scrolls inside the editor. Unset (the
+default), the thought and tool rows share at most a quarter of the pane, the
+task list takes at most 10 rows or half the screen, whichever is smaller, and
+the editor grows into what's left. In small panes the task list shrinks
+further, keeping the active task and its sub-agents; an empty one is hidden.
 
 Task additions and status changes show up as soon as the model starts streaming
 them, before the tool runs. Those early updates are provisional: the tool result

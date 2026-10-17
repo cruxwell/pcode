@@ -554,8 +554,11 @@ SETTINGS = {
         description="Lines of the pinned live preview of a running shell command, "
         "or 0.25 for a quarter of the screen",
     ),
+    # The key predates the panel: it once held the task list alone.
     "show_tasks": Setting(
-        "on", ("on", "off"), description="Show the model's plan as a pinned task list"
+        "on",
+        ("on", "off"),
+        description="Show the activity panel: the model's thinking, tool calls and task list",
     ),
     "autohide_tasks": Setting(
         "off", ("on", "off"), description="Hide the task list when a turn ends"
@@ -565,12 +568,12 @@ SETTINGS = {
     "tasks_min_rows": Setting(
         "30",
         whole_number=True,
-        description="Hide the task list in a pane shorter than this (0: never)",
+        description="Hide the activity panel in a pane shorter than this (0: never)",
     ),
     "tasks_min_columns": Setting(
         "100",
         whole_number=True,
-        description="Hide the task list in a pane narrower than this (0: never)",
+        description="Hide the activity panel in a pane narrower than this (0: never)",
     ),
     "show_hints": Setting(
         "on",
@@ -579,6 +582,12 @@ SETTINGS = {
     ),
     "attach_tasks": Setting(
         "on", ("on", "off"), description="Draw the task list inside the editor box"
+    ),
+    "attach_activity": Setting(
+        "on",
+        ("on", "off"),
+        description="Draw the model's thinking and tool calls inside the editor box, under "
+        "the status row; off lists them above it",
     ),
     "frame_style": Setting(
         "shaded",
@@ -612,13 +621,13 @@ SETTINGS = {
     "tool_max_lines": Setting(
         "3",
         positive_integer=True,
-        description="Max tool calls listed above the status row, newest last; "
+        description="Max tool calls listed in the activity panel, newest last; "
         "a short pane shows fewer",
     ),
     "tool_linger_seconds": Setting(
         "10",
         whole_number=True,
-        description="Seconds a finished tool call stays listed above the status row (0: until "
+        description="Seconds a finished tool call stays listed in the activity panel (0: until "
         "newer calls push it out)",
     ),
     "tasks_max_height": Setting(
@@ -641,14 +650,14 @@ SETTINGS = {
     "show_thinking": Setting(
         "status-line",
         THINKING_MODES,
-        description="Where the model's thinking shows: its own rows above the status row, "
+        description="Where the model's thinking shows: its own rows in the activity panel, "
         "streamed into scrollback, or nowhere",
     ),
     # Read when the prompt is built, so it applies on the next launch.
     "thinking_max_lines": Setting(
         "10",
         height=True,
-        description="Max rows of thinking above the status row (status-line mode), "
+        description="Max rows of thinking in the activity panel (status-line mode), "
         "or 0.2 for a fifth of the screen; a fixed count is capped at a quarter of it",
     ),
     "editing_mode": Setting(

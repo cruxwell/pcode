@@ -118,7 +118,7 @@ the modes:
 
 | Mode | Shows |
 | --- | --- |
-| `status-line` (default) | The newest thought, faded and marked with a `│` bar, on up to `thinking_max_lines` (default 10) rows of its own above the status row |
+| `status-line` (default) | The newest thought, faded and marked with `∴`, on up to `thinking_max_lines` (default 10) rows of its own in the [activity panel](commands.md#activity-panel), under the status row |
 | `scrollback` | The full thinking, streamed into scrollback in a dim style |
 | `off` | Nothing, and pcode asks the provider for nothing extra |
 
@@ -302,7 +302,7 @@ Details:
   block, with `⟳` and a running elapsed time. It is capped at
   `command_preview_lines` wrapped rows (not counting the command and border
   lines) and uses whatever height is left after the editor, queued prompts, and
-  the Tasks/Tools panel; in a cramped pane it keeps at least a one-line tail.
+  the activity panel; in a cramped pane it keeps at least a one-line tail.
   With parallel calls, the most recently updated one is shown.
 - The preview shows at most the first 16,000 bytes of output; a capped preview
   is marked, and the rest stays in the command log. Programs that buffer their

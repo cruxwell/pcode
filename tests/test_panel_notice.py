@@ -304,19 +304,28 @@ def test_main_status_rides_the_editor_box_and_jobs_only_appear_in_footer(command
     assert len(status) == 80, status
     assert len(aside) - len(aside.lstrip()) == 1, aside
     status_index = lines.index(status)
-    # Everything else live sits above the box: side questions, the thought,
-    # notices, a command's output, and tasks drawn in a frame of their own.
+    # Everything else live sits above the box: side questions, notices, a
+    # command's output, and tasks drawn in a frame of their own.
     assert lines.index(aside) < status_index
-    assert next(i for i, line in enumerate(lines) if "Latest thought" in line) < status_index
     assert next(i for i, line in enumerate(lines) if "Notice above status" in line) < status_index
     if commands:
         assert next(i for i, line in enumerate(lines) if "Tool output" in line) < status_index
+    thought = [i for i, line in enumerate(lines) if "Latest thought" in line]
+    if tasks:
+        # The thought is the activity band in the box, under the status,
+        # with a divider of its own below it.
+        assert thought == [status_index + 1]
+        assert lines[status_index + 1].startswith("│∴ Latest thought")
+        assert lines[status_index + 2].startswith("├─")
+    else:
+        # Hiding the activity panel hides the thought with the tasks.
+        assert thought == []
     if tasks:
         task = next(i for i, line in enumerate(lines) if "Example task" in line)
         if attached:
-            # Under the status, with no heading row of their own: its count
+            # Under the band, with no heading row of their own: its count
             # rides the status instead.
-            assert task == status_index + 1
+            assert task == status_index + 3
             assert "Tasks 0/1 · " in status
             # The step turns with the running commands' arc spinner.
             assert lines[task][0] == "│" and lines[task][1] in "◜◠◝◞◡◟"

@@ -48,7 +48,7 @@ def press(app, *keys):
 @pytest.mark.parametrize("callback", [False, True])
 def test_thinking_chooses_explicit_mode(prefix, opening, selection, mode, callback):
     async def run():
-        activity = SimpleNamespace(thinking_mode="status-line", tasks_shown=True, busy=False)
+        activity = SimpleNamespace(thinking_mode="status-line", panel_shown=True, busy=False)
         selected = []
         keys, shortcuts = prompt_key_bindings(
             activity,
@@ -275,7 +275,7 @@ def test_pending_leader_blocks_eager_editor_defaults():
 
 
 def test_action_labels_describe_actions_and_follow_state():
-    activity = SimpleNamespace(thinking_mode="off", tasks_shown=True, busy=False)
+    activity = SimpleNamespace(thinking_mode="off", panel_shown=True, busy=False)
     transcript = SimpleNamespace(command_scrollback=True)
     callbacks = PromptCallbacks(
         on_send_mode=lambda: None,
@@ -293,14 +293,14 @@ def test_action_labels_describe_actions_and_follow_state():
         "l": "Select model",
         "n": "Increase thinking effort",
         "p": "Decrease thinking effort",
-        "o": "Hide task panel",
+        "o": "Hide activity panel",
         "t": "Select thinking visibility",
         "g": "Hide command output",
         "y": "Copy draft / choose response",
     }
-    activity.tasks_shown = False
+    activity.panel_shown = False
     transcript.command_scrollback = False
-    assert labels()["o"] == "Show task panel"
+    assert labels()["o"] == "Show activity panel"
     assert labels()["g"] == "Show command output"
     del transcript.command_scrollback
     assert labels()["g"] == "Toggle command output"

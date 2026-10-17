@@ -171,7 +171,7 @@ def test_command_descriptions_do_not_advertise_stale_shortcuts(saved):
             assert view.app.shortcut("l") == "Ctrl+E"
             assert ("Ctrl+E", "Select model") in view.session.shortcuts.hint_rows()
             registry = view.session.command_bindings.registry
-            for name in ("/model", "/effort", "/show-tasks", "/show-thinking", "/show-commands"):
+            for name in ("/model", "/effort", "/show-activity", "/show-thinking", "/show-commands"):
                 # These descriptions feed both the /help table and completions.
                 command = registry.find(name)
                 assert command is not None

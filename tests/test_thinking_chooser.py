@@ -28,7 +28,7 @@ def press(app, *keys):
 @pytest.mark.parametrize("callback", [False, True])
 def test_thinking_chooser_refreshes_current_selection(prefix, opening, callback):
     async def run():
-        activity = SimpleNamespace(thinking_mode="off", tasks_shown=True, busy=False)
+        activity = SimpleNamespace(thinking_mode="off", panel_shown=True, busy=False)
         selected = []
 
         def set_mode(mode):
@@ -89,7 +89,7 @@ def test_thinking_chooser_refreshes_current_selection(prefix, opening, callback)
 
 
 def test_main_shortcut_labels():
-    activity = SimpleNamespace(thinking_mode="off", tasks_shown=True, busy=False)
+    activity = SimpleNamespace(thinking_mode="off", panel_shown=True, busy=False)
     callbacks = PromptCallbacks(
         on_send_mode=lambda: None,
         on_model=lambda: None,
@@ -103,12 +103,12 @@ def test_main_shortcut_labels():
         "l": "Select model",
         "n": "Increase thinking effort",
         "p": "Decrease thinking effort",
-        "o": "Hide task panel",
+        "o": "Hide activity panel",
         "t": "Select thinking visibility",
         "g": "Toggle command output",
         "y": "Copy draft / choose response",
     }
-    activity.tasks_shown = False
+    activity.panel_shown = False
     assert {shortcut.key: shortcut.label for shortcut in shortcuts.available()}["o"] == (
-        "Show task panel"
+        "Show activity panel"
     )

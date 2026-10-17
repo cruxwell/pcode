@@ -139,7 +139,7 @@ targets you can reuse on another key.
 | `l` | `@model` | Open the model picker |
 | `n` | `@effort-up` | Increase thinking effort |
 | `p` | `@effort-down` | Decrease thinking effort |
-| `o` | `@tasks` | Show or hide the task panel |
+| `o` | `@tasks` | Show or hide the activity panel |
 | `t` | `@thinking` | Choose thinking visibility |
 | `g` | `@commands` | Show or hide command output in scrollback |
 | `^` | `@previous-session` | Return to the session previously shown in this terminal |

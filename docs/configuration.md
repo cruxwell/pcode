@@ -51,7 +51,7 @@ JSON, and `/config set theme light`, `/config get autocompact`,
 `/config unset effort`, and `/config diff` work without opening the browser.
 **Most config edits affect the next launch, not the running conversation.** To change
 an active setting and save its default immediately, use `/theme light|dark|auto`, `/effort`,
-`/model`, or `/autocompact` instead. The layout settings `attach_tasks`,
+`/model`, or `/autocompact` instead. The layout settings `attach_tasks`, `attach_activity`,
 `tasks_max_height`, `tasks_min_rows`, `tasks_min_columns`, `task_style`, `frame_style`, `tool_glyphs`, `tool_max_lines` and `tool_linger_seconds` apply immediately through `/config`. CLI overrides such as
 `--theme` and `--model` do not rewrite global defaults, and resumed sessions retain
 their own model.
@@ -195,7 +195,7 @@ Every key works with `pcode config set KEY VALUE` and `/config set KEY VALUE`.
 | `spinner` | `dots` | The status row's animation while the model works. A Rich spinner name, e.g. `dots`, `line`, `point` (`python -m rich.spinner` previews them; `/config set spinner` lists the ones that fit; applies on next launch) |
 | `tool_spinner` | `arc` | The same, for a running tool call's row and the terminal's own waits, so they look different from the model's |
 | `show_thinking` | `status-line` | `off`, `status-line`, `scrollback` (where the model's readable reasoning shows; `/show-thinking`) |
-| `thinking_max_lines` | `10` | Max rows of thinking above the status row in `status-line` mode, or a share of the screen (`0.2`). A row count is also capped at a quarter of the pane, so a short pane gets fewer. Applies on next launch |
+| `thinking_max_lines` | `10` | Max rows of thinking in the activity panel in `status-line` mode, or a share of the screen (`0.2`). A row count is also capped at a quarter of the pane, so a short pane gets fewer. Applies on next launch |
 | `show_edits` | `on` | `on`, `off` (show a diff of each file edit; Ctrl+V or `/show-edits`) |
 | `live_edits` | `off` | `on`, `off` (preview an edit or `run_code` snippet at the bottom while the model writes it) |
 | `diff_renderer` | `delta` | `delta`, `rich` (draw diffs in scrollback and `/diffs` with [delta](https://dandavison.github.io/delta/) when it's installed, falling back to Rich; see [diffs with delta](transcript.md#diffs-with-delta)) |
@@ -208,20 +208,21 @@ Every key works with `pcode config set KEY VALUE` and `/config set KEY VALUE`.
 | `command_preview_lines` | `10` | Rows (`10`) or a share of the screen (`0.25`) for the live preview of a running command |
 | `tool_error_scrollback` | `off` | `on`, `off` (keep a failed tool call's full diagnostic in scrollback instead of one line) |
 | `error_scrollback_lines` | `20` | Positive integer, lines of an error notice kept in scrollback before it is clipped |
-| `show_tasks` | `on` | `on`, `off` (show the Tasks/Tools widget; Ctrl+O or `/show-tasks`) |
-| `autohide_tasks` | `off` | `on`, `off` (hide the Tasks/Tools widget when a turn ends; `/autohide-tasks`) |
-| `tasks_min_rows` | `30` | Hide the Tasks/Tools widget in a pane shorter than this, such as a stacked split; `0` never hides. Ctrl+O overrides it until the pane crosses the threshold again |
-| `tasks_min_columns` | `100` | Hide the Tasks/Tools widget in a pane narrower than this, such as a side-by-side split; `0` never hides. Ctrl+O overrides it the same way |
+| `show_tasks` | `on` | `on`, `off` (show the [activity panel](commands.md#activity-panel): the thinking, tool calls and tasks together; Ctrl+O or `/show-activity`) |
+| `autohide_tasks` | `off` | `on`, `off` (hide the task list when a turn ends; `/autohide-tasks`) |
+| `tasks_min_rows` | `30` | Hide the activity panel in a pane shorter than this, such as a stacked split; `0` never hides. Ctrl+O overrides it until the pane crosses the threshold again |
+| `tasks_min_columns` | `100` | Hide the activity panel in a pane narrower than this, such as a side-by-side split; `0` never hides. Ctrl+O overrides it the same way |
 | `show_hints` | `on` | `on`, `off` (show one compact help indicator at the prompt instead of shortcut hints beside individual controls) |
 | `attach_tasks` | `on` | `on`, `off` (draw tasks inside the editor box; `/config` applies immediately) |
-| `tool_glyphs` | `auto` | `on` leads the tool row above the status row with a symbol for the call (`$`, `⌕`, `✎`, `⎘`, `⧖`), `off` drops them and spells out the verb once the call settles (shell calls keep `$`), for fonts that draw those symbols badly. `auto` is on except on the Linux console or with ASCII `glyphs` (`/config` applies immediately) |
+| `attach_activity` | `on` | `on`, `off` (draw the thinking and tool rows inside the editor box, under the status row; `off` lists them above the box. `/config` applies immediately) |
+| `tool_glyphs` | `auto` | `on` leads each tool row in the activity panel with a symbol for the call (`$`, `⌕`, `✎`, `⎘`, `⧖`), `off` drops them and spells out the verb once the call settles (shell calls keep `$`), for fonts that draw those symbols badly. `auto` is on except on the Linux console or with ASCII `glyphs` (`/config` applies immediately) |
 | `glyphs` | `auto` | `unicode`, `ascii` (draw marks, borders and spinners as plain ASCII stand-ins of the same width, for fonts or terminals that draw the symbols badly). `auto` picks ASCII on the Linux console, under a locale naming a charset other than UTF-8, or in a terminal that draws box-drawing lines two cells wide (a CJK locale, iTerm2's ambiguous-width option); see [terminal setup](terminal.md#symbols-and-colors). Applies on next launch |
 | `color_depth` | `auto` | `truecolor`, `256`. `auto` uses 24-bit color where the terminal says so (`COLORTERM`) or is one known to support it (iTerm2, Ghostty, kitty, WezTerm, VS Code and others, or tmux whose client has the `RGB` feature), and the terminal's own 256 colors otherwise. `NO_COLOR` and `PROMPT_TOOLKIT_COLOR_DEPTH` win over it. Applies on next launch |
-| `tool_max_lines` | `3` | Max tool calls listed above the status row, newest last; `1` shows only the call the status row is on. A short pane gets fewer, sharing a quarter of its height with the thinking rows (`/config` applies immediately) |
-| `tool_linger_seconds` | `10` | Seconds a finished tool call stays listed above the status row, so a long wait on the model doesn't keep showing stale calls; `0` keeps it until newer calls push it out (`/config` applies immediately) |
+| `tool_max_lines` | `3` | Max tool calls listed in the activity panel, newest last; `1` shows only the call the status row is on. A short pane gets fewer, sharing a quarter of its height with the thinking rows (`/config` applies immediately) |
+| `tool_linger_seconds` | `10` | Seconds a finished tool call stays listed in the activity panel, so a long wait on the model doesn't keep showing stale calls; `0` keeps it until newer calls push it out (`/config` applies immediately) |
 | `task_style` | `status` | `status` (shade task text by status), `icons` (one text weight, coloured icons only; `/config` applies immediately) |
 | `frame_style` | `shaded` | `borders` (line boxes around the editor and tasks), `shaded` (no lines: the boxes are background shades lifted off the terminal's own background; falls back to borders on a terminal without 24-bit color (see `color_depth`), or under `/syntax terminal` when the terminal never reports its background; `/config` applies immediately). The box drawings elsewhere in these docs show `borders` |
-| `tasks_max_height` | unset | Rows (`20`) or a share of the screen (`0.5`) for the Tasks/Tools widget and editor together; unset keeps the widget to 10 rows or half the screen |
+| `tasks_max_height` | unset | Rows (`20`) or a share of the screen (`0.5`) for the editor box (with the thinking, tool and task rows in it) together with any detached task box; unset keeps the task list to 10 rows or half the screen |
 | `paced_scrollback` | `typed` | `typed`, `rows`, `off` (type settled prose out, or roll blocks in a row per frame; see [the transcript](transcript.md#paced-scrollback)) |
 | `regenerate_on_resize` | `on` | `on`, `off` (rebuild scrollback at the new size after a resize; applies on next launch) |
 | `transcript_max_chars` | `2000000` | Positive integer, retained text budget shared by resume and redraw; applies on next launch |

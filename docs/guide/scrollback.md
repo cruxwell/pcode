@@ -44,7 +44,7 @@ The toggles, each saved as your default:
 | Ctrl+V, `/show-edits` | The diff of each file edit |
 | `/show-thinking scrollback` | The model's readable reasoning |
 | Ctrl+], `/group-tools` | One line per run of tool calls (the default) or one per call |
-| Ctrl+O, `/show-tasks` | The live task and tool panel above the editor |
+| Ctrl+O, `/show-activity` | The activity panel in the editor box: thinking, tool calls and tasks |
 
 Hidden isn't deleted. Thinking, diffs and command results are kept even while
 hidden, including in resumed sessions, so turning a toggle on later shows them
