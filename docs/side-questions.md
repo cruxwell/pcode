@@ -25,7 +25,7 @@ side question is reading the answer while the turn is still running. A bare
 
 ## The panel
 
-By default (`btw_view panel`) a thread opens in a panel directly above the
+With `pcode config set btw_view panel`, a thread opens in a panel directly above the
 editor, framed and titled in a colour of its own, ` btw ` and its first
 question, so it is plain at a glance that you are looking at a side thread and
 not the conversation. The conversation carries on above it: a running turn
@@ -58,9 +58,8 @@ is the prefix and `q`.
 
 ### The popup
 
-`pcode config set btw_view popup` shows threads in the full-screen viewer
-instead, which takes the terminal while it is open and has a follow-up editor
-of its own:
+By default (`btw_view popup`) threads show in the full-screen viewer, which
+takes the terminal while it is open and has a follow-up editor of its own:
 
 - **↑ / ↓:** move through the questions, or scroll the answer when it has focus.
 - **Enter:** read the selected thread full width, with the question list

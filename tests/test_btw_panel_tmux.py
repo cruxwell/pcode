@@ -12,7 +12,9 @@ pytestmark = pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is no
 SCRIPT = r"""
 from pcode.app import PreviewApp
 from pcode.aside import Aside, SideReply
+from pcode.preferences import save_preferences
 
+save_preferences(btw_view="panel")  # The panel is opt-in.
 app = PreviewApp()
 asides = app.controller.asides
 for question, answer in (
@@ -79,7 +81,10 @@ import pcode.delta
 pcode.delta.find_delta = lambda: None
 from pcode.app import PreviewApp
 from pcode.aside import Aside, SideReply
+from pcode.preferences import save_preferences
 from pcode.runtime import EditPreview, Message
+
+save_preferences(btw_view="panel")  # The panel is opt-in.
 
 class Runtime:
     session = None

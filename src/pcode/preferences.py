@@ -726,7 +726,7 @@ SETTINGS = {
     ),
     # Read each time the viewer opens, so `/config set` applies without a restart.
     "btw_view": Setting(
-        "panel",
+        "popup",
         ("panel", "popup"),
         description=(
             "Show /btw threads in a panel above the editor, which replies to them, "

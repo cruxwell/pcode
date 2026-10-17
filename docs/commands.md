@@ -136,11 +136,12 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   Browsable at any time; forking waits for the running turn.
 - `/btw QUESTION` (alias `/side`): [ask a side question](side-questions.md) against the context the model
   is working with right now, without interrupting or queueing it. The answer opens in a
-  [panel above the editor](side-questions.md#the-panel) when ready (`btw_auto_open`);
-  bare `/btw` or **Ctrl+Q** opens it at any time. While it takes replies, Enter sends a
-  [follow-up](side-questions.md#following-up) to the thread, `/copy` and `/links` read
-  the thread, `/summarize` and `/merge` [keep it](side-questions.md#keeping-a-thread),
-  and Escape closes it (`btw_view popup` shows a full-screen viewer instead). `/btw $PROVIDER:MODEL [$PROVIDER:MODEL ...] QUESTION` asks other models
+  [full-screen viewer](side-questions.md#the-popup) when ready (`btw_auto_open`);
+  bare `/btw` or **Ctrl+Q** opens it at any time. There you can send a
+  [follow-up](side-questions.md#following-up) to the thread, or
+  [keep it](side-questions.md#keeping-a-thread) in the conversation
+  (`btw_view panel` shows it in a [panel above the editor](side-questions.md#the-panel)
+  instead, which replies from the main editor). `/btw $PROVIDER:MODEL [$PROVIDER:MODEL ...] QUESTION` asks other models
   instead, one side question each ([choosing the model](side-questions.md#choosing-the-model)).
   A `+EFFORT` suffix (`$openai:gpt-5+high`), or a bare `+EFFORT` word for the
   conversation's model, sets that question's reasoning effort from the `/effort` levels.

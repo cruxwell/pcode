@@ -9,7 +9,14 @@ from rich.console import Console
 from pcode.app import PreviewApp
 from pcode.aside import Aside, SideReply
 from pcode.btw_panel import BtwPanel, close, current, next_thread, open_thread, replying
+from pcode.preferences import save_preferences
 from pcode.ui import Activity
+
+
+@pytest.fixture(autouse=True)
+def panel_view():
+    """The panel is opt-in (`btw_view panel`); these tests exercise it."""
+    save_preferences(btw_view="panel")
 
 
 def answered(question: str, answer: str, thread: str = "") -> Aside:
@@ -170,9 +177,17 @@ def test_copy_reads_the_thread_the_panel_replies_to(monkeypatch):
     assert copied == ["One."]
 
 
-def test_the_popup_stays_available_by_setting(monkeypatch):
-    from pcode.preferences import save_preferences
+def test_the_shortcut_opens_the_viewer_when_the_popup_is_the_view():
+    save_preferences(btw_view="popup")
+    app, _ = seeded_app()
+    sent = []
+    app._submit_typed = sent.append
+    app.btw_key()
+    assert sent == ["/btw"]
+    assert app.activity.btw_thread is None
 
+
+def test_the_popup_stays_available_by_setting(monkeypatch):
     save_preferences(btw_view="popup")
     app, _ = seeded_app()
     opened = []

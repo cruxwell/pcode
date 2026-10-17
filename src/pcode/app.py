@@ -1806,10 +1806,17 @@ class PreviewApp:
     # --- The /btw panel above the editor (`pcode.btw_panel`) ---
 
     def btw_key(self) -> None:
-        """Ctrl+Q: open the newest thread to reply to; reply to the one shown; then the next."""
+        """Ctrl+Q: open the newest thread to reply to; reply to the one shown; then the next.
+
+        With `btw_view popup` and no panel open it is a bare /btw: the viewer.
+        """
         from pcode.btw_panel import current, next_thread, open_thread
 
         activity = self.activity
+        view = load_preferences().get("btw_view", SETTINGS["btw_view"].default)
+        if view != "panel" and not current(activity):
+            self._submit_typed("/btw")
+            return
         if not current(activity):
             latest = self.asides.latest()
             if latest is None:
