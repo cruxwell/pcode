@@ -969,7 +969,8 @@ def test_aside_copy_browser_holds_the_selected_thread(monkeypatch):
                     "user: latest question",
                     "assistant: Newest answer",
                 ]
-                await send("\r")
+                # Ctrl+Y again copies the highlighted text, as in /copy.
+                await send("\x19")
                 await wait_until(lambda: browser.copying is None)
                 assert copied == [newest.answer]
                 assert browser.app.layout.has_focus(browser.list)

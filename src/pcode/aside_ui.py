@@ -255,9 +255,14 @@ class AsideBrowser:
             def reply(event):
                 self.input.open(event.app)
 
-        @shortcuts.add("y", "Copy", filter=idle)
+        # Not `idle`: under the copy browser it copies the highlighted text, as
+        # the same key does in `/copy`.
+        @shortcuts.add("y", "Copy", filter=Condition(lambda: self.picker is None))
         def copy_answer(event):
-            self.copy(event.app.output)
+            if self.copying is not None:
+                self.copying.copy()
+            else:
+                self.copy(event.app.output)
 
         @shortcuts.add("o", "Link", filter=idle)
         def open_links(event):

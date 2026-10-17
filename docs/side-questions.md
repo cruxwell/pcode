@@ -35,11 +35,12 @@ streams it.
 - **Ctrl+S / Ctrl+T:** [bring the thread into the conversation](#keeping-a-thread),
   as a summary or merged into the tree.
 - **Ctrl+Y:** copy from the selected thread with the same layout as
-  [`/copy`](commands.md#slash-commands): the list holds each question and
-  answer in the thread, with a row for every quote and code block under its
-  answer, and the pane beside it highlights exactly what Enter copies. The
-  newest answer is selected first. Copying also works mid-stream, taking what
-  has arrived so far. Escape or Ctrl+C goes back to the thread without copying,
+  [`/copy`](commands.md#slash-commands): the list holds each answered question
+  in the thread and its answer, with a row for every quote and code block under
+  the answer, and the pane beside it highlights exactly what Enter (or Ctrl+Y
+  again) copies. The newest answer is selected first. Copying also works
+  mid-stream, taking what had arrived when you pressed Ctrl+Y. Escape or Ctrl+C
+  goes back to the thread without copying,
   and neither changes the thread or the follow-up draft. A thread holding a
   single plain answer is copied straight away.
 - **Ctrl+O:** pick a link from the selected thread's questions and answers and

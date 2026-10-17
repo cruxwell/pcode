@@ -37,7 +37,7 @@ _ROW_WIDTH = 80
 
 @dataclass(frozen=True)
 class Answer:
-    """A question and full answer, safe for display, search, and copying."""
+    """A question and full answer, safe for display and copying."""
 
     prompt: str
     text: str
