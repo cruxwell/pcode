@@ -1824,7 +1824,7 @@ class PreviewApp:
         return bool(draft) and self.btw_swaps()
 
     def btw_key(self) -> None:
-        """Ctrl+Q: show the newest thread, then the one before, wrapping around.
+        """Ctrl+Q: show the newest thread, then each older one, then the conversation again.
 
         With `btw_view popup` it is a bare /btw: the viewer.
         """
@@ -1840,8 +1840,10 @@ class PreviewApp:
                 self.transcript.flash("No side questions yet. Ask one with /btw QUESTION.")
                 return
             open_thread(activity, latest.thread)
+        elif (thread := next_thread(activity)) is not None:
+            open_thread(activity, thread)
         else:
-            open_thread(activity, next_thread(activity))
+            self.close_btw()
 
     def asides_seen(self, identities: list[str]) -> None:
         """The thread view showed these answers; a session host hears so (`asides_read`)."""

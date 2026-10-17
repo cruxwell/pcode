@@ -90,9 +90,11 @@ def _add_shortcuts(shortcuts: PrefixKeys, activity, transcript, callbacks: Promp
     on_btw = callbacks.on_btw
 
     def btw_label() -> str:
-        from pcode.btw_view import current
+        from pcode.btw_view import current, next_thread
 
-        return "Next side thread" if current(activity) else "Open side threads (/btw)"
+        if not current(activity):
+            return "Open side threads (/btw)"
+        return "Next side thread" if next_thread(activity) else "Back to the conversation"
 
     @shortcuts.add("q", btw_label, filter=on_btw is not None)
     def side_threads(event: KeyPressEvent) -> None:

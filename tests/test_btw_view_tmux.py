@@ -76,14 +76,23 @@ def test_btw_thread_swaps_in_for_the_conversation_and_back(pane):
     screen = capture(pane, "Echo: and the TTL?")
     assert row(screen, "make cache-report") < row(screen, "Echo: and the TTL?")
 
-    # Ctrl+Q shows the other thread; Escape brings the conversation back,
-    # and Enter goes to it again.
+    # Ctrl+Q shows the older thread, whose next stop is the conversation.
     pane("send-keys", "-t", "preview:0.0", "C-q")
     screen = capture(pane, " btw  why is the parser LL(1)?")
     assert "make cache-report" not in screen
+    divider = screen.splitlines()[row(screen, "↓ conversation")]
+    assert "Ctrl+Q or Esc back" in divider
+    # Ctrl+Q again comes back to it, the divider gone with the thread.
+    pane("send-keys", "-t", "preview:0.0", "C-q")
+    screen = capture(pane, "first main message")
+    assert "↓ conversation" not in screen and "Esc back" not in history(pane)
+    # Ctrl+Q starts over at the newest; Escape comes back as well, and
+    # Enter goes to the conversation again.
+    pane("send-keys", "-t", "preview:0.0", "C-q")
+    capture(pane, " btw  what does the cache key on?")
     pane("send-keys", "-t", "preview:0.0", "Escape")
-    capture(pane, "first main message")
-    assert "Esc back to the conversation" not in history(pane)
+    screen = capture(pane, "first main message")
+    assert "↓ conversation" not in screen and "Esc back" not in history(pane)
     pane("send-keys", "-t", "preview:0.0", "second main message", "Enter")
     screen = capture(pane, "▌ second main message")
     assert "lookahead" not in history(pane)
@@ -153,7 +162,7 @@ def test_a_running_turn_waits_behind_the_thread_and_lands_on_return(pane, releas
     # conversation, with the key back.
     screen = capture(pane, "↓ conversation", running=True)
     divider = screen.splitlines()[row(screen, "↓ conversation")]
-    assert "↑ btw: SIDE_QUESTION?" in divider and "Esc back · Ctrl+Q next thread" in divider
+    assert "↑ btw: SIDE_QUESTION?" in divider and "Ctrl+Q or Esc back" in divider
     release()
     # The turn finishes behind the thread, which keeps the screen; its
     # newest output shows under the divider meanwhile.

@@ -218,6 +218,11 @@ def test_the_divider_points_both_ways_and_names_the_keys(monkeypatch):
     screen.transcript.message("A link: [docs](https://example.com/docs)")
     divider, *tail = (fragment_list_to_text(row) for row in rows(layout))
     assert "↑ btw: why is the parser LL(1)?" in divider and "↓ conversation" in divider
+    # One thread: Ctrl+Q's next stop is the conversation, as Esc's is.
+    assert divider.endswith("Ctrl+Q or Esc back ─") and len(divider) == 99
+    older = answered("an older one?", "Yes.")
+    screen.activity.asides.insert(0, older)
+    divider = fragment_list_to_text(rows(layout)[0])
     assert divider.endswith("Esc back · Ctrl+Q next thread ─") and len(divider) == 99
     # A hyperlink's escape never reaches the screen as text.
     assert [row.rstrip() for row in tail] == ["  A link: docs"]
@@ -307,6 +312,29 @@ def test_the_thread_streams_in_block_by_block_and_closes_to_the_conversation(mon
     assert "CONVERSATION" in back and "why?" not in back
 
 
+def test_the_screen_follows_the_thread_on_activity_whatever_left_it(monkeypatch):
+    screen = Screen(monkeypatch)
+    transcript, activity, output = screen.transcript, screen.activity, screen.output
+    transcript.message("CONVERSATION")
+    screen.flush()
+    aside = answered("why?", "Because.")
+    activity.asides = [aside]
+    view = ThreadView(activity, transcript)
+    # A view left open with no thread to show gives the screen back.
+    output.open_view(lambda: [entry(Text("STRAY"))])
+    screen.flush()
+    view.sync()
+    assert output.view is None and "CONVERSATION" in screen.flush()
+    # A thread shown on an output that has lost its view is drawn again.
+    open_thread(activity, aside.thread)
+    view.sync()
+    assert "Because." in screen.flush()
+    output.close_view(transcript.replay)
+    screen.flush()
+    view.sync()
+    assert output.view == view.replay and "Because." in screen.flush()
+
+
 def test_an_error_and_an_empty_answer_say_so():
     activity = Activity()
     console = Console(file=StringIO(), width=80, color_system=None, force_terminal=True)
@@ -323,8 +351,9 @@ def test_an_error_and_an_empty_answer_say_so():
     assert "failed: no network" in text and "(cancelled; no answer)" in text
 
 
-def test_threads_cycle_newest_first_and_wrap():
+def test_threads_cycle_newest_first_then_back_to_the_conversation():
     activity = Activity()
+    assert next_thread(activity) is None
     first, second = answered("first?", "One."), answered("second?", "Two.")
     activity.asides = [first, second]
     assert next_thread(activity) == second.thread
@@ -332,8 +361,10 @@ def test_threads_cycle_newest_first_and_wrap():
     assert current(activity) == [second]
     assert next_thread(activity) == first.thread
     open_thread(activity, first.thread)
-    assert next_thread(activity) == second.thread
+    # The oldest thread's next stop is the conversation, then the newest again.
+    assert next_thread(activity) is None
     close(activity)
+    assert next_thread(activity) == second.thread
     assert current(activity) == []
     # A thread dropped from the records shows the conversation in effect.
     open_thread(activity, "gone")
@@ -367,13 +398,15 @@ def test_an_answer_that_opens_by_itself_never_takes_a_thread_or_a_draft():
     assert app.activity.btw_thread == second.thread
 
 
-def test_the_shortcut_shows_the_newest_thread_then_the_one_before():
+def test_the_shortcut_shows_each_thread_newest_first_then_the_conversation():
     app, _ = seeded_app()
     first, second = app.controller.asides.items
     app.btw_key()
     assert app.activity.btw_thread == second.thread
     app.btw_key()
     assert app.activity.btw_thread == first.thread
+    app.btw_key()
+    assert app.activity.btw_thread is None  # Back to the conversation.
     app.btw_key()
     assert app.activity.btw_thread == second.thread
     app.close_btw()
