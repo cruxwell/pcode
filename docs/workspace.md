@@ -67,6 +67,55 @@ inherit it. The review, audit, and debt skills the upstream plugins ship are not
 included; copy them under `.agents/skills/` if you want them as
 [skill commands](#skills-as-slash-commands).
 
+## Learning from a session (`/reflect`)
+
+When a session went sideways before it went right, `/reflect` turns that into a
+change to your instructions, skills or extensions so the next session doesn't
+repeat it:
+
+```
+/reflect
+/reflect the tmux test that kept timing out
+```
+
+The model reviews the conversation for moments where an attempt failed and a
+later one worked, or where the same mistake repeated, and proposes the
+cheapest change that would have prevented each one. It shows the diffs and
+waits. Nothing changes until you approve, and "nothing worth changing" is a
+normal answer.
+
+**Where changes go.** Habits that would help in any project go to your user
+scope; anything about this codebase goes to the project. The prompt lists the
+exact files for the machine it runs on, from the same places pcode reads:
+
+| Scope | Instructions | Skills | Extensions |
+| --- | --- | --- | --- |
+| User | `~/AGENTS.md` (or an existing `~/CLAUDE.md`) | your `skill_dirs` under `~` (default `~/.agents/skills`) | `~/.config/pcode/extensions` |
+| Project | `AGENTS.md` (or `CLAUDE.md`) at the repository root | `.agents/skills` | `.pcode/extensions` |
+
+Instruction files in directories between your home and the repository (a
+folder holding all of one employer's repositories, say) are offered for
+lessons about that group. User instructions are only offered when pcode
+actually loads them: with `repo_context_walk_up` off, or a workspace outside
+your home, cross-project habits go to a user skill instead.
+
+The model prefers a skill or a hook over another always-on instruction line,
+since every line is paid for on every turn, and offsets a new line by cutting
+or tightening another. It reads each target before editing it: a file that
+says it's generated from elsewhere (by a dotfiles manager, for instance) is
+edited at that source, and rules a file states about its own contents still
+apply.
+
+**Lesson log.** Each reflection with something to propose appends an entry to
+`$XDG_STATE_HOME/pcode/reflect/lessons.md` (`~/.local/state/...` by default),
+including proposals you declined. Later reflections read it, so a declined idea
+isn't proposed again without new evidence, and a lesson that didn't stick gets
+a stronger form instead of a reworded line.
+
+The approach is adapted from
+[Harness²](https://arxiv.org/abs/2610.14224): it changes nothing that the
+session's evidence doesn't support.
+
 ## Skills as slash commands
 
 Every `SKILL.md` under those asset directories becomes a command, so you can
