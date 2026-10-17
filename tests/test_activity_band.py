@@ -292,3 +292,14 @@ def test_show_activity_and_show_tasks_switch_the_panel_and_its_list_apart():
     assert activity.show_tasks and not activity.tasks_shown
     assert app.registry.dispatch("/show-activity on")
     assert activity.tasks_shown
+
+
+@pytest.mark.parametrize("background", ["#292929", "#1e1e2e", "#2e2a29"])
+def test_the_tool_well_stands_well_apart_from_the_header_on_dark(background):
+    # A shade between the box and the background sat four levels off the
+    # header: on screen, thought and calls blurred into one block.
+    def level(color):
+        return sum(int(color[i : i + 2], 16) for i in (1, 3, 5)) / 3
+
+    gap = level(header_shade(background, "dark")) - level(well_shade(background, "dark"))
+    assert gap >= 10, gap

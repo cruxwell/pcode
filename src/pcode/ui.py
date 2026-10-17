@@ -195,13 +195,14 @@ def well_shade(background: str, theme: str) -> str:
     """The tool rows' shade: a step further in than the header, as a terminal's
     own surface sits under the prose about it.
 
-    Dark, most of the way back to the background, short of it so the box
-    still reads as one surface rather than as two with a gap; light, a step
-    past the header toward black.
+    Dark, a little below the terminal's own background: the box lifts the
+    background by only a few levels, so a shade between the two sat too
+    close to the header to tell thought and calls apart (checked on
+    screenshots). Light, a step past the header toward black.
     """
     if theme == "light":
         return _mix(header_shade(background, theme), "#000000", 0.03)
-    return _mix(frame_shade(background, theme), background, 0.8)
+    return _mix(background, "#000000", 0.15)
 
 
 @dataclass(frozen=True)
