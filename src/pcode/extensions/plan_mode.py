@@ -14,12 +14,10 @@ just says what the user wants. The active plan lives in a marker file beside
 the plans, so it survives `/reload` (which re-imports this module) and restarts.
 
 `--obsidian` makes the plan a note in the workspace's org vault instead
-(`briefs/Plan — <project> — <title>.md`; orgs come from `memory.toml`, and an
-uncovered workspace uses the shared `default` vault), whether or
-not the `basic_memory` extension is on: where a plan lives is a per-plan choice,
-not a memory setting. `--local` (the default) keeps it in `.pcode/plans`. The
-marker holds a vault note's absolute path rather than a local slug. With memory
-off, only the active note gets edit feedback.
+(`plans/Plan — <project> — <title>.md`; see `pcode.obsidian_plans`), and the
+user's edits to it come back to the model as a diff with their next message.
+`--local` (the default) keeps it in `.pcode/plans`. The marker holds a vault
+note's absolute path rather than a local slug.
 """
 
 import asyncio
@@ -30,6 +28,7 @@ from pydantic_ai import ModelRetry
 from pydantic_ai.messages import ModelRequest, ToolReturnPart, UserPromptPart
 
 from pcode.conversation_ids import base_conversation
+from pcode.obsidian_plans import EDITED, NOTE_TOOLS, NoteFeedback, plan_location
 from pcode.steering import run_request
 
 PLANS = ".pcode/plans"
@@ -67,6 +66,16 @@ def topic_slug(request: str) -> str:
     return slugify(" ".join(request.split("\n", 1)[0].split()[:8]))
 
 
+def is_side(ctx) -> bool:
+    """Side questions and shared workers must not act for the main conversation."""
+    from pcode.aside_guard import AsideGuard
+
+    if getattr(getattr(ctx, "agent", None), "name", None) == "worker":
+        return True
+    capabilities = getattr(ctx, "capabilities", None) or {}
+    return any(isinstance(c, AsideGuard) for c in capabilities.values())
+
+
 def parse_destination(argument: str) -> tuple[str | None, str]:
     """Consume only leading flags, leaving the request's internal whitespace untouched."""
     destination = None
@@ -87,18 +96,6 @@ def setup(pcode) -> None:
         return
     plans = pcode.workspace / PLANS
     marker = plans / ACTIVE
-    from pcode.extensions.basic_memory import (
-        EDITED,
-        NOTE_TOOLS,
-        NoteFeedback,
-        is_side,
-        plan_guidance,
-        plan_location,
-        watches,
-    )
-
-    # Whether basic_memory tracks edits to vault notes here; if not, this does.
-    memory_on = watches(pcode.workspace)
     feedback = NoteFeedback()
     session = None
 
@@ -172,7 +169,7 @@ def setup(pcode) -> None:
             )
         )
         start(slug)
-        if not memory_on and is_vault(slug):
+        if is_vault(slug):
             path = path_of(slug).resolve()
             if slug != current or path not in feedback.seen:
                 feedback.observe(path)
@@ -217,16 +214,6 @@ def setup(pcode) -> None:
             f"Plan mode off. Implement the plan in {relative(current)} now, "
             "tracking progress with write_plan, and update the file if the plan changes."
         )
-        if is_vault(current):
-            result += (
-                " First mark it approved, as the brief format says: `state: approved`, "
-                "`cssclasses: [approved]`, and the APPROVED banner."
-            )
-            result += (
-                " If an existing brief is linked, add ✅ on the brief's Open plans line "
-                "and, when the work ships, fold it into the brief. Mark the plan implemented "
-                "when shipped, even if it is standalone; do not create a brief implicitly."
-            )
         return result
 
     @pcode.hooks.on.before_tool_execute
@@ -235,39 +222,38 @@ def setup(pcode) -> None:
             raise ModelRetry("Only the main agent can leave plan mode.")
         return args
 
-    if not memory_on:
-        current = active()
-        if current and is_vault(current):
-            feedback.observe(path_of(current).resolve())
+    current = active()
+    if current and is_vault(current):
+        feedback.observe(path_of(current).resolve())
 
-        @pcode.hooks.on.before_run
-        async def remember_session(ctx):
-            nonlocal session
-            incoming = base_conversation(getattr(ctx, "conversation_id", None))
-            if is_side(ctx) or not incoming or incoming == session:
-                return
-            if session is not None:
-                feedback.seen.clear()
-                current = active()
-                if current and is_vault(current):
-                    await asyncio.to_thread(feedback.observe, path_of(current).resolve())
-            session = incoming
-
-        @pcode.hooks.on.after_tool_execute
-        async def note_seen(ctx, *, call, tool_def, args, result):
+    @pcode.hooks.on.before_run
+    async def remember_session(ctx):
+        nonlocal session
+        incoming = base_conversation(getattr(ctx, "conversation_id", None))
+        if is_side(ctx) or not incoming or incoming == session:
+            return
+        if session is not None:
+            feedback.seen.clear()
             current = active()
-            if (
-                current
-                and is_vault(current)
-                and tool_def.name in NOTE_TOOLS
-                and not is_side(ctx)
-                and isinstance(args, dict)
-            ):
-                path = Path(str(args.get("path", ""))).expanduser()
-                path = (path if path.is_absolute() else pcode.workspace / path).resolve()
-                if path == path_of(current).resolve():
-                    await asyncio.to_thread(feedback.observe, path)
-            return result
+            if current and is_vault(current):
+                await asyncio.to_thread(feedback.observe, path_of(current).resolve())
+        session = incoming
+
+    @pcode.hooks.on.after_tool_execute
+    async def note_seen(ctx, *, call, tool_def, args, result):
+        current = active()
+        if (
+            current
+            and is_vault(current)
+            and tool_def.name in NOTE_TOOLS
+            and not is_side(ctx)
+            and isinstance(args, dict)
+        ):
+            path = Path(str(args.get("path", ""))).expanduser()
+            path = (path if path.is_absolute() else pcode.workspace / path).resolve()
+            if path == path_of(current).resolve():
+                await asyncio.to_thread(feedback.observe, path)
+        return result
 
     @pcode.hooks.on.before_model_request
     async def remind(ctx, request_context):
@@ -287,16 +273,14 @@ def setup(pcode) -> None:
         ):
             extra = ""
             if is_vault(current):
-                extra = "\n" + plan_guidance(path_of(current).parent)
                 if conversation := base_conversation(getattr(ctx, "conversation_id", None)):
                     # The Obsidian bridge plugin finds this conversation through it.
                     extra += (
                         f"\n- Keep `session: {conversation}` in the plan's front matter "
                         "(add it, or update it if it names another session)."
                     )
-                if not memory_on:
-                    changed = await asyncio.to_thread(feedback.edits, path_of(current).resolve())
-                    if changed:
-                        extra += "\n" + EDITED + "\n" + "\n\n".join(changed)
+                changed = await asyncio.to_thread(feedback.edits, path_of(current).resolve())
+                if changed:
+                    extra += "\n" + EDITED + "\n" + "\n\n".join(changed)
             parts.append(UserPromptPart(REMINDER.format(path=relative(current), extra=extra)))
         return request_context

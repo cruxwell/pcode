@@ -16,11 +16,55 @@ It takes two pieces: plans in your vault (`/plan --obsidian`) and the
 /plan --obsidian Design the export pipeline
 ```
 
-writes the plan into your org's vault instead of `.pcode/plans/`, or into
-`~/vaults/default` when no org is configured for the directory (see
-[Plans](memory.md#plans)). Project memory doesn't need to be on. The model is asked to record the plan's session in its front matter
-(`session: 7c1d72d9-…`), which is how the plugin finds it. If a plan is
-missing it, *pcode bridge: Set this note's session* adds it.
+writes the plan to `plans/Plan — <project> — <title>.md` in your org's vault
+instead of `.pcode/plans/`. It needs no setup: with no org configured for the
+directory, the plan goes in a shared `~/vaults/default`. The model is asked to
+record the plan's session in its front matter (`session: 7c1d72d9-…`), which is
+how the plugin finds it. If a plan is missing it, *pcode bridge: Set this
+note's session* adds it.
+
+Bare `/plan` resumes the active plan, or else the newest local one.
+`/plan --obsidian` with no request resumes the active plan only when it's in
+the vault, and otherwise starts a new one there. `/plan status` shows the
+active path, and `/plan off` leaves the file in place. Saying "go ahead" in the
+conversation starts implementation.
+
+### Orgs and vaults
+
+To keep work and personal plans apart, give each directory root its own vault
+in `~/.config/pcode/obsidian.toml`:
+
+```toml
+vault_root = "~/vaults"   # each org's vault defaults to <vault_root>/<name>;
+                          # directories outside every org use <vault_root>/default
+
+[[org]]
+name = "personal"
+root = "~/p"
+
+[[org]]
+name = "acme"
+root = "~/wd"
+vault = "~/Documents/acme-vault"   # optional
+```
+
+The file lives in your config directory, never in a repository, so org names
+stay on your machine. A broken config or an unwritable vault is an error, not a
+silent fallback to another vault.
+
+### Answering in the note
+
+Answer the plan's open questions in place, or add a callout under any
+paragraph:
+
+```markdown
+> [!comment] Cover the retry path too.
+```
+
+With your next message, from the terminal or from Obsidian, the model receives
+a diff of your edits to the active plan. It acts on your answers and comments,
+then folds them in or removes them. Edit between turns: simultaneous model and
+user edits are not conflict-free.
 
 ## Installing the plugin
 

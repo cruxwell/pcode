@@ -96,10 +96,10 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
 - `/plan [--obsidian|--local] [request]`: discuss a change and keep a written plan
   before implementing. New plans go in `.pcode/plans/` by default; `--obsidian`
   keeps the plan in your org's Obsidian vault instead (or a shared `default`
-  vault when no org is configured), whether or not project memory is on. Bare `/plan` resumes the active plan, or else the newest local one.
+  vault when no org is configured). Bare `/plan` resumes the active plan, or else the newest local one.
   `/plan status` shows its file; `/plan off` stops planning without deleting it.
-  Approve in the conversation to start implementation. See [Plans](memory.md#plans)
-  for where vault plans go and feedback from Obsidian.
+  Approve in the conversation to start implementation. See
+  [Planning in Obsidian](obsidian.md) for where vault plans go and feedback from Obsidian.
 - `/reflect [focus]`: propose an instruction, skill or extension change from what went
   wrong in this session, apply it if you approve, and log the lesson. See
   [Learning from a session](workspace.md#learning-from-a-session-reflect).

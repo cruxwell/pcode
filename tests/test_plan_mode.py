@@ -6,9 +6,9 @@ import pytest
 from pydantic_ai import ModelRetry
 from pydantic_ai.messages import ModelRequest, ToolReturnPart, UserPromptPart
 
+from pcode import obsidian_plans as op
 from pcode.commands import CommandRegistry
 from pcode.ext import ExtensionAPI
-from pcode.extensions import basic_memory as bm
 from pcode.extensions import plan_mode
 
 
@@ -139,16 +139,15 @@ def test_workers_get_nothing(tmp_path):
 
 @pytest.fixture
 def configured_vault(tmp_path, monkeypatch):
-    config = tmp_path / "memory.toml"
+    config = tmp_path / "obsidian.toml"
     vault = tmp_path / "vault"
     workspace = tmp_path / "work" / "app"
     workspace.mkdir(parents=True)
     config.write_text(
         f'[[org]]\nname = "personal"\nroot = "{workspace.parent}"\nvault = "{vault}"\n'
     )
-    monkeypatch.setattr(bm, "config_path", lambda: config)
-    monkeypatch.setattr(bm, "project_checkout", lambda _: None)
-    monkeypatch.setattr(bm, "enabled", lambda: False)
+    monkeypatch.setattr(op, "config_path", lambda: config)
+    monkeypatch.setattr(op, "project_checkout", lambda _: None)
     return workspace, vault, config
 
 
@@ -156,36 +155,28 @@ def marker(workspace):
     return workspace / plan_mode.PLANS / plan_mode.ACTIVE
 
 
-def test_explicit_vault_with_memory_off_bootstraps_only_planning(configured_vault):
+def test_explicit_vault_creates_only_the_plans_folder(configured_vault):
     workspace, vault, _ = configured_vault
     api = FakeAPI(workspace)
     plan_mode.setup(api)
     request = "Add export\n\n  Keep indentation and --local as request text."
     assert api.commands["/plan"]("--obsidian " + request) == request
     path = Path(marker(workspace).read_text().strip())
-    assert path == vault / "briefs" / "Plan — app — Add export.md"
-    assert sorted(p.name for p in vault.iterdir()) == ["Brief format.md", "briefs"]
+    assert path == vault / "plans" / "Plan — app — Add export.md"
+    assert [p.name for p in vault.iterdir()] == ["plans"]
     assert not path.exists()  # The model writes the note, not the command.
     [note] = remind(api)
-    assert str(vault / "Brief format.md") in note
-    assert "standalone plan" in note and "do not create a project brief" in note
-    assert "re-read" in note
+    assert "Plan — app — Add export.md" in note and "brief" not in note
     result = api.tools["exit_plan_mode"]()
-    assert "state: approved" in result and "Mark the plan implemented" in result
-    assert "do not create a brief" in result
-    assert not bm.enabled()
+    assert "Plan — app — Add export.md" in result and "brief" not in result
 
 
-@pytest.mark.parametrize("memory_on", [False, True])
-def test_destination_overrides_and_destination_only_resume(
-    configured_vault, monkeypatch, memory_on
-):
+def test_destination_overrides_and_destination_only_resume(configured_vault):
     workspace, vault, _ = configured_vault
-    monkeypatch.setattr(bm, "enabled", lambda: memory_on)
     api = FakeAPI(workspace)
     plan_mode.setup(api)
     command = api.commands["/plan"]
-    command("Default topic")  # The default is local whatever memory says.
+    command("Default topic")  # The default is local.
     assert not Path(marker(workspace).read_text().strip()).is_absolute()
     assert not vault.exists()  # Nothing touches the vault until --obsidian asks.
     command("--obsidian Vault topic")
@@ -204,7 +195,7 @@ def test_destination_overrides_and_destination_only_resume(
     assert command("") is None  # Bare /plan always resumes an active plan.
     assert marker(workspace).read_text() == local
     command("--obsidian")
-    assert Path(marker(workspace).read_text().strip()).parent == vault / "briefs"
+    assert Path(marker(workspace).read_text().strip()).parent == vault / "plans"
     assert path.read_text() == "vault contents"
 
 
@@ -240,38 +231,43 @@ def test_explicit_config_errors_do_not_fall_back(configured_vault, config_text):
     plan_mode.setup(api)
     api.commands["/plan"]("Original")
     before = marker(workspace).read_text()
-    with pytest.raises(ValueError, match="memory.toml") as error:
+    with pytest.raises(ValueError, match="obsidian.toml") as error:
         api.commands["/plan"]("--obsidian New topic")
     assert "/plan --local" in str(error.value)
     assert marker(workspace).read_text() == before
     assert not vault.exists()
 
 
-def test_explicit_bootstrap_keeps_format_and_reports_invalid_vault(configured_vault):
+def test_leftover_memory_config_is_not_silently_ignored(configured_vault, tmp_path):
+    # Falling back to the default vault would put an org's plans in a shared one.
+    workspace, vault, config = configured_vault
+    config.rename(tmp_path / "memory.toml")
+    api = FakeAPI(workspace)
+    plan_mode.setup(api)
+    with pytest.raises(ValueError, match="rename .*memory.toml to obsidian.toml"):
+        api.commands["/plan"]("--obsidian Topic")
+    assert not vault.exists()
+
+
+def test_explicit_reports_invalid_vault(configured_vault):
     workspace, vault, _ = configured_vault
-    vault.mkdir()
-    format_note = vault / "Brief format.md"
-    format_note.write_text("Custom format")
     api = FakeAPI(workspace)
     plan_mode.setup(api)
     api.commands["/plan"]("--obsidian Topic")
-    assert format_note.read_text() == "Custom format"
-    assert list((vault / "briefs").iterdir()) == []  # The write probe was removed.
+    assert list((vault / "plans").iterdir()) == []  # The write probe was removed.
     before = marker(workspace).read_text()
-    (vault / "briefs").rmdir()
-    (vault / "briefs").write_text("not a directory")
+    (vault / "plans").rmdir()
+    (vault / "plans").write_text("not a directory")
     with pytest.raises(ValueError, match="vault writable"):
         api.commands["/plan"]("--obsidian Another")
     assert marker(workspace).read_text() == before
 
 
 @pytest.mark.parametrize("arguments", ["--obsidian", "--obsidian New topic"])
-def test_explicit_unwritable_briefs_preserves_active_plan(configured_vault, monkeypatch, arguments):
+def test_explicit_unwritable_vault_preserves_active_plan(configured_vault, monkeypatch, arguments):
     workspace, vault, config = configured_vault
-    briefs = vault / "briefs"
-    briefs.mkdir(parents=True)
-    format_note = vault / "Brief format.md"
-    format_note.write_text("Custom format")
+    folder = vault / "plans"
+    folder.mkdir(parents=True)
     api = FakeAPI(workspace)
     plan_mode.setup(api)
     api.commands["/plan"]("Original")
@@ -279,44 +275,21 @@ def test_explicit_unwritable_briefs_preserves_active_plan(configured_vault, monk
     guidance = remind(api)
 
     def deny_probe(*, dir, prefix):
-        assert dir == briefs
+        assert dir == folder
         raise PermissionError(f"Permission denied: {dir}")
 
-    monkeypatch.setattr(bm.tempfile, "NamedTemporaryFile", deny_probe)
+    monkeypatch.setattr(op.tempfile, "NamedTemporaryFile", deny_probe)
     with pytest.raises(ValueError, match="vault writable") as error:
         api.commands["/plan"](arguments)
-    assert str(briefs) in str(error.value)
+    assert str(folder) in str(error.value)
     assert str(config) in str(error.value)
     assert "/plan --local" in str(error.value)
     assert marker(workspace).read_text() == before
     assert remind(api) == guidance
-    assert format_note.read_text() == "Custom format"
-    assert list(briefs.iterdir()) == []
+    assert list(folder.iterdir()) == []
 
 
-@pytest.mark.parametrize("invalid_format", ["directory", "broken_symlink"])
-def test_explicit_invalid_format_does_not_create_briefs(configured_vault, invalid_format):
-    workspace, vault, _ = configured_vault
-    vault.mkdir()
-    format_note = vault / "Brief format.md"
-    if invalid_format == "directory":
-        format_note.mkdir()
-    else:
-        format_note.symlink_to(vault / "missing.md")
-    api = FakeAPI(workspace)
-    plan_mode.setup(api)
-    api.commands["/plan"]("Original")
-    before = marker(workspace).read_text()
-    with pytest.raises(ValueError, match="must be a file") as error:
-        api.commands["/plan"]("--obsidian New topic")
-    assert str(format_note) in str(error.value)
-    assert "/plan --local" in str(error.value)
-    assert marker(workspace).read_text() == before
-    assert not (vault / "briefs").exists()
-    assert list(vault.iterdir()) == [format_note]
-
-
-def test_reload_absolute_marker_keeps_guidance_without_config(configured_vault):
+def test_reload_absolute_marker_resumes_without_config(configured_vault):
     workspace, vault, config = configured_vault
     api = FakeAPI(workspace)
     plan_mode.setup(api)
@@ -326,7 +299,7 @@ def test_reload_absolute_marker_keeps_guidance_without_config(configured_vault):
     plan_mode.setup(reloaded)
     assert reloaded.commands["/plan"]("") is None
     [note] = remind(reloaded)
-    assert str(vault / "Brief format.md") in note
+    assert str(vault / "plans" / "Plan — app — Topic.md") in note
 
 
 def observe(api, path, *, agent="pcode", capabilities=None):
@@ -342,7 +315,7 @@ def observe(api, path, *, agent="pcode", capabilities=None):
     )
 
 
-def test_memory_off_external_feedback_is_active_only_and_deduplicated(configured_vault):
+def test_external_feedback_is_active_only_and_deduplicated(configured_vault):
     workspace, vault, _ = configured_vault
     api = FakeAPI(workspace)
     plan_mode.setup(api)
@@ -350,7 +323,7 @@ def test_memory_off_external_feedback_is_active_only_and_deduplicated(configured
     path = Path(marker(workspace).read_text().strip())
     path.write_text("Before")
     observe(api, path)
-    other = vault / "briefs" / "Other.md"
+    other = vault / "plans" / "Other.md"
     other.write_text("Before")
     observe(api, other)
     path.write_text("After: user answer")
@@ -419,17 +392,6 @@ def test_feedback_resets_when_conversation_changes(configured_vault):
     assert "```diff" not in remind(api)[0]
 
 
-def test_memory_owns_feedback_when_enabled(configured_vault, monkeypatch):
-    workspace, _, _ = configured_vault
-    monkeypatch.setattr(bm, "enabled", lambda: True)
-    api = FakeAPI(workspace)
-    plan_mode.setup(api)
-    api.commands["/plan"]("--obsidian Topic")
-    assert not hasattr(api, "after_tool")
-    assert not hasattr(api, "before_run")
-    assert "fold it into the brief" in api.tools["exit_plan_mode"]()
-
-
 def test_vault_plans_name_their_session_for_the_obsidian_bridge(configured_vault):
     workspace, _, _ = configured_vault
     api = FakeAPI(workspace)
@@ -482,34 +444,30 @@ def test_explicit_vault_resolves_worktrees_to_main_checkout(
     workspace, vault, _ = configured_vault
     worktree = tmp_path / "outside-org" / "branch"
     worktree.mkdir(parents=True)
-    monkeypatch.setattr(bm, "project_checkout", lambda _: workspace)
+    monkeypatch.setattr(op, "project_checkout", lambda _: workspace)
     api = FakeAPI(worktree)
     plan_mode.setup(api)
     api.commands["/plan"]("--obsidian Topic")
-    assert Path(marker(worktree).read_text().strip()) == vault / "briefs" / "Plan — app — Topic.md"
+    assert Path(marker(worktree).read_text().strip()) == vault / "plans" / "Plan — app — Topic.md"
 
 
 def test_explicit_vault_outside_every_org_uses_the_default_vault(
     configured_vault, tmp_path, monkeypatch
 ):
     _, vault, _ = configured_vault
-    monkeypatch.setattr(bm, "DEFAULT_VAULT_ROOT", str(tmp_path / "vaults"))
+    monkeypatch.setattr(op, "DEFAULT_VAULT_ROOT", str(tmp_path / "vaults"))
     api = FakeAPI(tmp_path / "outside")
     plan_mode.setup(api)
     api.commands["/plan"]("--obsidian Topic")
     default = (tmp_path / "vaults" / "default").resolve()
     assert Path(marker(api.workspace).read_text().strip()) == (
-        default / "briefs" / "Plan — outside — Topic.md"
+        default / "plans" / "Plan — outside — Topic.md"
     )
     assert not vault.exists()
 
 
-def test_memory_on_outside_every_org_still_reports_plan_edits(
-    configured_vault, tmp_path, monkeypatch
-):
-    # basic_memory registers nothing where no org covers the workspace, so plan
-    # mode tracks the default-vault plan itself even with memory on.
-    monkeypatch.setattr(bm, "enabled", lambda: True)
+def test_default_vault_plans_report_edits(configured_vault, tmp_path, monkeypatch):
+    monkeypatch.setattr(op, "DEFAULT_VAULT_ROOT", str(tmp_path / "vaults"))
     api = FakeAPI(tmp_path / "outside")
     plan_mode.setup(api)
     api.commands["/plan"]("--obsidian Topic")
@@ -518,16 +476,3 @@ def test_memory_on_outside_every_org_still_reports_plan_edits(
     observe(api, path)
     path.write_text("After: user answer")
     assert "+After: user answer" in remind(api)[0]
-
-
-@pytest.mark.parametrize("memory_on", [False, True])
-def test_approval_text_does_not_depend_on_memory(configured_vault, monkeypatch, memory_on):
-    workspace, _, _ = configured_vault
-    monkeypatch.setattr(bm, "enabled", lambda: memory_on)
-    api = FakeAPI(workspace)
-    plan_mode.setup(api)
-    api.commands["/plan"]("--obsidian Topic")
-    [note] = remind(api)
-    assert "Project memory is off" not in note
-    result = api.tools["exit_plan_mode"]()
-    assert "fold it into the brief" in result and "do not create a brief" in result

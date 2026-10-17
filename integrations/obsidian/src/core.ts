@@ -56,9 +56,8 @@ export function askPrompt(notePath: string, question: string, selection = ""): s
 export function reviewPrompt(notePath: string): string {
 	return (
 		`I've edited \`${notePath}\` in Obsidian. Re-read it and act on my answers and ` +
-		"`> [!comment]` callouts: fold each one in or reply to it, remove the comments you've " +
-		"handled, and log what changed, as the note's format describes. Then tell me briefly " +
-		"what you changed and what's still open."
+		"`> [!comment]` callouts: fold each one in or reply to it, and remove the comments " +
+		"you've handled. Then tell me briefly what you changed and what's still open."
 	);
 }
 
