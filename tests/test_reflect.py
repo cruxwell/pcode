@@ -3,9 +3,12 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from pcode.ext import BUNDLED_DIR, Extension, ExtensionUI, load_extension
 from pcode.extensions import reflect
 from pcode.preferences import save_preferences
+from pcode.repo_context import create_repo_context
 
 
 def load(workspace, *, is_worker=False):
@@ -19,14 +22,42 @@ def load(workspace, *, is_worker=False):
     )
 
 
+def git(*args, cwd):
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
 def repo(path: Path) -> Path:
-    path.mkdir(parents=True)
-    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    path.mkdir(parents=True, exist_ok=True)
+    git("init", "-q", cwd=path)
     return path.resolve()
 
 
-def test_ships_on_and_sends_the_prompt_as_a_turn(tmp_path):
-    workspace = repo(Path.home() / "code" / "app")
+def write(path: Path, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return path.resolve()
+
+
+@pytest.fixture
+def home():
+    path = Path.home()
+    path.mkdir(parents=True, exist_ok=True)
+    return path.resolve()
+
+
+def loaded(workspace: Path) -> list[Path]:
+    """What pcode itself would load for `workspace`."""
+    context = create_repo_context(workspace).preload()
+    return [Path(file.path).resolve() for file in context._context_files or []]
+
+
+def line(text: str, label: str) -> str:
+    [match] = [row for row in text.splitlines() if row.startswith(f"- {label}")]
+    return match
+
+
+def test_ships_on_and_sends_the_prompt_as_a_turn(tmp_path, home):
+    workspace = repo(home / "code" / "app")
     extension = load(workspace)
     assert extension.loaded, extension.error
     assert extension.capabilities == []  # No always-on prompt cost.
@@ -34,51 +65,103 @@ def test_ships_on_and_sends_the_prompt_as_a_turn(tmp_path):
     assert command.name == "/reflect"
     prompt = command.handler("the flaky test")
     assert "focus on: the flaky test" in prompt
-    assert str(reflect.log_path()) in prompt
     assert reflect.log_path().is_relative_to(tmp_path / "state")
+    assert f"`{reflect.log_path()}`" in prompt
     assert f"## <YYYY-MM-DD> {workspace}" in prompt
     assert "{" not in prompt  # Every placeholder filled.
+    assert "focus on" not in command.handler("  ")
 
 
-def test_workers_get_no_command(tmp_path):
-    assert load(repo(Path.home() / "app"), is_worker=True).commands == []
+def test_workers_get_no_command(home):
+    assert load(repo(home / "app"), is_worker=True).commands == []
 
 
-def test_targets_name_each_layer_and_what_to_create():
-    home = Path.home().resolve()
-    home.mkdir(parents=True, exist_ok=True)
-    (home / "AGENTS.md").write_text("user")
-    group = home / "work"
-    group.mkdir()
-    (group / "AGENTS.md").write_text("group")
-    project = repo(group / "app")
-    (project / "CLAUDE.md").write_text("project")  # Read before AGENTS.md.
-    (project / "AGENTS.md").write_text("other")
+def test_every_layer_pcode_loads_is_offered(home):
+    write(home / "AGENTS.md", "user")
+    group = write(home / "work" / "AGENTS.md", "group")
+    project = repo(home / "work" / "app")
+    both = [write(project / "CLAUDE.md", "claude"), write(project / "AGENTS.md", "agents")]
 
     text = reflect.targets(project / ".")
-    assert f"User instructions (every project): `{home / 'AGENTS.md'}`" in text
-    assert f"`{project / 'CLAUDE.md'}`" in text
-    assert f"`{group / 'AGENTS.md'}`" in text
-    assert f"User skills: `{home / '.agents' / 'skills'}`" in text
-    assert f"Project skills: `{project / '.agents' / 'skills'}`" in text
+    assert line(text, "User instructions") == (
+        f"- User instructions (every project): `{home / 'AGENTS.md'}`"
+    )
+    assert f"`{group}`" in line(text, "Instruction files above")
+    assert line(text, "Project instructions") == (
+        f"- Project instructions ({project}): `{both[0]}`, `{both[1]}`"
+    )
+    assert line(text, "User skills") == f"- User skills: `{home / '.agents' / 'skills'}`"
+    assert line(text, "Project skills") == f"- Project skills: `{project / '.agents' / 'skills'}`"
+    assert set(loaded(project)) == {home / "AGENTS.md", group, *both}
 
     fresh = repo(home / "fresh")
-    assert f"`{fresh / 'AGENTS.md'}` (does not exist yet; create it)" in reflect.targets(fresh)
+    assert "(does not exist yet; create it)" in line(reflect.targets(fresh), "Project instructions")
 
 
-def test_a_worktree_copy_of_the_project_file_is_not_a_group_layer():
-    home = Path.home().resolve()
+def test_a_subdirectory_workspace_is_the_project(home):
+    root = repo(home / "mono")
+    top = write(root / "AGENTS.md", "root")
+    package = write(root / "pkg" / "a" / "AGENTS.md", "package").parent
+
+    text = reflect.targets(package)
+    assert f"Project instructions ({package}): `{package / 'AGENTS.md'}`" in text
+    assert f"`{top}`" in line(text, "Instruction files above")
+    assert f"`{package / '.agents' / 'skills'}`" in line(text, "Project skills")
+    assert f"`{package / '.pcode' / 'extensions'}`" in text
+
+    save_preferences(repo_context_walk_up="off")
+    text = reflect.targets(package)
+    assert loaded(package) == [package / "AGENTS.md"]
+    assert f"`{top}`" not in text
+    assert "none, because `repo_context_walk_up` is off" in line(text, "User instructions")
+
+
+def test_a_worktree_copy_of_the_project_file_is_not_a_layer_above(home):
     main = repo(home / "app")
-    (main / "AGENTS.md").write_text("same")
-    worktree = repo(main / ".worktrees" / "branch")
-    (worktree / "AGENTS.md").write_text("same")
+    write(main / "AGENTS.md", "main")
+    git("add", ".", cwd=main)
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init", cwd=main)
+    git("worktree", "add", "-q", str(main / ".worktrees" / "b"), "-b", "b", cwd=main)
+    worktree = (main / ".worktrees" / "b").resolve()
+    write(worktree / "AGENTS.md", "edited on the branch")
 
     text = reflect.targets(worktree)
+    assert main / "AGENTS.md" in loaded(worktree)  # pcode does load it,
+    assert "Instruction files above" not in text  # but it is the project's own file.
     assert f"Project instructions ({worktree}): `{worktree / 'AGENTS.md'}`" in text
-    assert "between the two" not in text
+    assert f"## <YYYY-MM-DD> {main}\n" in reflect.build_prompt(worktree)
 
 
-def test_no_user_instructions_without_the_walk_up():
-    save_preferences(repo_context_walk_up="off")
-    text = reflect.targets(repo(Path.home() / "app"))
-    assert "User instructions (every project): none" in text
+def test_home_as_the_workspace_or_a_git_repo(home):
+    git("init", "-q", cwd=home)
+    write(home / "AGENTS.md", "user")
+    plain = (home / "notes").resolve()
+    plain.mkdir()
+    text = reflect.targets(plain)
+    assert line(text, "User instructions").endswith(f"`{home / 'AGENTS.md'}`")
+    assert f"Project instructions ({plain}): `{plain / 'AGENTS.md'}` (does not" in text
+
+    text = reflect.targets(home)
+    assert "the workspace is your home directory" in line(text, "User instructions")
+    assert f"Project instructions ({home}): `{home / 'AGENTS.md'}`" in text
+
+
+def test_outside_home_offers_the_files_pcode_loads_above(tmp_path, home):
+    outside = tmp_path / "srv"
+    above = write(outside / "AGENTS.md", "org")
+    workspace = repo(outside / "app")
+
+    text = reflect.targets(workspace)
+    assert above in loaded(workspace)
+    assert f"`{above}`" in line(text, "Instruction files above")
+    assert "the workspace is outside your home" in line(text, "User instructions")
+
+
+def test_skill_dirs_split_by_where_they_resolve(tmp_path, home):
+    workspace = repo(home / "app")
+    shared = tmp_path / "shared-skills"
+    save_preferences(skill_dirs=f" ~/s2 :tools/skills:{shared}")
+
+    text = reflect.targets(workspace)
+    assert line(text, "User skills") == f"- User skills: `{home / 's2'}`, `{shared}`"
+    assert f"`{workspace / 'tools' / 'skills'}`" in line(text, "Project skills")

@@ -79,42 +79,44 @@ repeat it:
 ```
 
 The model reviews the conversation for moments where an attempt failed and a
-later one worked, or where the same mistake repeated, and proposes the
-cheapest change that would have prevented each one. It shows the diffs and
-waits. Nothing changes until you approve, and "nothing worth changing" is a
-normal answer.
+later one worked, or where the same mistake repeated. From those it picks the
+one lesson the evidence best supports and proposes the cheapest change that
+carries it, as exact diffs. Nothing changes until you approve, and "nothing
+worth changing" is a normal answer.
 
 **Where changes go.** Habits that would help in any project go to your user
 scope; anything about this codebase goes to the project. The prompt lists the
-exact files for the machine it runs on, from the same places pcode reads:
+exact files for this machine, worked out the same way pcode finds them for
+the workspace:
 
 | Scope | Instructions | Skills | Extensions |
 | --- | --- | --- | --- |
-| User | `~/AGENTS.md` (or an existing `~/CLAUDE.md`) | your `skill_dirs` under `~` (default `~/.agents/skills`) | `~/.config/pcode/extensions` |
-| Project | `AGENTS.md` (or `CLAUDE.md`) at the repository root | `.agents/skills` | `.pcode/extensions` |
+| User | `CLAUDE.md` / `AGENTS.md` in your home directory | `skill_dirs` entries outside the workspace (default `~/.agents/skills`) | `extensions/` in pcode's config directory |
+| Project | `CLAUDE.md` / `AGENTS.md` in the workspace | `.agents/skills` and relative `skill_dirs` entries | `.pcode/extensions` |
 
-Instruction files in directories between your home and the repository (a
-folder holding all of one employer's repositories, say) are offered for
-lessons about that group. User instructions are only offered when pcode
-actually loads them: with `repo_context_walk_up` off, or a workspace outside
-your home, cross-project habits go to a user skill instead.
+Instruction files pcode loads from directories between the two (the root of a
+monorepo, or a folder holding all of one employer's repositories) are offered
+for lessons about everything under them. A worktree's copy of the main
+checkout's file is not: the worktree's own file is the project file. User
+instructions are only offered when pcode loads them, so with
+`repo_context_walk_up` off, or a workspace outside your home, cross-project
+habits go to a user skill instead.
 
 The model prefers a skill or a hook over another always-on instruction line,
-since every line is paid for on every turn, and offsets a new line by cutting
-or tightening another. It reads each target before editing it: a file that
-says it's generated from elsewhere (by a dotfiles manager, for instance) is
-edited at that source, and rules a file states about its own contents still
-apply.
+since every line is paid for on every turn. It reads each target before
+editing it: a file that says it's generated from elsewhere (by a dotfiles
+manager, for instance), or only points at another file, is edited at that
+source, and rules a file states about its own contents still apply.
 
 **Lesson log.** Each reflection with something to propose appends an entry to
 `$XDG_STATE_HOME/pcode/reflect/lessons.md` (`~/.local/state/...` by default),
-including proposals you declined. Later reflections read it, so a declined idea
+declined proposals included. Later reflections read it, so a declined idea
 isn't proposed again without new evidence, and a lesson that didn't stick gets
 a stronger form instead of a reworded line.
 
-The approach is adapted from
-[Harness²](https://arxiv.org/abs/2610.14224): it changes nothing that the
-session's evidence doesn't support.
+The approach is adapted from [Harness²](https://arxiv.org/abs/2610.14224),
+which found that harness changes grounded in what a run actually did, rather
+than in guesses, carry over to later tasks.
 
 ## Skills as slash commands
 

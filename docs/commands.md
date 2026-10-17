@@ -97,8 +97,8 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   `/plan status` shows its file; `/plan off` stops planning without deleting it.
   Approve in the conversation to start implementation. See [Plans](memory.md#plans)
   for where vault plans go and feedback from Obsidian.
-- `/reflect [focus]`: propose instruction, skill or extension changes from what went
-  wrong in this session, apply the ones you approve, and log the lesson. See
+- `/reflect [focus]`: propose an instruction, skill or extension change from what went
+  wrong in this session, apply it if you approve, and log the lesson. See
   [Learning from a session](workspace.md#learning-from-a-session-reflect).
 - `/resend`: retry from the last checkpoint without a new message; shows the previous
   prompt and spinner.
