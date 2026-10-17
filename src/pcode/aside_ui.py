@@ -91,8 +91,8 @@ def thread_tree(thread: list[Aside]) -> ConversationTree:
     return tree
 
 
-def exchange(aside: Aside, *, code_theme: str, first: bool = True) -> list:
-    """One question and whatever of its answer has arrived."""
+def question_blocks(aside: Aside, *, first: bool = True) -> list:
+    """A question as a thread shows it, and the blank row its answer starts after."""
     blocks: list = [TaskPrompt(literal(aside.question))]
     where = " ".join(
         part
@@ -106,15 +106,28 @@ def exchange(aside: Aside, *, code_theme: str, first: bool = True) -> list:
     if where and first:
         blocks.append(Text(f"  {where}", style="dim"))
     blocks.append(Text(""))
+    return blocks
+
+
+def outcome_blocks(aside: Aside, answered: bool) -> list:
+    """What follows a settled answer: why it stopped, or that there is none."""
+    if aside.running:
+        return []  # Its progress is the viewer's status row, not text here.
+    if aside.error:
+        return [Text(f"  {aside.status}: {aside.error}", style="dim")]
+    if not answered:
+        return [Text(f"  ({aside.status}; no answer)", style="dim")]
+    return []
+
+
+def exchange(aside: Aside, *, code_theme: str, first: bool = True) -> list:
+    """One question and whatever of its answer has arrived."""
+    blocks = question_blocks(aside, first=first)
     if answer := literal(aside.answer):
         blocks.append(Markdown(answer, code_theme=code_theme))
-    if aside.running:
-        return blocks  # Its progress is the viewer's status row, not text here.
     if aside.error:
-        blocks.extend([Text(""), Text(f"  {aside.status}: {aside.error}", style="dim")])
-    elif not answer:
-        blocks.append(Text(f"  ({aside.status}; no answer)", style="dim"))
-    return blocks
+        blocks.append(Text(""))
+    return blocks + outcome_blocks(aside, bool(answer))
 
 
 def details(thread: list[Aside], *, code_theme: str) -> tuple[list, int]:

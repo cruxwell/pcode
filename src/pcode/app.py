@@ -256,7 +256,7 @@ class PreviewApp:
         # The viewer follows answers that settle while it is open, so auto-open
         # has nothing to do then.
         self.aside_view_open = False
-        # `/merge` and `/summarize` sent from the /btw panel, while they run.
+        # `/merge` and `/summarize` sent from a swapped-in /btw thread, while they run.
         self._btw_tasks: set[asyncio.Task] = set()
         # The popup generation an auto-open `/btw` was queued in. That viewer
         # opens on the answer, not the editor, since it can land mid-keystroke.
@@ -1086,7 +1086,7 @@ class PreviewApp:
         if thread := self.btw_thread():
             from pcode.aside_ui import thread_tree
 
-            # Replying in the /btw panel, /copy reads that thread.
+            # With a /btw thread on screen, /copy reads that thread.
             tree = thread_tree(thread)
         history = answers(tree) if tree is not None else []
         if not history:
@@ -1125,7 +1125,7 @@ class PreviewApp:
         if thread := self.btw_thread():
             from pcode.aside_ui import thread_links
 
-            # Replying in the /btw panel, /links reads that thread.
+            # With a /btw thread on screen, /links reads that thread.
             links = message_links = thread_links(thread)
         else:
             has_tree = tree is not None and tree.nodes
@@ -1747,9 +1747,9 @@ class PreviewApp:
 
     def auto_open_asides(self) -> bool:
         """Whether a settled side answer should open the viewer by itself."""
-        from pcode.btw_panel import current
+        from pcode.btw_view import current
 
-        if self.aside_view_open or current(self.activity):
+        if self.aside_view_open or current(self.activity) or self._swap_hides_draft():
             return False
         default = SETTINGS["btw_auto_open"].default
         return load_preferences().get("btw_auto_open", default) == "on"
@@ -1757,12 +1757,12 @@ class PreviewApp:
     async def read_asides(self):
         """The side-answer viewer; returns a thread to bring into the conversation, if any.
 
-        With `btw_view panel` it opens the panel above the editor and returns at
-        once: the panel keeps a thread itself (`keep_thread`), so no command
-        waits on it.
+        With `btw_view swap` it draws the thread in the conversation's place
+        and returns at once: the view keeps a thread itself (`keep_thread`), so
+        no command waits on it.
         """
         from pcode.aside_ui import AsideBrowser
-        from pcode.btw_panel import current, open_thread
+        from pcode.btw_view import current, open_thread
 
         output, session = self.output, self.prompt_session
         latest = self.asides.latest()
@@ -1770,15 +1770,15 @@ class PreviewApp:
             self._command_popup_generation is not None
             and self._command_popup_generation == self._auto_open_generation
         )
-        view = load_preferences().get("btw_view", SETTINGS["btw_view"].default)
-        if view == "panel":
+        if self.btw_swaps():
+            if latest is None:  # The command said so already.
+                return None
             # Queued when the answer arrived: since then the reader may have
-            # opened the panel and be mid-reply, which this must not take over.
-            if latest is not None and not (auto and current(self.activity)):
-                # Opened by itself, it shows the answer without taking the
-                # editor, which may be mid-sentence to the conversation.
-                open_thread(self.activity, latest.thread, reply=not auto)
-                self.redraw()
+            # opened a thread and be mid-reply, which this must not take over.
+            if auto and (current(self.activity) or self._swap_hides_draft()):
+                return None
+            open_thread(self.activity, latest.thread)
+            self.redraw()
             return None
         self.aside_view_open = True
         try:
@@ -1803,18 +1803,35 @@ class PreviewApp:
         finally:
             self.aside_view_open = False
 
-    # --- The /btw panel above the editor (`pcode.btw_panel`) ---
+    # --- The /btw thread in the conversation's place (`pcode.btw_view`) ---
+
+    def btw_swaps(self) -> bool:
+        """Whether /btw threads are drawn in the conversation's place (`btw_view swap`).
+
+        Only a terminal can be rebuilt; anywhere else the popup shows them.
+        """
+        view = load_preferences().get("btw_view", SETTINGS["btw_view"].default)
+        return view == "swap" and self.transcript.console.is_terminal
+
+    def _swap_hides_draft(self) -> bool:
+        """Whether swapping a thread in now would hide a draft to the conversation.
+
+        An answer that opens by itself must not: Enter would then send the
+        draft to the thread instead.
+        """
+        session = self.prompt_session
+        draft = session.default_buffer.text.strip() if session is not None else ""
+        return bool(draft) and self.btw_swaps()
 
     def btw_key(self) -> None:
-        """Ctrl+Q: open the newest thread to reply to; reply to the one shown; then the next.
+        """Ctrl+Q: show the newest thread, then the one before, wrapping around.
 
-        With `btw_view popup` and no panel open it is a bare /btw: the viewer.
+        With `btw_view popup` it is a bare /btw: the viewer.
         """
-        from pcode.btw_panel import current, next_thread, open_thread
+        from pcode.btw_view import current, next_thread, open_thread
 
         activity = self.activity
-        view = load_preferences().get("btw_view", SETTINGS["btw_view"].default)
-        if view != "panel" and not current(activity):
+        if not self.btw_swaps() and not current(activity):
             self._submit_typed("/btw")
             return
         if not current(activity):
@@ -1822,43 +1839,47 @@ class PreviewApp:
             if latest is None:
                 self.transcript.flash("No side questions yet. Ask one with /btw QUESTION.")
                 return
-            open_thread(activity, latest.thread, reply=True)
-        elif not activity.btw_reply:
-            activity.btw_reply = True
+            open_thread(activity, latest.thread)
         else:
-            open_thread(activity, next_thread(activity), reply=True)
+            open_thread(activity, next_thread(activity))
 
     def asides_seen(self, identities: list[str]) -> None:
-        """The /btw panel showed these answers; a session host hears so (`asides_read`)."""
+        """The thread view showed these answers; a session host hears so (`asides_read`)."""
         seen = getattr(self.controller, "asides_seen", None)
         if seen is not None:
             seen(identities)
 
     def btw_thread(self) -> list:
-        """The /btw panel's thread while it takes replies, which /copy and /links then read."""
-        from pcode.btw_panel import current, replying
+        """The /btw thread on screen, which the editor, /copy and /links then go to."""
+        from pcode.btw_view import current
 
-        return current(self.activity) if replying(self.activity) else []
+        return current(self.activity)
 
     def close_btw(self) -> None:
-        from pcode.btw_panel import close
+        from pcode.btw_view import close
 
         close(self.activity)
+        self.redraw()
 
     def btw_submit(self, text: str) -> bool | None:
-        """Send `text` to the /btw panel's thread while it takes replies.
+        """Send `text` to the /btw thread on screen.
 
         None leaves it to the conversation: commands other than the thread's
-        own, and anything typed while the panel is closed or only showing.
+        own, and anything typed while the conversation is shown. Those bring
+        the conversation back first, where their output goes; /copy and
+        /links read the thread, and /btw asks beside it, so they stay.
         True keeps the draft, refused with the reason shown.
         """
-        from pcode.btw_panel import close, current, replying
+        from pcode.btw_view import current
 
-        if not replying(self.activity) or shell_command(text) is not None:
+        if not current(self.activity):
+            return None
+        name, _, argument = text.partition(" ")
+        if shell_command(text) is not None:
             # A `!command` runs in the shell, as ever.
+            self.close_btw()
             return None
         thread = current(self.activity)[0].thread
-        name, _, argument = text.partition(" ")
         # `/etc/hosts …` is a path, so a question, as in the popup's editor.
         if not text.startswith("/") or "/" in name[1:]:
             try:
@@ -1868,7 +1889,7 @@ class PreviewApp:
                 return True
             return False
         if name == "/close":
-            close(self.activity)
+            self.close_btw()
             return False
         if name == "/stop":
             if not self.controller.cancel_asides() and not self.hosted:
@@ -1892,14 +1913,14 @@ class PreviewApp:
                     self.transcript.error(error_message(error, unexpected=f"{name} failed"))
                     return
                 if self.activity.btw_thread == thread:
-                    close(self.activity)
+                    self.close_btw()
 
             task = asyncio.create_task(keep())
             self._btw_tasks.add(task)
             task.add_done_callback(self._btw_tasks.discard)
             return False
-        # /copy and /links read the panel's thread themselves; the rest are the
-        # conversation's, as ever.
+        if name not in ("/copy", "/links", "/btw", "/side"):
+            self.close_btw()
         return None
 
     def agents(self, argument: str) -> None:
@@ -2435,6 +2456,8 @@ class PreviewApp:
             # Ctrl+Enter interrupts the conversation's turn: never a thread's reply.
             if text and mode_override is None and (kept := self.btw_submit(text)) is not None:
                 return kept
+            if text and mode_override is not None:
+                self.close_btw()
             ready = early is None and getattr(self.controller, "ready", None)
             if (early is not None or (ready and not ready.is_set())) and text in {"/quit", "/exit"}:
                 # Do not strand exit behind a command waiting for initialization.
@@ -2490,9 +2513,10 @@ class PreviewApp:
             session_title=lambda: self.controller.session_title(),
             vi_mode=load_preferences().get("editing_mode", "emacs") == "vi",
         )
-        # A thread on the panel is read: a host's other terminals stop calling it ready.
-        if (panel := getattr(session, "btw_panel", None)) is not None:
-            panel.on_read = self.asides_seen
+        # A thread on screen is read: a host's other terminals stop calling it ready.
+        thread_view = getattr(session, "btw_view", None)
+        if thread_view is not None:
+            thread_view.on_read = self.asides_seen
         output = TerminalOutput(
             self.transcript.console,
             session.app,
@@ -2589,6 +2613,10 @@ class PreviewApp:
                 self._appearance.close()
                 self._appearance = None
             await self.leave_controller(self.controller)
+            if thread_view is not None:
+                # Leave the conversation in scrollback, never a side thread.
+                self.close_btw()
+                thread_view.sync()
             await output.flush(drain=True)
             self.transcript.output = None
         self.print_resume_hint()

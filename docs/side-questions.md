@@ -23,43 +23,11 @@ The answers open by themselves as soon as one is ready, since the point of a
 side question is reading the answer while the turn is still running. A bare
 `/btw` opens them at any other time, and an answer still arriving streams in.
 
-## The panel
+## The popup
 
-With `pcode config set btw_view panel`, a thread opens in a panel directly above the
-editor, framed and titled in a colour of its own, ` btw ` and its first
-question, so it is plain at a glance that you are looking at a side thread and
-not the conversation. The conversation carries on above it: a running turn
-keeps streaming into scrollback, its live preview and status keep their
-places, and its spinner stays on the editor's border. The panel takes what the
-thread needs, up to half the screen; PgUp and PgDn scroll it.
-
-While the panel is open **for replies**, the main editor talks to the thread,
-with everything it can do (history, completion, vi mode, `@file`s):
-
-- **Enter** sends a [follow-up](#following-up) to the thread, never to the
-  conversation, so typing during a turn neither steers nor queues it. The
-  editor's border takes the panel's colour while this is so. A follow-up that
-  cannot be sent yet keeps your draft and says why.
-- **`/merge`, `/summarize [focus]`, `/copy`, `/links`, `/stop`, `/close`** act
-  on the thread ([commands](#commands)); every other command, and
-  `/btw QUESTION`, means what it always does. So do a `!command`, which runs in
-  the shell, and **Ctrl+Enter**, which interrupts the conversation's turn with
-  your message.
-- **Ctrl+Q** shows the next thread, older first, wrapping to the newest.
-- **Escape** closes the panel, keeping your draft; Enter goes to the
-  conversation again. In vi mode, Escape first leaves insert mode as usual, and
-  a second one closes it.
-
-A panel that opened by itself when an answer arrived only shows it: you may be
-halfway through a message to the conversation, so Enter still sends that.
-**Ctrl+Q** opens it for replies, and with the panel closed, opens the newest
-thread for replies. With a [shortcut prefix](commands.md#shortcut-prefix), it
-is the prefix and `q`.
-
-### The popup
-
-By default (`btw_view popup`) threads show in the full-screen viewer, which
-takes the terminal while it is open and has a follow-up editor of its own:
+By default (`btw_view popup`) threads show in a full-screen viewer, which
+takes the terminal while it is open and has a follow-up editor of its own.
+**Ctrl+Q** opens it, as a bare `/btw` does:
 
 - **↑ / ↓:** move through the questions, or scroll the answer when it has focus.
 - **Enter:** read the selected thread full width, with the question list
@@ -94,11 +62,54 @@ follow-up editor alike. By default, hold Ctrl while pressing the letter; a
 configured [shortcut prefix](commands.md#shortcut-prefix) changes these keys.
 Ctrl+/ browses the current popup's help.
 
-### Commands
+## Swapping a thread in
 
-The panel, while it takes replies, and the popup's follow-up editor take these
-as commands. In the popup a menu completes them as you type `/`, and the start
-of a single name (`/co`) is enough on its own:
+`pcode config set btw_view swap` shows a thread in the conversation's place
+instead. The screen and your terminal's scrollback are rebuilt from the
+thread, headed ` btw ` and its first question in a colour of its own, and
+rebuilt from the conversation again when you go back, the way a resize
+redraws it. While it is shown the thread is ordinary terminal output: scroll
+it with the mouse wheel or your terminal's own keys, and select and copy it
+without any frame coming along.
+
+A running turn carries on while you read. Its spinner stays on the editor's
+border, but what it writes waits until you go back, and lands then in order.
+Notices meant for the conversation flash above the editor instead, and so do
+its warnings and errors, which are in the conversation too when you go back.
+A `!command` or a command for the conversation, such as `/help`, takes you
+back first, so you see what it prints; Ctrl+Enter does too.
+
+The main editor talks to the thread, with everything it can do (history,
+completion, vi mode, `@file`s):
+
+- **Enter** sends a [follow-up](#following-up) to the thread, never to the
+  conversation, so typing during a turn neither steers nor queues it. The
+  editor's border takes the thread's colour while this is so. A follow-up that
+  cannot be sent yet keeps your draft and says why. The answer streams in
+  below, a block at a time, as the conversation's do.
+- **`/merge`, `/summarize [focus]`, `/copy`, `/links`, `/stop`, `/close`** act
+  on the thread ([commands](#commands)); every other command, and
+  `/btw QUESTION`, means what it always does. So do a `!command`, which runs in
+  the shell, and **Ctrl+Enter**, which interrupts the conversation's turn with
+  your message.
+- **Ctrl+Q** shows the newest thread, then each older one, wrapping around.
+  With a [shortcut prefix](commands.md#shortcut-prefix), it is the prefix and
+  `q`.
+- **Escape** goes back to the conversation, keeping your draft. In vi mode,
+  Escape first leaves insert mode as usual, and a second one goes back.
+
+An answer that opens by itself waits while you have a draft in the editor:
+swapping then would send your half-written message to the thread. A bare
+`/btw` or Ctrl+Q shows it when you are ready.
+
+The conversation is rebuilt from what pcode keeps of it, so a very long one
+comes back trimmed the way a resize trims it (`transcript_max_chars`).
+
+## Commands
+
+The swapped-in thread and the popup's follow-up editor take these as
+commands. In the popup a menu completes them as you type `/`, and the start of
+a single name (`/co`) is enough on its own:
 
 | Command | Does |
 | --- | --- |
@@ -107,7 +118,7 @@ of a single name (`/co`) is enough on its own:
 | `/summarize [focus]` | Summarize into the conversation, keeping what *focus* says, as Ctrl+S |
 | `/merge` | Merge into the conversation, as Ctrl+T |
 | `/stop` | Stop running side questions, as Ctrl+K |
-| `/close` | Close the panel, as Escape (panel only) |
+| `/close` | Go back to the conversation, as Escape (swapped-in thread only) |
 
 A follow-up that starts with a path of more than one part, such as
 `/etc/hosts`, is still sent as a question; one like `/tmp` reads as a command
@@ -131,8 +142,8 @@ never throws away the side question as well.
 
 ## Following up
 
-In [the panel](#the-panel), the main editor sends follow-ups while the panel
-takes replies. The popup has an editor under the answer for asking a
+With a [thread swapped in](#swapping-a-thread-in), the main editor sends
+follow-ups to it. The popup has an editor under the answer for asking a
 follow-up, so a side question can become a short back-and-forth without
 leaving it. Press
 **Ctrl+R** (or Tab to it), type, and press **Enter** to send; **Ctrl+J** (or
@@ -162,7 +173,8 @@ order, opening on the newest question. Each follow-up:
   went. A switched follow-up still sees the whole thread, but starts without its
   prompt cache.
 - **waits for the answer before it.** Sending while the newest answer is still
-  arriving is refused in the editor's title, and the draft stays. If a
+  arriving is refused, in the popup editor's title or a notice above the
+  main one, and the draft stays. If a
   follow-up fails, the next one continues from the last answer that arrived; a
   thread with no answer at all cannot be followed up, so ask again with `/btw`.
 

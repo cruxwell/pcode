@@ -3526,7 +3526,7 @@ class SessionController:
         return follows
 
     async def keep_thread(self, thread: str, action: str, instructions: str = "") -> None:
-        """Bring a side thread into the conversation from the /btw panel.
+        """Bring a side thread into the conversation from the /btw thread view.
 
         `action` is "merge" or "summary", as the viewer's `Bridge` says; a
         `ValueError` says why it cannot be yet.

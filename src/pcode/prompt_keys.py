@@ -36,8 +36,8 @@ class PromptCallbacks:
     on_interrupt_submit: Callable[[str], None] | None = None
     on_previous_session: Callable | None = None
     on_copy_response: Callable | None = None
-    # The /btw panel (`pcode.btw_panel`): open it, or reply, or show the next
-    # thread; and close it.
+    # The /btw thread view (`pcode.btw_view`): show a thread, or the next one;
+    # and go back to the conversation.
     on_btw: Callable | None = None
     on_btw_close: Callable | None = None
 
@@ -90,11 +90,9 @@ def _add_shortcuts(shortcuts: PrefixKeys, activity, transcript, callbacks: Promp
     on_btw = callbacks.on_btw
 
     def btw_label() -> str:
-        from pcode.btw_panel import current
+        from pcode.btw_view import current
 
-        if not current(activity):
-            return "Open side threads (/btw)"
-        return "Next side thread" if activity.btw_reply else "Reply to side thread"
+        return "Next side thread" if current(activity) else "Open side threads (/btw)"
 
     @shortcuts.add("q", btw_label, filter=on_btw is not None)
     def side_threads(event: KeyPressEvent) -> None:
@@ -315,12 +313,12 @@ def _editing_keys(
 
     on_btw_close = callbacks.on_btw_close
 
-    def panel_shown() -> bool:
-        from pcode.btw_panel import current
+    def thread_shown() -> bool:
+        from pcode.btw_view import current
 
         return on_btw_close is not None and bool(current(activity))
 
-    btw_open = Condition(panel_shown)
+    btw_open = Condition(thread_shown)
     not_completing = Condition(lambda: default_buffer().complete_state is None)
 
     @keys.add("escape", filter=btw_open & ~vi_mode & not_completing)
@@ -339,9 +337,9 @@ def _editing_keys(
             state.input_mode == InputMode.NAVIGATION
             and not buffer.selection_state
             and state.operator_func is None
-            and panel_shown()
+            and thread_shown()
         ):
-            # Already in normal mode: a second Escape closes the /btw panel.
+            # Already in normal mode: a second Escape leaves the /btw thread.
             on_btw_close()
             event.app.invalidate()
             return

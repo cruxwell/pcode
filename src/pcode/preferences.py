@@ -727,10 +727,10 @@ SETTINGS = {
     # Read each time the viewer opens, so `/config set` applies without a restart.
     "btw_view": Setting(
         "popup",
-        ("panel", "popup"),
+        ("popup", "swap"),
         description=(
-            "Show /btw threads in a panel above the editor, which replies to them, "
-            "or in a full-screen popup"
+            "Show /btw threads in a full-screen popup, or swap them into the "
+            "conversation's place on screen, where the editor replies to them"
         ),
     ),
     # Read when a job finishes, so `/config set` applies without a restart.

@@ -144,7 +144,7 @@ targets you can reuse on another key.
 | `g` | `@commands` | Show or hide command output in scrollback |
 | `^` | `@previous-session` | Return to the session previously shown in this terminal |
 | `y` | `@copy` | Copy the draft, or the last response when the draft is empty |
-| `q` | `@side-threads` | Open the [`/btw` viewer](side-questions.md#the-popup) (with `btw_view panel`: open the [panel](side-questions.md#the-panel), reply in it, or show its next thread) |
+| `q` | `@side-threads` | Open the [`/btw` viewer](side-questions.md#the-popup) (with `btw_view swap`: [swap in](side-questions.md#swapping-a-thread-in) the newest thread, then each older one) |
 
 Two more defaults run a slash command, much as if you had bound them yourself;
 `/unbind KEY` disables them and `/bind reset KEY` restores them:

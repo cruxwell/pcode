@@ -197,6 +197,10 @@ class Palette:
                 "pcode.thinking": f"dim {self.muted}",
                 "pcode.error": "bold red",
                 "pcode.warning": "bold yellow",
+                # A /btw thread's heading (`pcode.btw_view`), in the hue the
+                # editor's box takes while it replies to the thread.
+                "pcode.btw": f"bold {self.agents[1]}",
+                "pcode.btw.badge": f"bold reverse {self.agents[1]}",
                 "markdown.code": f"{self.foreground} on {self.surface}",
                 "markdown.code_block": self.foreground,
                 "markdown.block_quote": f"italic {self.muted}",
@@ -324,15 +328,10 @@ class Palette:
                 "block.rule": self.muted,
                 "block.heading": self.accent,
                 "frame.border": self.muted,
-                # The /btw panel and the editor while it replies to it
-                # (`pcode.btw_panel`): a hue of their own, the second
+                # The editor while it replies to a /btw thread
+                # (`pcode.btw_view`): a hue of its own, the second
                 # sub-agent's, so it is plain at a glance where Enter goes.
-                "btw frame.border": f"nodim {self.agents[1]}",
                 "btw.reply frame.border": f"nodim {self.agents[1]}",
-                "btw.badge": f"nodim bold reverse {self.agents[1]}",
-                "btw.title": f"nodim bold {self.agents[1]}",
-                "btw.key": f"nodim {self.agents[1]}",
-                "btw.meta": self.muted,
                 # The editor box's session name is the session's own metadata,
                 # in the task heading's hue (unbolded) so it never reads as the
                 # reply above it, nor as the accent's busy status row. The last
@@ -483,6 +482,8 @@ TERMINAL_THEME = Theme(
         "pcode.thinking": "dim default",
         "pcode.error": "bold red",
         "pcode.warning": "bold yellow",
+        "pcode.btw": "bold magenta",
+        "pcode.btw.badge": "bold reverse magenta",
         "markdown.code": "bold cyan",
         "markdown.code_block": "default",
         "markdown.block_quote": "italic default",
@@ -918,11 +919,10 @@ class Activity:
     # The session's side-question records (`Asides.items`, shared, not copied):
     # the running ones get a spinner row below the prompt's.
     asides: list = field(default_factory=list)
-    # The /btw panel above the editor (`pcode.btw_panel`): the thread it shows,
-    # None while closed, and whether the editor sends to it rather than to the
-    # conversation. This terminal's own, never synced from the host.
+    # The /btw thread drawn in the conversation's place (`pcode.btw_view`),
+    # which the editor then sends to; None while the conversation is shown.
+    # This terminal's own, never synced from the host.
     btw_thread: str | None = None
-    btw_reply: bool = False
     # What this terminal is waiting on (the session host starting, a command
     # it has not finished): its own state, never synced from the host.
     waits: list[Wait] = field(default_factory=list)
@@ -1856,6 +1856,37 @@ class RowCounter:
         return getattr(self.file, name)
 
 
+def settled_lines(source: str) -> int:
+    """How many of ``source``'s leading lines are Markdown blocks more text cannot change.
+
+    What streams in after them can only start a new block, so they can be
+    written to scrollback now and the rest held until it settles too.
+    """
+    lines = source.splitlines(keepends=True)
+    blocks = [token for token in Markdown(source).parsed if token.level == 0 and token.map]
+    if not blocks:
+        return 0
+    last = blocks[-1]
+    # Retain the last container: blank lines can belong to lists, quotes,
+    # indented code, or fenced code. A following top-level block settles it.
+    end = last.map[0]
+    if lines[-1].strip() == "" and last.type in {
+        "paragraph_open",
+        "heading_open",
+        "table_open",
+        "hr",
+    }:
+        end = len(lines)
+    elif last.type == "fence":
+        closing = lines[last.map[1] - 1].rstrip("\r\n")
+        if last.map[1] - last.map[0] > 1 and re.fullmatch(
+            r" {0,3}" + re.escape(last.markup[0]) + "{" + str(len(last.markup)) + r",} *",
+            closing,
+        ):
+            end = last.map[1]
+    return end
+
+
 class TerminalOutput:
     """Commit completed Markdown blocks once; buffer unfinished text.
 
@@ -1890,6 +1921,16 @@ class TerminalOutput:
         self._thinking_streamed = False
         self._regenerate = None
         self.resize_replay = None
+        # Another view drawn in the conversation's place, e.g. a /btw thread
+        # (`pcode.btw_view`): the replay that draws it. While set, the
+        # conversation's writes wait in ``pending`` (its log keeps them, so the
+        # replay that closes the view draws them), every rebuild redraws the
+        # view, and ``view_print`` writes below it.
+        self.view = None
+        self.view_pending: list[tuple[tuple, str, bool]] = []
+        # The conversation's notes that were queued as rows when a view took the
+        # screen: notes are not in its log, so they come back with it.
+        self._held_notes: list[tuple[tuple, str, bool]] = []
         # Rendered rows not yet written. Pacing rolls a settled block out over
         # successive frames instead of landing it in one; off writes them all.
         self.rows: list[QueuedRow] = []
@@ -1918,6 +1959,30 @@ class TerminalOutput:
         # the CPR await are included exactly once, including queued writes.
         self._regenerate = replay
         self.changed.set()
+
+    def open_view(self, replay) -> None:
+        """Draw ``replay``'s rows in the conversation's place, or redraw the view shown."""
+        self.view = replay
+        self.view_pending = []
+        self.regenerate(replay)
+
+    def view_print(self, entries: list[tuple[tuple, str, bool]]) -> None:
+        """Write below the open view; nothing while the conversation is shown."""
+        if self.view is not None and entries:
+            self.view_pending.extend(entries)
+            self.changed.set()
+
+    def close_view(self, replay) -> None:
+        """Give the screen back to the conversation, rebuilt by ``replay``."""
+        if self.view is None:
+            return
+        self.view = None
+        self.view_pending = []
+        self.regenerate(replay)
+
+    def _queue(self) -> list:
+        """The writes waiting for the screen: the open view's, else the conversation's."""
+        return self.view_pending if self.view is not None else self.pending
 
     def print(self, *objects, end="\n", transient=False) -> None:
         entry = (objects, end, False)
@@ -1986,28 +2051,7 @@ class TerminalOutput:
     def _commit_blocks(self, *, thinking: bool = False) -> None:
         source = self._thinking_tail if thinking else self.tail
         lines = source.splitlines(keepends=True)
-        tokens = Markdown(source).parsed
-        blocks = [token for token in tokens if token.level == 0 and token.map]
-        if not blocks:
-            return
-        last = blocks[-1]
-        # Retain the last container: blank lines can belong to lists, quotes,
-        # indented code, or fenced code. A following top-level block settles it.
-        end = last.map[0]
-        if lines[-1].strip() == "" and last.type in {
-            "paragraph_open",
-            "heading_open",
-            "table_open",
-            "hr",
-        }:
-            end = len(lines)
-        elif last.type == "fence":
-            closing = lines[last.map[1] - 1].rstrip("\r\n")
-            if last.map[1] - last.map[0] > 1 and re.fullmatch(
-                r" {0,3}" + re.escape(last.markup[0]) + "{" + str(len(last.markup)) + r",} *",
-                closing,
-            ):
-                end = last.map[1]
+        end = settled_lines(source)
         if end:
             if thinking:
                 self._commit_thinking("".join(lines[:end]))
@@ -2035,8 +2079,12 @@ class TerminalOutput:
         so its rows know whether they came from prose. A replay is written whole
         at once, so it skips both the prose check and transient tracking.
         """
-        transient = [] if replay else self.transient_pending
-        self.transient_pending = []
+        if self.view is not None:
+            # The view's writes are never notes; the conversation's stay held.
+            transient = []
+        else:
+            transient = [] if replay else self.transient_pending
+            self.transient_pending = []
         prefetch_edits((obj for objects, _, _ in pending for obj in objects), width)
         pieces = []
         previous_file = self.console._file
@@ -2068,7 +2116,10 @@ class TerminalOutput:
             self.rows.append(QueuedRow(text, typed))
 
     def _take_pending(self) -> list:
-        pending, self.pending = self.pending, []
+        if self.view is not None:
+            pending, self.view_pending = self.view_pending, []
+        else:
+            pending, self.pending = self.pending, []
         return pending
 
     def _written(self, count: int) -> None:
@@ -2137,7 +2188,7 @@ class TerminalOutput:
             if paced and self._regenerate is None:
                 # Decide what this frame reveals before paying for a handoff: a
                 # frame that only types further repaints the live row instead.
-                if self.pending:
+                if self._queue():
                     width = max(1, self.app.output.get_size().columns)
                     self._enqueue(self._take_pending(), width)
                 if self.rows:
@@ -2145,7 +2196,7 @@ class TerminalOutput:
                 if not due and typed != self._typed:
                     self._typed = typed
                     self.app.invalidate()
-            if self._regenerate is not None or due or not paced and (self.pending or self.rows):
+            if self._regenerate is not None or due or not paced and (self._queue() or self.rows):
                 # Renderer.reset() shows the cursor at the transcript position
                 # both when erasing and before repainting. Suppress those shows
                 # until the handoff has restored the editor and its cursor.
@@ -2158,9 +2209,23 @@ class TerminalOutput:
                             # Transient writes are not in the replay; keep those
                             # still queued as rows as well as those not rendered.
                             notes = [entry for entry, _ in self._queued_transient]
-                            pending = self._regenerate() + notes + self.transient_pending
+                            if self.view is not None:
+                                # Any rebuild while a view is open redraws the
+                                # view; the conversation's writes keep waiting,
+                                # but its queued rows go, so their notes wait too.
+                                self._held_notes += notes
+                                pending = self.view()
+                                self.view_pending = []
+                            else:
+                                pending = (
+                                    self._regenerate()
+                                    + self._held_notes
+                                    + notes
+                                    + self.transient_pending
+                                )
+                                self._held_notes = []
+                                self.pending.clear()
                             self._regenerate = None
-                            self.pending.clear()
                             # Replay covers the rows still queued; drop them.
                             self._written(len(self.rows))
                             self._queued_transient = []
@@ -2350,13 +2415,13 @@ class PromptLayout:
             max_height=20, scroll_offset=1, extra_filter=has_focus(session.default_buffer)
         )
         self.menu.content.dont_extend_height = Always()
-        from pcode.btw_panel import BtwPanel
+        from pcode.btw_view import ThreadView
 
-        # A /btw thread above the editor, while one is open (`pcode.btw_panel`).
+        # A /btw thread in the conversation's place, while one is open.
         self.btw = (
-            BtwPanel(activity, transcript, shortcuts.label)
+            ThreadView(activity, transcript, shortcuts.label)
             if shortcuts is not None
-            else BtwPanel(activity, transcript)
+            else ThreadView(activity, transcript)
         )
         # Whether the open menu made the layout taller than the measured rows.
         self.menu_overflowed = False
@@ -2381,13 +2446,7 @@ class PromptLayout:
         gap = self.top_gap()
         available = max(
             1,
-            size.rows
-            - 4
-            - gap
-            - self.activity_height()
-            - tasks
-            - len(self.queue_rows())
-            - self.btw.height(),
+            size.rows - 4 - gap - self.activity_height() - tasks - len(self.queue_rows()),
         )
         cap = self.activity.height_cap(size.rows)
         if cap is not None:
@@ -2440,7 +2499,8 @@ class PromptLayout:
         circular dependency between frame_height and command_rows.
         """
         activity, transcript = self.activity, self.transcript
-        if transcript is None:
+        if transcript is None or transcript.view_shown:
+            # A /btw thread has the screen: the conversation's previews wait for it.
             return None
         edits = transcript.live_edit_previews and activity.edit_previews
         if not edits:
@@ -2465,7 +2525,6 @@ class PromptLayout:
             + self.status_height()
             + len(self.queue_rows())
             + self.menu.preferred_height(size.columns, size.rows).preferred
-            + self.btw.height()
         )
         room = max(0, size.rows - fixed)
         # Parallel calls share the preview; show the most recently updated call.
@@ -3012,12 +3071,12 @@ class PromptLayout:
         status = Condition(lambda: self.activity.status_shown)
         attached = Condition(self.plan_attached)
         shaded = Condition(self.frame_shaded)
-        from pcode.btw_panel import replying
+        from pcode.btw_view import current
 
-        # Replying to a /btw thread, the box takes the panel's colour: Enter
-        # goes to the thread, not the conversation.
+        # Showing a /btw thread, the box takes the thread's colour: Enter goes
+        # to the thread, not the conversation.
         editor_frame.container.style = lambda: (
-            "class:frame class:shaded" + (" class:btw.reply" if replying(self.activity) else "")
+            "class:frame class:shaded" + (" class:btw.reply" if current(self.activity) else "")
         )
         editor_frame.container.children[0] = HSplit(
             [
@@ -3073,8 +3132,6 @@ class PromptLayout:
             self.menu,
             self.activity_panel(),
             self.queued(),
-            # Directly above the editor that replies to it.
-            self.btw.container(),
             # This prompt can be only three rows tall. A float would inherit
             # that height and clip the menu, so reserve space only while open.
             shortcut_hint(self.shortcuts),
@@ -3117,8 +3174,7 @@ class PromptLayout:
 
     def before_render(self, app) -> None:
         self.render_cache = {}
-        size = self.size()
-        self.btw.sync(size.rows, size.columns)
+        self.btw.sync()
         transcript, activity = self.transcript, self.activity
         if transcript is None or not (
             (transcript.live_edit_previews and activity.edit_previews)
@@ -3252,11 +3308,7 @@ def create_prompt(
             return bool(on_submit(text))
 
         session.default_buffer.accept_handler = accept
-    # Page keys scroll an open /btw panel; the editor keeps focus.
-    prompt_layout.btw.pane.bind_scrolling(
-        keys, paging=Condition(lambda: prompt_layout.btw.height() > 0)
-    )
-    session.btw_panel = prompt_layout.btw
+    session.btw_view = prompt_layout.btw
     session.layout = prompt_layout.layout()
     session.app.layout = session.layout
     if transcript is not None:
@@ -3352,6 +3404,11 @@ class Transcript:
     @property
     def output(self) -> TerminalOutput | None:
         return self._output
+
+    @property
+    def view_shown(self) -> bool:
+        """Whether another view, a /btw thread, has the screen (`TerminalOutput.view`)."""
+        return getattr(self._output, "view", None) is not None
 
     @output.setter
     def output(self, output: TerminalOutput | None) -> None:
@@ -3749,6 +3806,10 @@ class Transcript:
         notice = Note(text)
         if self._replay_sink is not None:
             self._replay_sink.append(((notice,), "\n", False))
+        elif self.view_shown and self.activity is not None:
+            # A /btw thread has the screen: a note written now would only show
+            # once the conversation is back, so say it where it is seen.
+            self.flash(text)
         elif self.output is not None:
             # Preserve new notices across an already queued redraw, but never
             # replay notices that have previously reached the terminal.
@@ -3757,8 +3818,17 @@ class Transcript:
             with self.console.use_theme(self.rich_theme):
                 self.console.print(notice)
 
+    def _flash_behind_view(self, text: str) -> None:
+        """Flash a warning or error a /btw thread on screen would otherwise hide.
+
+        It still goes to the conversation, which shows it on return.
+        """
+        if self.view_shown and self._replay_sink is None and self.activity is not None:
+            self.flash(text.strip().splitlines()[0] if text.strip() else text)
+
     @recorded
     def error(self, text: str, *, title: str = "Error") -> None:
+        self._flash_behind_view(f"{title}: {text}")
         self.print(
             TranscriptNotice(text, "error", title, self.error_scrollback_lines, self.code_theme)
         )
@@ -3865,6 +3935,7 @@ class Transcript:
         )
 
     def warning(self, text: str) -> None:
+        self._flash_behind_view(f"Warning: {text}")
         self.print(TranscriptNotice(text, "warning", "Warning"))
 
     @recorded

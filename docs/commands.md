@@ -140,8 +140,8 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   bare `/btw` or **Ctrl+Q** opens it at any time. There you can send a
   [follow-up](side-questions.md#following-up) to the thread, or
   [keep it](side-questions.md#keeping-a-thread) in the conversation
-  (`btw_view panel` shows it in a [panel above the editor](side-questions.md#the-panel)
-  instead, which replies from the main editor). `/btw $PROVIDER:MODEL [$PROVIDER:MODEL ...] QUESTION` asks other models
+  (`btw_view swap` [swaps it in](side-questions.md#swapping-a-thread-in) for the
+  conversation instead, and the main editor replies to it). `/btw $PROVIDER:MODEL [$PROVIDER:MODEL ...] QUESTION` asks other models
   instead, one side question each ([choosing the model](side-questions.md#choosing-the-model)).
   A `+EFFORT` suffix (`$openai:gpt-5+high`), or a bare `+EFFORT` word for the
   conversation's model, sets that question's reasoning effort from the `/effort` levels.
