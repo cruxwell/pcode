@@ -724,6 +724,15 @@ SETTINGS = {
         ("on", "off"),
         description="Open the side-answer viewer as soon as a /btw answer is ready",
     ),
+    # Read each time the viewer opens, so `/config set` applies without a restart.
+    "btw_view": Setting(
+        "panel",
+        ("panel", "popup"),
+        description=(
+            "Show /btw threads in a panel above the editor, which replies to them, "
+            "or in a full-screen popup"
+        ),
+    ),
     # Read when a job finishes, so `/config set` applies without a restart.
     "job_wake": Setting(
         "on",

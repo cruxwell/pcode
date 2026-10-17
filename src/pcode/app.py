@@ -256,6 +256,8 @@ class PreviewApp:
         # The viewer follows answers that settle while it is open, so auto-open
         # has nothing to do then.
         self.aside_view_open = False
+        # `/merge` and `/summarize` sent from the /btw panel, while they run.
+        self._btw_tasks: set[asyncio.Task] = set()
         # The popup generation an auto-open `/btw` was queued in. That viewer
         # opens on the answer, not the editor, since it can land mid-keystroke.
         # Matched by generation rather than order: a queued command can be
@@ -1081,6 +1083,11 @@ class PreviewApp:
 
         self.copy_requested = False
         tree = getattr(self.runtime, "tree", None)
+        if thread := self.btw_thread():
+            from pcode.aside_ui import thread_tree
+
+            # Replying in the /btw panel, /copy reads that thread.
+            tree = thread_tree(thread)
         history = answers(tree) if tree is not None else []
         if not history:
             self.transcript.note("No response to copy yet.")
@@ -1115,14 +1122,26 @@ class PreviewApp:
 
         self.links_requested = False
         tree = getattr(self.runtime, "tree", None)
-        links = conversation_links(tree) if tree is not None and tree.nodes else []
+        if thread := self.btw_thread():
+            from pcode.aside_ui import thread_links
+
+            # Replying in the /btw panel, /links reads that thread.
+            links = message_links = thread_links(thread)
+        else:
+            has_tree = tree is not None and tree.nodes
+            links = conversation_links(tree) if has_tree else []
+            message_links = conversation_links(tree, include_tools=False) if has_tree else []
         if not links:
-            self.transcript.note("No links in this conversation yet.")
+            self.transcript.note(
+                "No links in this side thread yet."
+                if thread
+                else "No links in this conversation yet."
+            )
             return
         async with self.popup(output, session) as modal_input:
             dialog = links_dialog(
                 links,
-                message_links=conversation_links(tree, include_tools=False),
+                message_links=message_links,
                 input=modal_input,
                 output=session.app.output,
                 style=session.app.style,
@@ -1728,14 +1747,22 @@ class PreviewApp:
 
     def auto_open_asides(self) -> bool:
         """Whether a settled side answer should open the viewer by itself."""
-        if self.aside_view_open:
+        from pcode.btw_panel import current
+
+        if self.aside_view_open or current(self.activity):
             return False
         default = SETTINGS["btw_auto_open"].default
         return load_preferences().get("btw_auto_open", default) == "on"
 
     async def read_asides(self):
-        """The side-answer viewer; returns a thread to bring into the conversation, if any."""
+        """The side-answer viewer; returns a thread to bring into the conversation, if any.
+
+        With `btw_view panel` it opens the panel above the editor and returns at
+        once: the panel keeps a thread itself (`keep_thread`), so no command
+        waits on it.
+        """
         from pcode.aside_ui import AsideBrowser
+        from pcode.btw_panel import current, open_thread
 
         output, session = self.output, self.prompt_session
         latest = self.asides.latest()
@@ -1743,6 +1770,16 @@ class PreviewApp:
             self._command_popup_generation is not None
             and self._command_popup_generation == self._auto_open_generation
         )
+        view = load_preferences().get("btw_view", SETTINGS["btw_view"].default)
+        if view == "panel":
+            # Queued when the answer arrived: since then the reader may have
+            # opened the panel and be mid-reply, which this must not take over.
+            if latest is not None and not (auto and current(self.activity)):
+                # Opened by itself, it shows the answer without taking the
+                # editor, which may be mid-sentence to the conversation.
+                open_thread(self.activity, latest.thread, reply=not auto)
+                self.redraw()
+            return None
         self.aside_view_open = True
         try:
             async with self.popup(output, session) as modal_input:
@@ -1765,6 +1802,98 @@ class PreviewApp:
             return None
         finally:
             self.aside_view_open = False
+
+    # --- The /btw panel above the editor (`pcode.btw_panel`) ---
+
+    def btw_key(self) -> None:
+        """Ctrl+Q: open the newest thread to reply to; reply to the one shown; then the next."""
+        from pcode.btw_panel import current, next_thread, open_thread
+
+        activity = self.activity
+        if not current(activity):
+            latest = self.asides.latest()
+            if latest is None:
+                self.transcript.flash("No side questions yet. Ask one with /btw QUESTION.")
+                return
+            open_thread(activity, latest.thread, reply=True)
+        elif not activity.btw_reply:
+            activity.btw_reply = True
+        else:
+            open_thread(activity, next_thread(activity), reply=True)
+
+    def asides_seen(self, identities: list[str]) -> None:
+        """The /btw panel showed these answers; a session host hears so (`asides_read`)."""
+        seen = getattr(self.controller, "asides_seen", None)
+        if seen is not None:
+            seen(identities)
+
+    def btw_thread(self) -> list:
+        """The /btw panel's thread while it takes replies, which /copy and /links then read."""
+        from pcode.btw_panel import current, replying
+
+        return current(self.activity) if replying(self.activity) else []
+
+    def close_btw(self) -> None:
+        from pcode.btw_panel import close
+
+        close(self.activity)
+
+    def btw_submit(self, text: str) -> bool | None:
+        """Send `text` to the /btw panel's thread while it takes replies.
+
+        None leaves it to the conversation: commands other than the thread's
+        own, and anything typed while the panel is closed or only showing.
+        True keeps the draft, refused with the reason shown.
+        """
+        from pcode.btw_panel import close, current, replying
+
+        if not replying(self.activity) or shell_command(text) is not None:
+            # A `!command` runs in the shell, as ever.
+            return None
+        thread = current(self.activity)[0].thread
+        name, _, argument = text.partition(" ")
+        # `/etc/hosts …` is a path, so a question, as in the popup's editor.
+        if not text.startswith("/") or "/" in name[1:]:
+            try:
+                self.controller.follow_up_aside(thread, text)
+            except ValueError as error:
+                self.transcript.flash(str(error))
+                return True
+            return False
+        if name == "/close":
+            close(self.activity)
+            return False
+        if name == "/stop":
+            if not self.controller.cancel_asides() and not self.hosted:
+                self.transcript.flash("No side question is running.")
+            return False
+        if name in ("/merge", "/summarize"):
+            try:
+                self.controller.check_bridge(thread)
+            except ValueError as error:
+                self.transcript.flash(str(error))
+                return True
+            action = "merge" if name == "/merge" else "summary"
+
+            async def keep() -> None:
+                try:
+                    await self.controller.keep_thread(thread, action, argument.strip())
+                except ValueError as error:
+                    self.transcript.warning(str(error))
+                    return
+                except Exception as error:
+                    self.transcript.error(error_message(error, unexpected=f"{name} failed"))
+                    return
+                if self.activity.btw_thread == thread:
+                    close(self.activity)
+
+            task = asyncio.create_task(keep())
+            self._btw_tasks.add(task)
+            task.add_done_callback(self._btw_tasks.discard)
+            return False
+        # /copy and /links read the panel's thread themselves; the rest are the
+        # conversation's, as ever.
+        return None
 
     def agents(self, argument: str) -> None:
         if not self.activity.workers.items:
@@ -2296,6 +2425,9 @@ class PreviewApp:
 
         def submit(text, *, mode_override: str | None = None):
             text = text.strip()
+            # Ctrl+Enter interrupts the conversation's turn: never a thread's reply.
+            if text and mode_override is None and (kept := self.btw_submit(text)) is not None:
+                return kept
             ready = early is None and getattr(self.controller, "ready", None)
             if (early is not None or (ready and not ready.is_set())) and text in {"/quit", "/exit"}:
                 # Do not strand exit behind a command waiting for initialization.
@@ -2344,11 +2476,16 @@ class PreviewApp:
             on_model=lambda: submit("/model"),
             on_previous_session=lambda: submit("/switch -"),
             on_copy_response=lambda: submit("/copy"),
+            on_btw=self.btw_key,
+            on_btw_close=self.close_btw,
             bottom_toolbar=self.toolbar,
             # Whichever controller is on screen: /switch replaces it.
             session_title=lambda: self.controller.session_title(),
             vi_mode=load_preferences().get("editing_mode", "emacs") == "vi",
         )
+        # A thread on the panel is read: a host's other terminals stop calling it ready.
+        if (panel := getattr(session, "btw_panel", None)) is not None:
+            panel.on_read = self.asides_seen
         output = TerminalOutput(
             self.transcript.console,
             session.app,

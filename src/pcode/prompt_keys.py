@@ -36,6 +36,10 @@ class PromptCallbacks:
     on_interrupt_submit: Callable[[str], None] | None = None
     on_previous_session: Callable | None = None
     on_copy_response: Callable | None = None
+    # The /btw panel (`pcode.btw_panel`): open it, or reply, or show the next
+    # thread; and close it.
+    on_btw: Callable | None = None
+    on_btw_close: Callable | None = None
 
 
 def prompt_key_bindings(
@@ -83,6 +87,19 @@ def _add_shortcuts(shortcuts: PrefixKeys, activity, transcript, callbacks: Promp
     on_commands = callbacks.on_commands
     on_previous_session = callbacks.on_previous_session
     on_copy_response = callbacks.on_copy_response
+    on_btw = callbacks.on_btw
+
+    def btw_label() -> str:
+        from pcode.btw_panel import current
+
+        if not current(activity):
+            return "Open side threads (/btw)"
+        return "Next side thread" if activity.btw_reply else "Reply to side thread"
+
+    @shortcuts.add("q", btw_label, filter=on_btw is not None)
+    def side_threads(event: KeyPressEvent) -> None:
+        on_btw()
+        event.app.invalidate()
 
     @shortcuts.add("s", "Cycle send mode", filter=on_send_mode is not None)
     def cycle_send_mode(event: KeyPressEvent) -> None:
@@ -296,11 +313,38 @@ def _editing_keys(
             finally:
                 buffer.accept_handler = accept_handler
 
+    on_btw_close = callbacks.on_btw_close
+
+    def panel_shown() -> bool:
+        from pcode.btw_panel import current
+
+        return on_btw_close is not None and bool(current(activity))
+
+    btw_open = Condition(panel_shown)
+    not_completing = Condition(lambda: default_buffer().complete_state is None)
+
+    @keys.add("escape", filter=btw_open & ~vi_mode & not_completing)
+    def close_btw(event: KeyPressEvent) -> None:
+        # Not eager: Alt+Enter and other Alt keys start with Escape too. The
+        # draft stays; only where Enter sends it changes.
+        on_btw_close()
+        event.app.invalidate()
+
     @keys.add("escape", filter=vi_mode, eager=True)
     def normal_mode(event: KeyPressEvent) -> None:
         # Match native vi Escape semantics, without waiting for Alt bindings.
         buffer = event.current_buffer
         state = event.app.vi_state
+        if (
+            state.input_mode == InputMode.NAVIGATION
+            and not buffer.selection_state
+            and state.operator_func is None
+            and panel_shown()
+        ):
+            # Already in normal mode: a second Escape closes the /btw panel.
+            on_btw_close()
+            event.app.invalidate()
+            return
         if state.input_mode in (InputMode.INSERT, InputMode.REPLACE):
             buffer.cursor_position += buffer.document.get_cursor_left_position()
         state.input_mode = InputMode.NAVIGATION

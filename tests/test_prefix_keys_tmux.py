@@ -126,7 +126,7 @@ def test_leader_hint_shows_above_the_editor_and_runs_the_shortcut(pane):
 
 
 @pytest.mark.parametrize("pane", [SCRIPT], indirect=True)
-@pytest.mark.parametrize(("height", "scroll_key"), [(11, "Down"), (12, "NPage")])
+@pytest.mark.parametrize(("height", "scroll_key"), [(11, "Down"), (10, "NPage")])
 def test_short_terminal_help_scrolls_without_changing_draft(pane, height, scroll_key):
     capture(pane, "steering")
     pane("send-keys", "-t", "preview:0.0", "keep this draft")

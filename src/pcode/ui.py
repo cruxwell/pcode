@@ -324,6 +324,15 @@ class Palette:
                 "block.rule": self.muted,
                 "block.heading": self.accent,
                 "frame.border": self.muted,
+                # The /btw panel and the editor while it replies to it
+                # (`pcode.btw_panel`): a hue of their own, the second
+                # sub-agent's, so it is plain at a glance where Enter goes.
+                "btw frame.border": f"nodim {self.agents[1]}",
+                "btw.reply frame.border": f"nodim {self.agents[1]}",
+                "btw.badge": f"nodim bold reverse {self.agents[1]}",
+                "btw.title": f"nodim bold {self.agents[1]}",
+                "btw.key": f"nodim {self.agents[1]}",
+                "btw.meta": self.muted,
                 # The editor box's session name is the session's own metadata,
                 # in the task heading's hue (unbolded) so it never reads as the
                 # reply above it, nor as the accent's busy status row. The last
@@ -909,6 +918,11 @@ class Activity:
     # The session's side-question records (`Asides.items`, shared, not copied):
     # the running ones get a spinner row below the prompt's.
     asides: list = field(default_factory=list)
+    # The /btw panel above the editor (`pcode.btw_panel`): the thread it shows,
+    # None while closed, and whether the editor sends to it rather than to the
+    # conversation. This terminal's own, never synced from the host.
+    btw_thread: str | None = None
+    btw_reply: bool = False
     # What this terminal is waiting on (the session host starting, a command
     # it has not finished): its own state, never synced from the host.
     waits: list[Wait] = field(default_factory=list)
@@ -2336,6 +2350,14 @@ class PromptLayout:
             max_height=20, scroll_offset=1, extra_filter=has_focus(session.default_buffer)
         )
         self.menu.content.dont_extend_height = Always()
+        from pcode.btw_panel import BtwPanel
+
+        # A /btw thread above the editor, while one is open (`pcode.btw_panel`).
+        self.btw = (
+            BtwPanel(activity, transcript, shortcuts.label)
+            if shortcuts is not None
+            else BtwPanel(activity, transcript)
+        )
         # Whether the open menu made the layout taller than the measured rows.
         self.menu_overflowed = False
 
@@ -2358,7 +2380,14 @@ class PromptLayout:
         size = self.size()
         gap = self.top_gap()
         available = max(
-            1, size.rows - 4 - gap - self.activity_height() - tasks - len(self.queue_rows())
+            1,
+            size.rows
+            - 4
+            - gap
+            - self.activity_height()
+            - tasks
+            - len(self.queue_rows())
+            - self.btw.height(),
         )
         cap = self.activity.height_cap(size.rows)
         if cap is not None:
@@ -2436,6 +2465,7 @@ class PromptLayout:
             + self.status_height()
             + len(self.queue_rows())
             + self.menu.preferred_height(size.columns, size.rows).preferred
+            + self.btw.height()
         )
         room = max(0, size.rows - fixed)
         # Parallel calls share the preview; show the most recently updated call.
@@ -2982,6 +3012,13 @@ class PromptLayout:
         status = Condition(lambda: self.activity.status_shown)
         attached = Condition(self.plan_attached)
         shaded = Condition(self.frame_shaded)
+        from pcode.btw_panel import replying
+
+        # Replying to a /btw thread, the box takes the panel's colour: Enter
+        # goes to the thread, not the conversation.
+        editor_frame.container.style = lambda: (
+            "class:frame class:shaded" + (" class:btw.reply" if replying(self.activity) else "")
+        )
         editor_frame.container.children[0] = HSplit(
             [
                 # Shaded, a top row with something on it is a touch darker than
@@ -3036,6 +3073,8 @@ class PromptLayout:
             self.menu,
             self.activity_panel(),
             self.queued(),
+            # Directly above the editor that replies to it.
+            self.btw.container(),
             # This prompt can be only three rows tall. A float would inherit
             # that height and clip the menu, so reserve space only while open.
             shortcut_hint(self.shortcuts),
@@ -3078,6 +3117,8 @@ class PromptLayout:
 
     def before_render(self, app) -> None:
         self.render_cache = {}
+        size = self.size()
+        self.btw.sync(size.rows, size.columns)
         transcript, activity = self.transcript, self.activity
         if transcript is None or not (
             (transcript.live_edit_previews and activity.edit_previews)
@@ -3138,6 +3179,8 @@ def create_prompt(
     on_interrupt_submit=None,
     on_previous_session=None,
     on_copy_response=None,
+    on_btw=None,
+    on_btw_close=None,
     key_prefix: str | None = None,
     session_title: Callable[[], str] = lambda: "",
     **kwargs,
@@ -3156,6 +3199,8 @@ def create_prompt(
         on_interrupt_submit=on_interrupt_submit,
         on_previous_session=on_previous_session,
         on_copy_response=on_copy_response,
+        on_btw=on_btw,
+        on_btw_close=on_btw_close,
     )
     keys, shortcuts = prompt_key_bindings(
         activity, transcript, callbacks, key_prefix, lambda: session.default_buffer
@@ -3203,10 +3248,15 @@ def create_prompt(
         def accept(buffer):
             text = buffer.text
             buffer.append_to_history()
-            on_submit(text)
-            return False
+            # True keeps the draft: something refused it with a reason shown.
+            return bool(on_submit(text))
 
         session.default_buffer.accept_handler = accept
+    # Page keys scroll an open /btw panel; the editor keeps focus.
+    prompt_layout.btw.pane.bind_scrolling(
+        keys, paging=Condition(lambda: prompt_layout.btw.height() > 0)
+    )
+    session.btw_panel = prompt_layout.btw
     session.layout = prompt_layout.layout()
     session.app.layout = session.layout
     if transcript is not None:

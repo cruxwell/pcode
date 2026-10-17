@@ -117,6 +117,30 @@ def exchange(aside: Aside, *, code_theme: str, first: bool = True) -> list:
     return blocks
 
 
+def details(thread: list[Aside], *, code_theme: str) -> tuple[list, int]:
+    """The thread's questions and answers in order, and where the newest begins."""
+    if not thread:
+        return [Text("Ask one with /btw <question>.", style="dim")], 0
+    blocks: list = []
+    newest = 0
+    for number, aside in enumerate(thread):
+        if number:
+            blocks.append(Text(""))
+        newest = len(blocks)
+        blocks.extend(exchange(aside, code_theme=code_theme, first=not number))
+    return blocks, newest
+
+
+def thread_links(thread: list[Aside]) -> list[Link]:
+    """URLs in a thread's questions and answers, oldest first, from the raw text."""
+    found: dict[str, Link] = {}
+    for aside in thread:
+        for text, source in ((aside.question, "user"), (aside.answer, "assistant")):
+            for link in extract_links(text, source):
+                remember_link(found, link)
+    return list(found.values())
+
+
 class AsideBrowser:
     """Read side answers beside a conversation that may still be running.
 
@@ -635,12 +659,7 @@ class AsideBrowser:
 
         From the raw text, as `/links` reads the conversation.
         """
-        found: dict[str, Link] = {}
-        for aside in self.current():
-            for text, source in ((aside.question, "user"), (aside.answer, "assistant")):
-                for link in extract_links(text, source):
-                    remember_link(found, link)
-        return list(found.values())
+        return thread_links(self.current())
 
     def choose_link(self) -> None:
         """Pick a URL from the selected thread and open it in the browser, as `/links` does."""
@@ -680,17 +699,7 @@ class AsideBrowser:
         focus_overlay(self.app, getattr(self.picker, "query", None) or self.picker.list)
 
     def details(self, thread: list[Aside]) -> tuple[list, int]:
-        """The thread's questions and answers in order, and where the newest begins."""
-        if not thread:
-            return [Text("Ask one with /btw <question>.", style="dim")], 0
-        blocks: list = []
-        newest = 0
-        for number, aside in enumerate(thread):
-            if number:
-                blocks.append(Text(""))
-            newest = len(blocks)
-            blocks.extend(exchange(aside, code_theme=self.code_theme, first=not number))
-        return blocks, newest
+        return details(thread, code_theme=self.code_theme)
 
     async def run(self) -> Bridge | None:
         """Show the viewer until it closes; the thread to bring into the conversation, if any."""

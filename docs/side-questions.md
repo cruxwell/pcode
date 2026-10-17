@@ -19,10 +19,48 @@ the editor, below the turn's, in the muted shade: the question, what the model
 is doing for it, and how long it has taken. Up to three show; more fold into a
 count that `/btw` expands.
 
-The viewer opens by itself as soon as an answer is ready, since the point of a
+The answers open by themselves as soon as one is ready, since the point of a
 side question is reading the answer while the turn is still running. A bare
-`/btw` opens it at any other time. While an answer is still arriving, the popup
-streams it.
+`/btw` opens them at any other time, and an answer still arriving streams in.
+
+## The panel
+
+By default (`btw_view panel`) a thread opens in a panel directly above the
+editor, framed and titled in a colour of its own, ` btw ` and its first
+question, so it is plain at a glance that you are looking at a side thread and
+not the conversation. The conversation carries on above it: a running turn
+keeps streaming into scrollback, its live preview and status keep their
+places, and its spinner stays on the editor's border. The panel takes what the
+thread needs, up to half the screen; PgUp and PgDn scroll it.
+
+While the panel is open **for replies**, the main editor talks to the thread,
+with everything it can do (history, completion, vi mode, `@file`s):
+
+- **Enter** sends a [follow-up](#following-up) to the thread, never to the
+  conversation, so typing during a turn neither steers nor queues it. The
+  editor's border takes the panel's colour while this is so. A follow-up that
+  cannot be sent yet keeps your draft and says why.
+- **`/merge`, `/summarize [focus]`, `/copy`, `/links`, `/stop`, `/close`** act
+  on the thread ([commands](#commands)); every other command, and
+  `/btw QUESTION`, means what it always does. So do a `!command`, which runs in
+  the shell, and **Ctrl+Enter**, which interrupts the conversation's turn with
+  your message.
+- **Ctrl+Q** shows the next thread, older first, wrapping to the newest.
+- **Escape** closes the panel, keeping your draft; Enter goes to the
+  conversation again. In vi mode, Escape first leaves insert mode as usual, and
+  a second one closes it.
+
+A panel that opened by itself when an answer arrived only shows it: you may be
+halfway through a message to the conversation, so Enter still sends that.
+**Ctrl+Q** opens it for replies, and with the panel closed, opens the newest
+thread for replies. With a [shortcut prefix](commands.md#shortcut-prefix), it
+is the prefix and `q`.
+
+### The popup
+
+`pcode config set btw_view popup` shows threads in the full-screen viewer
+instead, which takes the terminal while it is open and has a follow-up editor
+of its own:
 
 - **↑ / ↓:** move through the questions, or scroll the answer when it has focus.
 - **Enter:** read the selected thread full width, with the question list
@@ -59,9 +97,9 @@ Ctrl+/ browses the current popup's help.
 
 ### Commands
 
-The follow-up editor also takes those actions as commands, which a menu
-completes as you type `/`. Enter runs the highlighted one, and the start of a
-single name (`/co`) is enough on its own:
+The panel, while it takes replies, and the popup's follow-up editor take these
+as commands. In the popup a menu completes them as you type `/`, and the start
+of a single name (`/co`) is enough on its own:
 
 | Command | Does |
 | --- | --- |
@@ -70,6 +108,7 @@ single name (`/co`) is enough on its own:
 | `/summarize [focus]` | Summarize into the conversation, keeping what *focus* says, as Ctrl+S |
 | `/merge` | Merge into the conversation, as Ctrl+T |
 | `/stop` | Stop running side questions, as Ctrl+K |
+| `/close` | Close the panel, as Escape (panel only) |
 
 A follow-up that starts with a path of more than one part, such as
 `/etc/hosts`, is still sent as a question; one like `/tmp` reads as a command
@@ -93,8 +132,10 @@ never throws away the side question as well.
 
 ## Following up
 
-The viewer has an editor under the answer for asking a follow-up, so a side
-question can become a short back-and-forth without leaving the popup. Press
+In [the panel](#the-panel), the main editor sends follow-ups while the panel
+takes replies. The popup has an editor under the answer for asking a
+follow-up, so a side question can become a short back-and-forth without
+leaving it. Press
 **Ctrl+R** (or Tab to it), type, and press **Enter** to send; **Ctrl+J** (or
 Shift+Enter, where the terminal reports it) adds a line. The draft grows to six
 rows before it scrolls, and **PgUp / PgDn** scroll the answer while you type.

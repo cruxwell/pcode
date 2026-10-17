@@ -478,6 +478,11 @@ class RemoteController:
         # The answers run in the host; this terminal's records only mirror them.
         self.peer.notify("cancel_asides")
 
+    def asides_seen(self, identities: list[str]) -> None:
+        """Answers this terminal showed outside the viewer, read as `_read_asides` reports."""
+        if self.peer is not None:
+            self.peer.notify("asides_read", identities)
+
     def watch_job(self, job_id) -> None:
         self.peer.notify("watch_job", job_id)
 
@@ -516,6 +521,9 @@ class RemoteController:
 
     async def navigate_tree(self, identity: str | None, *, edit: bool = False) -> str:
         return await self.query("navigate_tree", identity, edit)
+
+    async def keep_thread(self, thread: str, action: str, instructions: str = "") -> None:
+        await self.query("keep_thread", thread, action, instructions)
 
 
 @dataclass

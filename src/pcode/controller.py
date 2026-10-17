@@ -140,6 +140,7 @@ QUERIES = frozenset(
         "session_overview",
         "follow_up_aside",
         "check_bridge",
+        "keep_thread",
         "navigate_tree",
     }
 )
@@ -3523,6 +3524,26 @@ class SessionController:
         ):
             raise ValueError("This thread was asked in another conversation")
         return follows
+
+    async def keep_thread(self, thread: str, action: str, instructions: str = "") -> None:
+        """Bring a side thread into the conversation from the /btw panel.
+
+        `action` is "merge" or "summary", as the viewer's `Bridge` says; a
+        `ValueError` says why it cannot be yet.
+        """
+        if action == "merge":
+            self.check_bridge(thread)
+            # Outside the command queue, so hold prompts back the way a
+            # history task does: none may start on the tree while it moves.
+            self.compact_idle.clear()
+            try:
+                await self.merge_thread(thread)
+            finally:
+                self.compact_idle.set()
+        elif action == "summary":
+            self.start_summary(Bridge(thread, "summary", instructions))
+        else:
+            raise ValueError(f"Unknown way to keep a side thread: {action}")
 
     async def merge_thread(self, thread: str) -> None:
         """Continue the conversation from a side thread, which is already a branch of it."""

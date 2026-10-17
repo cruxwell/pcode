@@ -37,6 +37,7 @@ from pcode.aside import (
 )
 from pcode.aside_ui import AsideBrowser
 from pcode.live import AgentRuntime
+from pcode.preferences import save_preferences
 from pcode.sessions import SavedSession, SessionError, first_prompt, session_turns
 from pcode.ui import create_prompt
 
@@ -475,6 +476,7 @@ def test_a_thread_read_back_from_the_tree_takes_follow_ups(tmp_path):
 
 def test_btw_summarizes_a_thread_into_the_conversation_from_the_viewer(tmp_path):
     """The whole path: the viewer returns a request, prompts wait, the summary lands."""
+    save_preferences(btw_view="popup")
     requests = []
     app = settled_app(tmp_path, requests)
     runtime = app.runtime
