@@ -306,7 +306,7 @@ class Palette:
                 # Weight only: the colour comes from its `agent.hue.N` class.
                 "activity.agent": "nodim",
                 "activity.meta": self.muted,
-                # The thinking rows above the status row: the model's newest
+                # The thinking rows of the activity panel: the model's newest
                 # thought, faded like scrollback thinking (`pcode.thinking`) and
                 # italic so it reads as a quote rather than as the turn's phase
                 # (accent) or what it is doing (the task heading's hue). Muted
@@ -890,7 +890,7 @@ class Activity:
     frame_style: str = "borders"
     # The `tool_glyphs` setting: `auto`, `on` or `off` (see `tool_glyphs_on`).
     tool_glyphs: str = "auto"
-    # The `tool_max_lines` setting: the most tool rows above the status row.
+    # The `tool_max_lines` setting: the most tool rows in the activity panel.
     tool_max_rows: int = TOOL_ROWS
     # The `tool_linger_seconds` setting: how long a finished call keeps its
     # tool row; 0 keeps it until newer calls push it out.
@@ -911,7 +911,7 @@ class Activity:
     # Inline shortcut hints, such as the key that hides the task list.
     show_hints: bool = True
     # Where the model's thinking shows: `off`, `status-line` (its own rows
-    # above the status row), or `scrollback`. See THINKING_MODES.
+    # in the activity panel), or `scrollback`. See THINKING_MODES.
     thinking_mode: str = "status-line"
     busy: bool = False
     status: str = ""

@@ -267,33 +267,51 @@ def active_task(text):
     return tuple(f"{frame}{text}" for frame in TASK_FRAMES)
 
 
-def _thought_span(lines):
-    """Indices of the thinking rows: marked first row, directly above the spinner.
+# What leads a tool row in the activity band, after its indent: a running
+# call's arc frame, or a settled call's mark.
+TOOL_MARKS = (*TASK_FRAMES, "√", "✗")
 
-    A blank row always separates the panel from scrollback, and the cap is
-    ui.THOUGHT_ROWS, so this never reaches a scrollback line.
+
+def _thought_span(lines):
+    """Indices of the thinking rows: the band's marked first row under the status
+    row, and the rows indented under it up to the first tool row or the divider.
     """
     status = next((i for i, line in enumerate(lines) if line.startswith(SPINNER_ROW)), None)
-    if status is None:
+    if status is None or not lines[status + 1].startswith(f"│{THOUGHT_ICON} "):
         return range(0)
-    for start in range(status - 1, max(-1, status - 1 - THOUGHT_ROWS), -1):
-        if not lines[start].strip():
-            break
-        if lines[start].startswith(f" {THOUGHT_ICON} "):
-            return range(start, status)
-    return range(0)
+    end = status + 2
+    while (
+        end < len(lines)
+        and lines[end].startswith("│  ")
+        and lines[end].strip("│ ")
+        and not lines[end][3:].startswith(TOOL_MARKS)
+    ):
+        end += 1
+    return range(status + 1, end)
 
 
 def thought_row(screen):
-    """The thinking rows above the status row, without their icon, joined with newlines."""
+    """The thinking rows under the status row, without their icon, joined with newlines."""
     lines = screen.splitlines()
     return "\n".join(
-        lines[i].strip().removeprefix(THOUGHT_ICON).strip() for i in _thought_span(lines)
+        lines[i].strip("│ ").removeprefix(THOUGHT_ICON).strip() for i in _thought_span(lines)
     )
 
 
+def tool_lines(screen):
+    """The band's tool rows under the status row, without the box's sides."""
+    lines = screen.splitlines()
+    status = next(i for i, line in enumerate(lines) if line.startswith(SPINNER_ROW))
+    end = next(i for i, line in enumerate(lines[status:], status) if line.startswith(("├", "└")))
+    return [
+        line.strip("│ ")
+        for line in lines[status + 1 : end]
+        if line.startswith("│  ") and line[3:].startswith(TOOL_MARKS)
+    ]
+
+
 def without_status_row(text):
-    """A capture minus the status row and the thinking rows above it: scrollback only."""
+    """A capture minus the status row and the thinking rows under it: scrollback only."""
     lines = text.splitlines()
     thought = set(_thought_span(lines))
     return "\n".join(
@@ -1040,13 +1058,14 @@ def test_detached_tasks_have_their_own_frame_and_nested_tools(pane):
     task = next(i for i, line in enumerate(lines) if "A task" in line)
     # The widget keeps its own frame and holds tasks alone; the running
     # command's verb rides the editor's top border below it, and what it
-    # runs sits on the tool row above, with the thoughts.
-    assert TOOL_ROW in lines[task - 2]
+    # runs sits on the tool row under that, in the editor box's band.
     assert lines[task - 1].startswith("┌─ Tasks 0/1 ─")
     assert lines[task].startswith(tuple("│" + row for row in active_task("")))
     assert lines[task + 1].startswith("└")
     status = lines[task + 2]
     assert status.startswith(SPINNER_ROW) and "Run shell" in status
+    # Newest last, under any finished calls still lingering there.
+    assert tool_lines(screen)[-1].split(" ", 1)[1].startswith(TOOL_ROW), screen
     assert "Tools" not in screen and "Tasks ·" not in screen
     history = pane("capture-pane", "-p", "-S", "-", "-t", "preview:0.0")
     # Scrollback holds each call once. The newest calls are also on the live
@@ -1079,15 +1098,20 @@ def test_detached_tasks_have_their_own_frame_and_nested_tools(pane):
 
 
 def attached_box(screen):
-    """The editor box's rows: heading, tasks, divider, text, footer, all one frame."""
+    """The editor box's rows: heading, tasks, divider, text, footer, all one frame.
+
+    While a turn runs, the activity band and its own divider come between
+    the heading and the tasks; the tasks are the rows after that divider.
+    """
     lines = screen.splitlines()
     cursor = next(i for i, line in enumerate(lines) if line.startswith("│❯"))
     top = max(i for i, line in enumerate(lines[:cursor]) if line.startswith("┌"))
-    divider = max(i for i, line in enumerate(lines[:cursor]) if line.startswith("├"))
+    dividers = [i for i, line in enumerate(lines[top:cursor], top) if line.startswith("├")]
     bottom = next(i for i, line in enumerate(lines[cursor:], cursor) if line.startswith("└"))
-    assert top < divider < cursor, screen
-    assert lines[divider].endswith("┤"), screen
-    return lines[top], lines[top + 1 : divider], bottom - divider - 1
+    assert dividers and top < dividers[-1] < cursor, screen
+    assert all(lines[i].endswith("┤") for i in dividers), screen
+    start = dividers[-2] if len(dividers) > 1 else top
+    return lines[top], lines[start + 1 : dividers[-1]], bottom - dividers[-1] - 1
 
 
 @pytest.mark.parametrize("pane", [TOOLS_SCRIPT], indirect=True)
@@ -1115,7 +1139,8 @@ def test_tasks_share_the_editor_box_by_default_and_config_applies_live(pane):
         deadline = time.monotonic() + TIMEOUT
         while True:
             screen = capture(pane, "keep draft", running=True, columns=width)
-            if screen.count("├") == 1:
+            # The band's divider, then the tasks'.
+            if screen.count("├") == 2:
                 break
             assert time.monotonic() < deadline, screen
             time.sleep(0.05)
@@ -1252,12 +1277,13 @@ def test_single_running_tool_needs_no_box_above_the_editor(pane):
     lines = screen.splitlines()
     top = next(i for i, line in enumerate(lines) if line.startswith("┌"))
     # Only the editor is boxed: the lone running call's verb rides its top
-    # border, with what it runs on the tool row just above.
+    # border, with what it runs on the tool row just under it.
     assert screen.count("┌") == screen.count("└") == 1
     assert lines[top].startswith(SPINNER_ROW)
     assert "Run shell" in lines[top] and "FIRST_DETAIL" not in lines[top]
     # Led by the tool spinner's frame.
-    assert lines[top - 1].strip().split(" ", 1)[1].startswith(TOOL_ROW)
+    assert tool_lines(screen)[-1].split(" ", 1)[1].startswith(TOOL_ROW)
+    assert not lines[top - 1].strip(), screen
     assert "Tasks" not in screen and "Tools" not in screen
     assert "✓ Read file" in pane("capture-pane", "-p", "-S", "-", "-t", "preview:0.0")
     assert input_rows(screen) == 1
@@ -1291,17 +1317,17 @@ def test_status_row_keeps_a_blank_line_below_the_last_tool_line(pane):
     screen = settle(pane, lambda screen: last_summary in screen, running=True)
     assert last_summary in screen, screen
     lines = screen.splitlines()
-    tool = next(i for i, line in enumerate(lines) if "SLOW_FILE" in line)
-    # Led by the spinner's frame while it runs.
-    assert lines[tool].strip().split(" ", 1)[1] == "⎘ SLOW_FILE"
-    assert lines[tool + 1].startswith(SPINNER_ROW)
-    # The transcript's last tool line, then a blank line, then the live rows:
-    # the newest finished calls (while they linger, `tool_max_lines` of them
-    # at most) above the running one.
+    # The transcript's last tool line, then a blank line, then the editor box
+    # with the status row on its border.
     last = max(i for i, line in enumerate(lines) if last_summary in line)
     assert lines[last + 1].strip() == ""
-    live = [line.strip() for line in lines[last + 2 : tool]]
-    assert live in ([], ["√ ⎘ file_30.py"], ["√ ⎘ file_29.py", "√ ⎘ file_30.py"]), screen
+    assert lines[last + 2].startswith(SPINNER_ROW), screen
+    # The band under it: the newest finished calls (while they linger,
+    # `tool_max_lines` of them at most), then the running one, led by the
+    # spinner's frame.
+    *settled, running = tool_lines(screen)
+    assert running.split(" ", 1)[1] == "⎘ SLOW_FILE", screen
+    assert settled in ([], ["√ ⎘ file_30.py"], ["√ ⎘ file_29.py", "√ ⎘ file_30.py"]), screen
 
 
 IMMEDIATE_PROMPT_SCRIPT = """

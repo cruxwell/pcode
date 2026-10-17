@@ -1131,7 +1131,7 @@ def preference_count(key: str) -> int:
 
 
 def tool_rows_preference() -> int:
-    """The most tool rows above the status row (`tool_max_lines`)."""
+    """The most tool rows in the activity panel (`tool_max_lines`)."""
     return int(load_preferences().get("tool_max_lines", SETTINGS["tool_max_lines"].default))
 
 
