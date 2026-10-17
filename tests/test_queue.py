@@ -454,10 +454,6 @@ def test_tool_rows_share_a_short_pane_with_the_thought(attached):
     with patch.object(layout, "size", return_value=Size(rows=40, columns=40)):
         assert len(layout.tool_rows()) == 3
         row = layout.tool_rows()[0]
-        if attached:
-            # In the editor box's band, a level in past the thought's text.
-            assert row[0] == ("", "    ")
-            row = row[1:]
         # A running call spins with the tool spinner's frame.
         assert row[0] == ("class:activity.tool", layout.tool_spinner_frame())
 

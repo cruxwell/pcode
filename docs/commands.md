@@ -297,8 +297,8 @@ glance:
 ┌─ ⠋ Run shell ───────────────────────────── Tasks 2/4 · ✓ 3 tools · 4s ─┐
 │∴ Before running the suite, make sure nothing else reads discount       │
 │  as a flat amount.                                                     │
-│    √ ✎ acme/orders.py · +1 −1                                          │
-│    ◜ $ python3 -m unittest discover tests                              │
+│√ ✎ acme/orders.py · +1 −1                                              │
+│◜ $ python3 -m unittest discover tests                                  │
 ├────────────────────────────────────────────────────────────────────────┤
 │✔ Find where the discount is applied                                    │
 │◜ Run the test suite                                                    │
@@ -314,16 +314,16 @@ glance:
 - **The thought**, marked `∴`, is faded and in italics. Its later rows indent
   under its text, so the `∴` stands alone in the column the spinner, the task
   icons and the prompt share.
-- **Tool calls** indent a level past the thought's text, one row each: why,
-  then what.
+- **Tool calls** follow, one row each, their marks in that same left column:
+  why, then what.
 - **Tasks** sit below a divider, with their status icons in that left column.
 
 With the default `frame_style shaded`, there are no lines, just three shades:
 the status row and the thought share a slightly darker header, the tool calls
 sit a step darker still, like a terminal inset under the prose about it, and
 the tasks and your draft keep the box's own shade. With `frame_style borders`
-the indent tells thought and calls apart, and a divider line sets off the
-tasks.
+the marks and the thought's italics tell thought and calls apart, and a
+divider line sets off the tasks.
 
 `/config set attach_activity off` moves the thought and tool rows back above
 the editor box, where the status row is the line under them; they still show

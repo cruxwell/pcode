@@ -96,11 +96,11 @@ def test_the_band_hangs_under_the_status_row(plan):
     assert lines[status].startswith("┌─ ")
     thought, continued, done, running, divider = lines[status + 1 : status + 6]
     # The marker stands alone in the column of icons, the thought's later rows
-    # line up with its text, and the tool rows sit a level further in.
+    # line up with its text, and the tool rows' marks share the icon column.
     assert thought.startswith("│∴ Checking where the config")
     assert continued.startswith("│  ") and continued[3] != " ", continued
-    assert done.startswith("│    √ ⎘ src/config.py"), done
-    assert running.startswith("│    ") and "$ make test" in running, running
+    assert done.startswith("│√ ⎘ src/config.py"), done
+    assert running[1] != " " and "$ make test" in running, running
     assert divider.startswith("├─") and divider.endswith("─┤")
     if plan:
         assert lines[status + 6].startswith("│✔ Read the config loader")
@@ -249,7 +249,7 @@ def test_a_height_cap_gives_the_thought_up_first(layout):
     activity.tasks_max_height = 6
     assert layout.band_budget() == 2
     rows = layout.band_rows()
-    assert [row[0] for row in rows] == [("", "    "), ("", "    ")]
+    assert [row[0][0].startswith("class:activity.tool") for row in rows] == [True, True]
     assert layout.band_height() == 3
     activity.tasks_max_height = 4
     assert layout.band_rows() == []
