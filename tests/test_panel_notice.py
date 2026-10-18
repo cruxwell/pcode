@@ -314,7 +314,7 @@ def test_main_status_rides_the_editor_box_and_jobs_only_appear_in_footer(command
     # divider of its own below it, whether or not the task list shows.
     thought = [i for i, line in enumerate(lines) if "Latest thought" in line]
     assert thought == [status_index + 1]
-    assert lines[status_index + 1].startswith("│∴ Latest thought")
+    assert lines[status_index + 1].startswith("│❝ Latest thought")
     assert lines[status_index + 2].startswith("├─")
     if tasks:
         task = next(i for i, line in enumerate(lines) if "Example task" in line)

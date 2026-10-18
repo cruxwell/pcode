@@ -606,8 +606,8 @@ SETTINGS = {
     "attach_activity": Setting(
         "on",
         ("on", "off"),
-        description="Draw the model's thinking and tool calls inside the editor box, under "
-        "the status row; off lists them above it",
+        description="Draw the model's thinking inside the editor box, under the status row; "
+        "off lists it above the box with the tool calls",
     ),
     "frame_style": Setting(
         "shaded",

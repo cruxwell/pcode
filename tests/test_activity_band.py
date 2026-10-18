@@ -24,7 +24,6 @@ from pcode.ui import (
     create_prompt,
     frame_shade,
     header_shade,
-    well_shade,
 )
 
 BACKGROUND = "#2e2a29"
@@ -90,26 +89,26 @@ def status_index(lines: list[str]) -> int:
 
 
 @pytest.mark.parametrize("plan", [True, False])
-def test_the_band_hangs_under_the_status_row(plan):
+def test_the_thought_hangs_under_the_status_row_and_calls_sit_above_the_box(plan):
     lines, _ = render(configure=lambda activity: None if plan else activity.plan.clear())
     status = status_index(lines)
     assert lines[status].startswith("┌─ ")
-    thought, continued, done, running, divider = lines[status + 1 : status + 6]
-    # The marker stands alone in the column of icons, the thought's later rows
-    # line up with its text, and the tool rows' marks share the icon column.
-    assert thought.startswith("│∴ Checking where the config")
-    assert continued.startswith("│  ") and continued[3] != " ", continued
-    assert done.startswith("│√ ⎘ src/config.py"), done
-    assert running[1] != " " and "$ make test" in running, running
+    # The calls are plain rows over the box, newest last, as before.
+    done, running = lines[status - 2 : status]
+    assert done.startswith(" √ ⎘ src/config.py"), done
+    assert "$ make test" in running, running
+    thought, continued, divider = lines[status + 1 : status + 4]
+    # Quoted: the mark opens every row of the thought.
+    assert thought.startswith("│❝ Checking where the config")
+    assert continued.startswith("│❝ ") and continued[3] != " ", continued
     assert divider.startswith("├─") and divider.endswith("─┤")
     if plan:
-        assert lines[status + 6].startswith("│✔ Read the config loader")
-        assert lines[status + 8].startswith("├─")
-        assert lines[status + 9].startswith("│❯")
+        assert lines[status + 4].startswith("│✔ Read the config loader")
+        assert lines[status + 6].startswith("├─")
+        assert lines[status + 7].startswith("│❯")
     else:
-        assert lines[status + 6].startswith("│❯")
-    # Nothing of the band is left above the box.
-    assert not any("∴" in line or "make test" in line for line in lines[:status])
+        assert lines[status + 4].startswith("│❯")
+    assert not any("❝" in line for line in lines[:status])
 
 
 def test_detached_activity_keeps_its_rows_above_the_box():
@@ -118,7 +117,8 @@ def test_detached_activity_keeps_its_rows_above_the_box():
 
     lines, _ = render(configure=detach)
     status = status_index(lines)
-    assert lines[status - 4].startswith(" ∴ Checking where the config")
+    assert lines[status - 4].startswith(" ❝ Checking where the config")
+    assert lines[status - 3].startswith(" ❝ ")
     assert "make test" in lines[status - 1]
     assert lines[status + 1].startswith("│✔ Read the config loader")
 
@@ -135,7 +135,7 @@ def test_hiding_the_panel_hides_the_thought_and_tool_rows_too(attached):
     # tool row would have shown.
     assert "Run shell · make test" in lines[status]
     rest = lines[:status] + lines[status + 1 :]
-    assert not any("∴" in line or "make test" in line or "Read the" in line for line in rest)
+    assert not any("❝" in line or "make test" in line or "Read the" in line for line in rest)
     assert lines[status + 1].startswith("│❯")
 
 
@@ -145,7 +145,8 @@ def test_hiding_the_tasks_keeps_the_thought_and_tool_rows():
 
     lines, _ = render(configure=hide)
     status = status_index(lines)
-    assert lines[status + 1].startswith("│∴ Checking where the config")
+    assert lines[status + 1].startswith("│❝ Checking where the config")
+    assert "make test" in lines[status - 1]
     assert not any("Read the" in line for line in lines)
     # The status row says what the hidden list would: the step in progress.
     assert "Fix the parser" in lines[status]
@@ -168,15 +169,13 @@ def test_the_band_takes_the_header_shade_and_its_divider_the_box(monkeypatch):
     status = status_index(lines)
     box = frame_shade(BACKGROUND, "dark").removeprefix("#")
     header = header_shade(BACKGROUND, "dark").removeprefix("#")
-    well = well_shade(BACKGROUND, "dark").removeprefix("#")
     shades = [{cell.bgcolor for cell in row} for row in attrs]
-    # The status row and the thought read as one header block, the tool rows
-    # sit in a well of their own, and the divider, tasks and prompt keep the
-    # box's shade.
+    # The calls above the box keep the terminal's own background, the status
+    # row and the thought read as one header block, and the divider, tasks
+    # and prompt keep the box's shade.
+    assert header not in shades[status - 1] and box not in shades[status - 1], shades
     assert all(shades[row] == {header} for row in range(status, status + 3)), shades
-    assert all(shades[row] == {well} for row in range(status + 3, status + 5)), shades
-    assert all(shades[row] == {box} for row in range(status + 5, status + 10)), shades
-    assert len({box, header, well}) == 3
+    assert all(shades[row] == {box} for row in range(status + 3, status + 8)), shades
 
 
 @pytest.fixture
@@ -209,7 +208,7 @@ def test_the_band_grows_at_once_and_gives_rows_back_after_a_hold(layout):
     clock = [100.0]
     with patch("pcode.ui.monotonic", lambda: clock[0]):
         tall = len(layout.band_rows())
-        assert tall == 4  # Two thought rows at this width, then two calls.
+        assert tall == 2  # The thought wraps to two rows at this width.
         # A new thought starting over on one row keeps the band's height.
         activity.forget_thought()
         activity.think("Short")
@@ -218,7 +217,7 @@ def test_the_band_grows_at_once_and_gives_rows_back_after_a_hold(layout):
         clock[0] += BAND_HOLD_SECONDS - 0.1
         assert len(layout.band_rows()) == tall
         clock[0] += 0.2
-        assert len(layout.band_rows()) == 3
+        assert len(layout.band_rows()) == 1
         # Growing back never waits.
         activity.forget_thought()
         activity.think(THOUGHT)
@@ -236,21 +235,21 @@ def test_an_empty_band_goes_at_once(layout):
 def test_a_resize_drops_the_held_height(layout):
     activity = layout.activity
     with patch("pcode.ui.monotonic", lambda: 100.0):
-        assert len(layout.band_rows()) == 4
+        assert len(layout.band_rows()) == 2
         activity.forget_thought()
         activity.think("Short")
         with patch.object(layout, "size", return_value=Size(rows=40, columns=60)):
-            assert len(layout.band_rows()) == 3
+            assert len(layout.band_rows()) == 1
 
 
 def test_a_height_cap_gives_the_thought_up_first(layout):
     activity = layout.activity
-    # Status, prompt and bottom rows, the band's divider, and two band rows.
-    activity.tasks_max_height = 6
-    assert layout.band_budget() == 2
-    rows = layout.band_rows()
-    assert [row[0][0].startswith("class:activity.tool") for row in rows] == [True, True]
-    assert layout.band_height() == 3
+    # Status, prompt and bottom rows, the band's divider, and one thought row.
+    activity.tasks_max_height = 5
+    assert layout.band_budget() == 1
+    (row,) = layout.band_rows()
+    assert row[1][1].endswith("…")
+    assert layout.band_height() == 2
     activity.tasks_max_height = 4
     assert layout.band_rows() == []
 
@@ -292,14 +291,3 @@ def test_show_activity_and_show_tasks_switch_the_panel_and_its_list_apart():
     assert activity.show_tasks and not activity.tasks_shown
     assert app.registry.dispatch("/show-activity on")
     assert activity.tasks_shown
-
-
-@pytest.mark.parametrize("background", ["#292929", "#1e1e2e", "#2e2a29"])
-def test_the_tool_well_stands_well_apart_from_the_header_on_dark(background):
-    # A shade between the box and the background sat four levels off the
-    # header: on screen, thought and calls blurred into one block.
-    def level(color):
-        return sum(int(color[i : i + 2], 16) for i in (1, 3, 5)) / 3
-
-    gap = level(header_shade(background, "dark")) - level(well_shade(background, "dark"))
-    assert gap >= 10, gap

@@ -267,26 +267,26 @@ def active_task(text):
     return tuple(f"{frame}{text}" for frame in TASK_FRAMES)
 
 
-# What leads a tool row in the activity band, after its indent: a running
-# call's arc frame, or a settled call's mark.
+# What leads a tool row above the editor box, after its one-cell margin: a
+# running call's arc frame, or a settled call's mark.
 TOOL_MARKS = (*TASK_FRAMES, "√", "✗")
 
 
 def _thought_span(lines):
-    """Indices of the thinking rows: the band's marked first row under the status
-    row, and the rows indented under it up to the first tool row or the divider.
+    """Indices of the thinking rows: the band's rows under the status row, each
+    opening with the thought's quote mark.
     """
     status = next((i for i, line in enumerate(lines) if line.startswith(SPINNER_ROW)), None)
-    if status is None or not lines[status + 1].startswith(f"│{THOUGHT_ICON} "):
+    if status is None:
         return range(0)
-    end = status + 2
-    while end < len(lines) and lines[end].startswith("│  ") and lines[end][3] != " ":
+    end = status + 1
+    while end < len(lines) and lines[end].startswith(f"│{THOUGHT_ICON} "):
         end += 1
     return range(status + 1, end)
 
 
 def thought_row(screen):
-    """The thinking rows under the status row, without their icon, joined with newlines."""
+    """The thinking rows under the status row, without their marks, joined with newlines."""
     lines = screen.splitlines()
     return "\n".join(
         lines[i].strip("│ ").removeprefix(THOUGHT_ICON).strip() for i in _thought_span(lines)
@@ -294,11 +294,17 @@ def thought_row(screen):
 
 
 def tool_lines(screen):
-    """The band's tool rows under the status row, without the box's sides."""
+    """The tool rows just above the editor box's status row, oldest first."""
     lines = screen.splitlines()
     status = next(i for i, line in enumerate(lines) if line.startswith(SPINNER_ROW))
-    end = next(i for i, line in enumerate(lines[status:], status) if line.startswith(("├", "└")))
-    return [line.strip("│ ") for line in lines[status + 1 : end] if line[1:].startswith(TOOL_MARKS)]
+    start = status
+    while (
+        start > 0
+        and lines[start - 1].startswith(" ")
+        and lines[start - 1][1:].startswith(TOOL_MARKS)
+    ):
+        start -= 1
+    return [line.strip() for line in lines[start:status]]
 
 
 def without_status_row(text):
@@ -1049,14 +1055,13 @@ def test_detached_tasks_have_their_own_frame_and_nested_tools(pane):
     task = next(i for i, line in enumerate(lines) if "A task" in line)
     # The widget keeps its own frame and holds tasks alone; the running
     # command's verb rides the editor's top border below it, and what it
-    # runs sits on the tool row under that, in the editor box's band.
+    # runs sits on the tool row above the task frame.
+    assert TOOL_ROW in lines[task - 2]
     assert lines[task - 1].startswith("┌─ Tasks 0/1 ─")
     assert lines[task].startswith(tuple("│" + row for row in active_task("")))
     assert lines[task + 1].startswith("└")
     status = lines[task + 2]
     assert status.startswith(SPINNER_ROW) and "Run shell" in status
-    # Newest last, under any finished calls still lingering there.
-    assert tool_lines(screen)[-1].split(" ", 1)[1].startswith(TOOL_ROW), screen
     assert "Tools" not in screen and "Tasks ·" not in screen
     history = pane("capture-pane", "-p", "-S", "-", "-t", "preview:0.0")
     # Scrollback holds each call once. The newest calls are also on the live
@@ -1130,8 +1135,8 @@ def test_tasks_share_the_editor_box_by_default_and_config_applies_live(pane):
         deadline = time.monotonic() + TIMEOUT
         while True:
             screen = capture(pane, "keep draft", running=True, columns=width)
-            # The band's divider, then the tasks'.
-            if screen.count("├") == 2:
+            # No thought in this script, so only the tasks' divider.
+            if screen.count("├") == 1:
                 break
             assert time.monotonic() < deadline, screen
             time.sleep(0.05)
@@ -1268,13 +1273,13 @@ def test_single_running_tool_needs_no_box_above_the_editor(pane):
     lines = screen.splitlines()
     top = next(i for i, line in enumerate(lines) if line.startswith("┌"))
     # Only the editor is boxed: the lone running call's verb rides its top
-    # border, with what it runs on the tool row just under it.
+    # border, with what it runs on the tool row just above.
     assert screen.count("┌") == screen.count("└") == 1
     assert lines[top].startswith(SPINNER_ROW)
     assert "Run shell" in lines[top] and "FIRST_DETAIL" not in lines[top]
     # Led by the tool spinner's frame.
     assert tool_lines(screen)[-1].split(" ", 1)[1].startswith(TOOL_ROW)
-    assert not lines[top - 1].strip(), screen
+    assert lines[top - 1].strip().split(" ", 1)[1].startswith(TOOL_ROW), screen
     assert "Tasks" not in screen and "Tools" not in screen
     assert "✓ Read file" in pane("capture-pane", "-p", "-S", "-", "-t", "preview:0.0")
     assert input_rows(screen) == 1
@@ -1308,15 +1313,14 @@ def test_status_row_keeps_a_blank_line_below_the_last_tool_line(pane):
     screen = settle(pane, lambda screen: last_summary in screen, running=True)
     assert last_summary in screen, screen
     lines = screen.splitlines()
-    # The transcript's last tool line, then a blank line, then the editor box
-    # with the status row on its border.
+    # The transcript's last tool line, then a blank line, then the live tool
+    # rows over the editor box: the newest finished calls (while they linger,
+    # `tool_max_lines` of them at most), then the running one, led by the
+    # spinner's frame, right above the status row.
     last = max(i for i, line in enumerate(lines) if last_summary in line)
     assert lines[last + 1].strip() == ""
-    assert lines[last + 2].startswith(SPINNER_ROW), screen
-    # The band under it: the newest finished calls (while they linger,
-    # `tool_max_lines` of them at most), then the running one, led by the
-    # spinner's frame.
     *settled, running = tool_lines(screen)
+    assert lines[last + 2 + len(settled) + 1].startswith(SPINNER_ROW), screen
     assert running.split(" ", 1)[1] == "⎘ SLOW_FILE", screen
     assert settled in ([], ["√ ⎘ file_30.py"], ["√ ⎘ file_29.py", "√ ⎘ file_30.py"]), screen
 

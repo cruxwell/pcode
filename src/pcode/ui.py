@@ -133,7 +133,7 @@ def _mix(color: str, toward: str, amount: float) -> str:
     )
 
 
-def shaded_styles(shade: str, top: str, well: str) -> dict[str, str]:
+def shaded_styles(shade: str, top: str) -> dict[str, str]:
     """`frame_style shaded`: the editor and task boxes as surfaces, not outlines.
 
     `shade` fills the box. Border glyphs keep their cells in the shade's own
@@ -143,8 +143,7 @@ def shaded_styles(shade: str, top: str, well: str) -> dict[str, str]:
     `top` is the editor's header block (see `header_shade`): its top row
     (status, task heading or session name), and while a turn runs the
     thought under it, so the turn's status and its reason read as one header
-    without a drawn line. `well` sits under that for the tool rows (see
-    `well_shade`), so what the turn runs never reads as what it thinks.
+    without a drawn line.
     """
     # Appended after the palette's `frame.border`: for equal classes the later
     # rule wins, so these override its muted color.
@@ -155,8 +154,6 @@ def shaded_styles(shade: str, top: str, well: str) -> dict[str, str]:
         "shaded frame.border": f"nodim fg:{shade}",
         "shaded.top": f"bg:{top}",
         "shaded.top frame.border": f"nodim fg:{top}",
-        "shaded.well": f"bg:{well}",
-        "shaded.well frame.border": f"nodim fg:{well}",
     }
 
 
@@ -188,21 +185,6 @@ def header_shade(background: str, theme: str) -> str:
     if theme == "light":
         return _mix(shade, "#000000", 0.028)
     return _mix(shade, background, 0.5)
-
-
-@cache
-def well_shade(background: str, theme: str) -> str:
-    """The tool rows' shade: a step further in than the header, as a terminal's
-    own surface sits under the prose about it.
-
-    Dark, a little below the terminal's own background: the box lifts the
-    background by only a few levels, so a shade between the two sat too
-    close to the header to tell thought and calls apart (checked on
-    screenshots). Light, a step past the header toward black.
-    """
-    if theme == "light":
-        return _mix(header_shade(background, theme), "#000000", 0.03)
-    return _mix(background, "#000000", 0.15)
 
 
 @dataclass(frozen=True)
@@ -263,7 +245,7 @@ class Palette:
         self,
         menu: "Palette | None" = None,
         task_style: str = "status",
-        shades: tuple[str, str, str] | None = None,
+        shades: tuple[str, str] | None = None,
     ) -> Style:
         # Palette is immutable. Reuse the Style so DynamicStyle's identity-based
         # invalidation hash changes only with the palette, not on every redraw.
@@ -334,7 +316,7 @@ class Palette:
                 "activity.thinking": f"italic {self.muted}",
                 # Keep the reasoning marker upright beside the italic text.
                 "activity.thinking.icon": f"noitalic {self.muted}",
-                # The tool row under the thought: upright where the thought is
+                # The tool rows above the editor box: upright where the thought is
                 # italic, and muted whether its call runs or has settled, so it
                 # never flips shade; a running call's mark is the status row's
                 # spinner in this shade, not its accent. A success's `✓` is the
@@ -598,12 +580,10 @@ TOOL_ROWS = 3
 # Default for `tool_linger_seconds`: a finished call's row clears after this,
 # so a long wait on the model does not keep showing stale calls.
 TOOL_LINGER_SECONDS = 10
-# Marks the first thought row in the spinner's column, without resembling
-# a stalled frame of the spinners below it.
-THOUGHT_ICON = "∴"
-# Where the editor box's band sets a thought's later rows and the tool rows:
-# under the thought's text, a level in from the column of icons.
-BAND_INDENT = " " * (cell_len(THOUGHT_ICON) + 1)
+# Opens every thought row, in the spinner's column: a quote, as the thought
+# is the model's own words, and nothing like a frame of the braille spinner
+# right above it (`∴` was, on screenshots).
+THOUGHT_ICON = "❝"
 # The tool row's stand-ins for common verbs (`tool_display.LABELS`), so it
 # says `$ make test` rather than `Run shell · make test`. A tool not listed
 # keeps its verb spelled out. Each is one cell wide, ambiguous-width or not.
@@ -906,8 +886,8 @@ class Activity:
     autohide_tasks: bool = False
     # Draw the task list as a section of the editor box instead of its own box.
     attach_tasks: bool = True
-    # Draw the thought and tool rows in the editor box, under its status row,
-    # instead of above the box (see `PromptLayout.band_rows`).
+    # Draw the thought in the editor box, under its status row, instead of
+    # above the box with the tool rows (see `PromptLayout.band_rows`).
     attach_activity: bool = True
     # The `task_style` setting: `status` shades task text by status, `icons`
     # gives it one weight, colours only the icon, and pads rows off the frame.
@@ -1030,7 +1010,7 @@ class Activity:
         )
 
     def thought_fragments(
-        self, width: int, rows: int = THOUGHT_ROWS, *, hanging: bool = False
+        self, width: int, rows: int = THOUGHT_ROWS
     ) -> list[list[tuple[str, str]]]:
         """The thinking rows of the activity panel, in `activity-panel` mode.
 
@@ -1038,38 +1018,18 @@ class Activity:
         explains, and gone once the answer streams into scrollback: thinking
         is the lead-up, not a caption on the result.
 
-        `hanging` indents the rows after the first under the thought's text,
-        as the editor box draws them: the marker then stands alone in the
-        column the status spinner, the task icons and the prompt share, and
-        the tool rows indented beneath read as the thought's own calls.
+        Every row opens with the quote mark, as a quoted passage's lines do,
+        so a wrapped thought never reads as two things; the marker stays
+        upright beside the italic text.
         """
         if not self.thought_shown or width < 3:
             return []
-        thought = latest_thought(self.thought)
-        if hanging:
-            return [
-                [
-                    (
-                        "class:activity.thinking.icon",
-                        f"{THOUGHT_ICON} " if index == 0 else BAND_INDENT,
-                    ),
-                    ("class:activity.thinking", row),
-                ]
-                for index, row in enumerate(head_rows(thought, width - len(BAND_INDENT), rows))
-            ]
-        # Wrap the marker with the text so continuation rows use the full
-        # width, without a hanging indent. Only the first row has an upright
-        # marker; the thought itself stays italic.
-        wrapped = head_rows(f"{THOUGHT_ICON} {thought}", width, rows)
+        lead = f"{THOUGHT_ICON} "
         return [
-            [
-                ("class:activity.thinking.icon", f"{THOUGHT_ICON} " if index == 0 else ""),
-                (
-                    "class:activity.thinking",
-                    row.removeprefix(THOUGHT_ICON).lstrip() if index == 0 else row,
-                ),
-            ]
-            for index, row in enumerate(wrapped)
+            # lstrip: a cut row in a very narrow pane can open on the space
+            # its ellipsis was set after.
+            [("class:activity.thinking.icon", lead), ("class:activity.thinking", row.lstrip())]
+            for row in head_rows(latest_thought(self.thought), width - cell_len(lead), rows)
         ]
 
     def begin_wait(self, label: str) -> Wait:
@@ -1375,7 +1335,7 @@ class Activity:
     def tool_rows(
         self, line: StatusLine, width: int, limit: int | None = None, spinner: str = "·"
     ) -> list[list[tuple[str, str]]]:
-        """The activity panel's tool rows, under the thought: `◜ $ ls -la`.
+        """The activity panel's tool rows, above the editor box: `◜ $ ls -la`.
 
         `spinner` marks a running call: the tool spinner's current frame.
 
@@ -1437,7 +1397,7 @@ class Activity:
     ) -> list[tuple[str, str]]:
         """One call's row: its state mark, then its verb's glyph (`◜ $ ls -la`).
 
-        Every row has the same columns, flush with the thought's `∴` or with
+        Every row has the same columns, in the thought mark's column or with
         none, so parallel calls line up and nothing shifts as a thought comes
         and goes: the mark (the tool spinner's frame in the muted shade while
         it runs, `✓` or `✗` once settled), then the glyph (`TOOL_GLYPHS`). A
@@ -2803,9 +2763,9 @@ class PromptLayout:
         if self.activity.attach_activity:
             budget = self.band_budget()
             if budget is not None:
-                # Under a height cap the thought gives way first.
-                rows = min(rows, budget - len(self.tool_rows()))
-            return self.activity.thought_fragments(self.band_width(), rows, hanging=True)
+                # Under a height cap the thought gives way to the editor.
+                rows = min(rows, budget)
+            return self.activity.thought_fragments(self.band_width(), rows)
         return self.activity.thought_fragments(self.size().columns - 1, rows)
 
     @_per_render
@@ -2821,25 +2781,17 @@ class PromptLayout:
 
     @_per_render
     def tool_rows(self):
-        """The turn's latest tool calls, under the thought.
+        """The turn's latest tool calls, on plain rows above the editor box.
 
-        They share a quarter of the pane with the thought, which keeps one
-        row of it when there is one to show.
+        Outside the box whatever `attach_activity` says: on the terminal's own
+        background they read as the scrollback lines they become once settled,
+        apart from the thought drawn in the box's header. They share a quarter
+        of the pane with the thought, which keeps one row of it when there is
+        one to show.
         """
         limit = self.size().rows // 4 - int(self.activity.thought_shown)
-        if not self.activity.attach_activity:
-            return self.activity.tool_rows(
-                self.status_line(), self.size().columns - 1, limit, self.tool_spinner_frame()
-            )
-        budget = self.band_budget()
-        if budget is not None:
-            if budget < 1:
-                return []
-            limit = min(limit, budget)
-        # Flush with the thought's marker, the task icons and the prompt: the
-        # well's shade, not an indent, sets them apart from the thought.
         return self.activity.tool_rows(
-            self.status_line(), self.band_width(), limit, self.tool_spinner_frame()
+            self.status_line(), self.size().columns - 1, limit, self.tool_spinner_frame()
         )
 
     def band_width(self) -> int:
@@ -2849,7 +2801,8 @@ class PromptLayout:
         return max(1, self.size().columns - 3 - self.task_padding())
 
     def band_budget(self) -> int | None:
-        """Rows `tasks_max_height` leaves the band, or None when nothing caps it.
+        """Rows `tasks_max_height` leaves the thought in the box, or None when
+        nothing caps it.
 
         The cap covers the whole box, so the band gets what remains once the
         box keeps its status row, one text row, its bottom row, the band's
@@ -2864,34 +2817,24 @@ class PromptLayout:
         tasks = activity.tasks_shown and bool(activity.displayed_plan or activity.tools.delegates)
         return cap - 4 - (1 + self.task_chrome() if tasks else 0)
 
-    def band_rows(self) -> list[list[tuple[str, str]]]:
-        """The activity band's rows, thought then tool calls (see `band_parts`)."""
-        thought, tools = self.band_parts()
-        return [*thought, *tools]
-
     @_per_render
-    def band_parts(self) -> tuple[list, list]:
-        """The activity band under the status row: the thought's rows, and the
-        tool calls' rows, each drawn in a shade of its own.
+    def band_rows(self) -> list[list[tuple[str, str]]]:
+        """The activity band: the newest thought, in the editor box under the
+        status row and in its header's shade (`attach_activity`).
 
-        `attach_activity` draws it in the editor box. It grows at once but
-        gives rows back only once it has held fewer for `BAND_HOLD_SECONDS`,
-        padding the gap with blank rows: a new thought starting over on one
-        row, or a call that stops lingering, would otherwise jolt the status
-        row and the tasks up and down on every step. With nothing left to
-        show (the thought gave way to the answer and the calls stopped
-        lingering, or Ctrl+O hid the panel) it goes at once: a band of blank
-        rows would only look stuck. The blank rows pad the tool calls, or the
-        thought when there are none, so no part takes another's shade.
+        It grows at once but gives rows back only once it has held fewer for
+        `BAND_HOLD_SECONDS`, padding the gap with blank rows: a new thought
+        starting over on one row would otherwise jolt the tasks and the
+        draft up and down. With nothing left to show (the answer is
+        streaming, or Ctrl+O hid the panel) it goes at once: a band of blank
+        rows would only look stuck.
         """
         attached = self.activity.attach_activity and self.activity.status_shown
-        thought = self.thought_rows() if attached else []
-        tools = self.tool_rows() if attached else []
-        rows = [*thought, *tools]
+        rows = self.thought_rows() if attached else []
         size = self.size()
         if not rows:
             self.band_hold = (0, 0.0, size)
-            return [], []
+            return []
         now = monotonic()
         held, since, sized = self.band_hold
         budget = self.band_budget()
@@ -2901,9 +2844,8 @@ class PromptLayout:
         # could crowd the editor out of this one.
         if len(rows) >= held or now - since >= BAND_HOLD_SECONDS or sized != size:
             self.band_hold = (len(rows), now, size)
-            return thought, tools
-        padding = [[] for _ in range(held - len(rows))]
-        return (thought, tools + padding) if tools else (thought + padding, tools)
+            return rows
+        return rows + [[] for _ in range(held - len(rows))]
 
     def band_height(self) -> int:
         """Rows the band adds to the editor box: its rows and the divider under them."""
@@ -3018,12 +2960,13 @@ class PromptLayout:
 
     def status_height(self) -> int:
         """Live rows above the editor box. The status rides the box's own border."""
-        # Attached, the thought and tool rows are the box's band instead.
+        # Attached, the thought is the box's band instead.
         unboxed = not self.activity.attach_activity
         return (
             len(self.conversation_rows())
             + bool(self.typing_row())
-            + (len(self.thought_rows()) + len(self.tool_rows()) if unboxed else 0)
+            + (len(self.thought_rows()) if unboxed else 0)
+            + len(self.tool_rows())
             + len(self.group_rows())
             + len(self.notice_rows())
             + len(self.wait_rows())
@@ -3088,32 +3031,26 @@ class PromptLayout:
             ]
         )
 
-    def band_body(self, part: int, side) -> ConditionalContainer:
-        """One part of the band (0 the thought, 1 the tool calls) between the
-        box's sides, its rows set in from them like the tasks under it."""
-
-        def rows():
-            return self.band_parts()[part]
-
+    def band_body(self, side) -> ConditionalContainer:
+        """The band between the box's sides, its rows set in from them like the
+        tasks under it."""
         body = VSplit(
             [
                 side(),
                 Window(width=self.task_padding),
                 Window(
                     FormattedTextControl(
-                        lambda: panel_fragments(rows(), self.band_width()),
+                        lambda: panel_fragments(self.band_rows(), self.band_width()),
                         show_cursor=False,
                     ),
-                    height=lambda: len(rows()),
+                    height=lambda: len(self.band_rows()),
                     dont_extend_height=True,
                     wrap_lines=False,
                 ),
                 side(),
-            ],
-            # The tool rows sit in a well of their own (`well_shade`).
-            style="class:shaded.well" if part else "",
+            ]
         )
-        return ConditionalContainer(body, Condition(lambda: bool(rows())))
+        return ConditionalContainer(body, Condition(lambda: bool(self.band_rows())))
 
     def status_border(self) -> Window:
         """The editor's top border carrying the status: `┌─ ⠋ Phase ── ✓ 1 tool · 4s ─┐`.
@@ -3245,16 +3182,13 @@ class PromptLayout:
         """Everything live between scrollback and the editor, top to bottom."""
         activity = self.activity
 
-        # With `attach_activity off`: its own rows, so a running tool taking
-        # the status never hides it; above the editor box whose border carries
-        # the status, where it reads as what led to the call. Attached, the
-        # box's band draws both.
-        def unboxed(rows):
-            return lambda: [] if activity.attach_activity else rows()
-
-        thought = self.panel_rows(unboxed(self.thought_rows))
-        # Between the thought and the status row: why, what, then how it is going.
-        tool = self.panel_rows(unboxed(self.tool_rows))
+        # With `attach_activity off`, the thought gets rows of its own above
+        # the editor box, so a running tool taking the status never hides it;
+        # attached, the box's band draws it under the status row instead.
+        thought = self.panel_rows(lambda: [] if activity.attach_activity else self.thought_rows())
+        # Just above the box whose border carries the status, on the
+        # terminal's own background: what runs, then how it is going.
+        tool = self.panel_rows(self.tool_rows)
         plan_frame = Frame(
             self.plan_body(), height=lambda: len(self.plan_rows()) + 2, style="class:shaded"
         )
@@ -3488,8 +3422,7 @@ class PromptLayout:
                             self.heading_border(self.idle_title),
                             filter=~attached & ~status & shaded,
                         ),
-                        self.band_body(0, side),
-                        self.band_body(1, side),
+                        self.band_body(side),
                     ],
                     style=lambda: "class:shaded.top" if self.top_row_filled() else "",
                 ),
@@ -4117,8 +4050,8 @@ class Transcript:
         shades = self.frame_shades()
         return shades[0] if shades is not None else None
 
-    def frame_shades(self) -> tuple[str, str, str] | None:
-        """The box's shade, its header's and its tool rows', or None to keep the borders.
+    def frame_shades(self) -> tuple[str, str] | None:
+        """The box's shade and its header's, or None to keep the borders.
 
         From the background the terminal last reported when its theme is the
         one in use (an explicit `/theme light` on a dark terminal is not, nor a
@@ -4137,11 +4070,7 @@ class Transcript:
             return None
         else:
             background = self.palette.surface
-        return (
-            frame_shade(background, theme),
-            header_shade(background, theme),
-            well_shade(background, theme),
-        )
+        return frame_shade(background, theme), header_shade(background, theme)
 
     @property
     def rich_theme(self) -> Theme:

@@ -118,7 +118,7 @@ the modes:
 
 | Mode | Shows |
 | --- | --- |
-| `activity-panel` (default; formerly `status-line`) | The newest thought, faded and marked with `∴`, on up to `thinking_max_lines` (default 10) rows of its own in the [activity panel](commands.md#activity-panel), under the status row |
+| `activity-panel` (default; formerly `status-line`) | The newest thought, faded and quoted with `❝` on every row, on up to `thinking_max_lines` (default 10) rows of its own in the [activity panel](commands.md#activity-panel), under the status row |
 | `scrollback` | The full thinking, streamed into scrollback in a dim style |
 | `off` | Nothing, and pcode asks the provider for nothing extra |
 

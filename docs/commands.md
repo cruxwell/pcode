@@ -332,23 +332,23 @@ Editor history is kept in memory only.
 
 ## Activity panel
 
-The activity panel is everything live about a turn: inside the editor box,
-under its status row, the model's newest thought, the tool calls it is making
-and the task list, and just above the box a running command's output (with
-`show_commands activity-panel` or `scrollback`). **Ctrl+O** shows or hides all
-of it at once.
+The activity panel is everything live about a turn: the tool calls the model
+is making, on plain rows above the editor box; inside the box, under its
+status row, the model's newest thought and the task list; and above the box a
+running command's output (with `show_commands activity-panel` or `scrollback`).
+**Ctrl+O** shows or hides all of it at once.
 
-![A turn three steps into a four-step plan: the thought and its shell calls under the status row, then the task list, then the prompt](assets/screenshots/activity.svg)
+![A turn three steps into a four-step plan: its shell calls above the editor box, the quoted thought under the status row, then the task list and the prompt](assets/screenshots/activity.svg)
 
 Each kind of row has its own place and look, so you can tell them apart at a
 glance:
 
 ```text
+ √ ✎ acme/orders.py · +1 −1
+ ◜ $ python3 -m unittest discover tests
 ┌─ ⠋ Run shell ───────────────────────────── Tasks 2/4 · ✓ 3 tools · 4s ─┐
-│∴ Before running the suite, make sure nothing else reads discount       │
-│  as a flat amount.                                                     │
-│√ ✎ acme/orders.py · +1 −1                                              │
-│◜ $ python3 -m unittest discover tests                                  │
+│❝ Before running the suite, make sure nothing else reads discount       │
+│❝ as a flat amount.                                                     │
 ├────────────────────────────────────────────────────────────────────────┤
 │✔ Find where the discount is applied                                    │
 │◜ Run the test suite                                                    │
@@ -358,33 +358,30 @@ glance:
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
+- **Tool calls** sit above the box on the terminal's own background, one row
+  each, newest last, the way they read in scrollback once they finish.
 - **The status row** is the box's top border: a spinner, what the turn is
   doing, and on the right the plan's count, the run's tool count and how long
   this phase has lasted.
-- **The thought**, marked `∴`, is faded and in italics. Its later rows indent
-  under its text, so the `∴` stands alone in the column the spinner, the task
-  icons and the prompt share.
-- **Tool calls** follow, one row each, their marks in that same left column:
-  why, then what.
-- **Tasks** sit below a divider, with their status icons in that left column.
+- **The thought** is quoted: faded, in italics, with `❝` opening every row.
+- **Tasks** sit below a divider, with their status icons in the column the
+  prompt's `❯` shares.
 
-With the default `frame_style shaded`, there are no lines, just three shades:
-the status row and the thought share a slightly darker header, the tool calls
-sit a step darker still, like a terminal inset under the prose about it, and
-the tasks and your draft keep the box's own shade. With `frame_style borders`
-the marks and the thought's italics tell thought and calls apart, and a
-divider line sets off the tasks.
+With the default `frame_style shaded`, there are no lines: the status row and
+the thought share a slightly darker header, and the tasks and your draft keep
+the box's own shade. With `frame_style borders` a divider line sets off the
+tasks.
 
-`/config set attach_activity off` moves the thought and tool rows back above
-the editor box, where the status row is the line under them; they still show
-and hide with the rest of the panel. `attach_tasks off` gives the task list a
-box of its own above the editor. Both apply immediately.
+`/config set attach_activity off` moves the thought out of the box too, onto
+rows of its own above the tool calls; it still shows and hides with the rest of
+the panel. `attach_tasks off` gives the task list a box of its own above the
+editor. Both apply immediately.
 
 ### Status and tool rows
 
 The status row always reads the same way. The command, path, or pattern a
-tool call works on gets its own row in the panel, with the full width of the
-box, so the status row stays short. While the call runs, its row spins in a
+tool call works on gets its own row above the box, with the full width of the
+pane, so the status row stays short. While the call runs, its row spins in a
 muted shade with a round spinner, so it never reads as the status row's dotted
 one, which means the model is working. A glyph stands in for the call's verb:
 `$` runs a command, `⌕` searches, `✎` edits or writes a file, `⎘` reads one,
@@ -399,8 +396,8 @@ while the next calls run, newest last, so parallel calls each get a row. The
 turn's three latest calls are shown, fewer in a short pane;
 `/config set tool_max_lines 1` keeps just the call the status row is on.
 A finished call's row clears after 10 seconds (`tool_linger_seconds`; `0` keeps
-it until newer calls push it out). The panel keeps the room it grew to for a
-moment after rows go, so the status row and the tasks don't jump on every
+it until newer calls push it out). The thought keeps the room it grew to for a
+moment after it shrinks, so the tasks and your draft don't jump on every
 step.
 
 Work pcode runs itself has no tool row, just its detail on the status row:
@@ -467,10 +464,10 @@ terminal checks its own pane. Ctrl+O shows it in a small pane anyway until the
 pane crosses the threshold again; `0` turns either check off. `tasks_min_rows` and
 `tasks_min_columns` apply immediately through `/config`.
 
-`pcode config set tasks_max_height 0.5` caps the editor box, panel included, at
-half the screen; a whole number such as `20` caps it at that many rows. Under a
-cap the thought gives way first, then the tool rows down to the running call;
-tasks (and any running sub-agents) get the room next and the editor keeps at least one text row, so a long
+`pcode config set tasks_max_height 0.5` caps the editor box, the thought and
+tasks in it included, at half the screen; a whole number such as `20` caps it at
+that many rows. Under a cap the thought gives way first; tasks (and any running
+sub-agents) get the room next and the editor keeps at least one text row, so a long
 plan shows more steps while a long draft scrolls inside the editor. Unset (the
 default), the thought and tool rows share at most a quarter of the pane, the
 task list takes at most 10 rows or half the screen, whichever is smaller, and

@@ -56,11 +56,8 @@ def test_delegate_stays_visible_without_its_calls_through_resize_and_cancel(pane
         lines = screen.splitlines()
         top = max(i for i, line in enumerate(lines) if line.startswith("┌"))
         assert lines[top].startswith(SPINNER_ROW)
-        # The delegate's row sits just above the editor's divider, under the
-        # activity band and its divider when calls are still listed there.
-        divider = max(i for i, line in enumerate(lines) if line.startswith("├"))
-        assert "» Explorer" in lines[divider - 1], screen
-        assert lines[divider - 2].startswith(("├", SPINNER_ROW)), screen
+        assert "» Explorer" in lines[top + 1]
+        assert lines[top + 2].startswith("├")
         assert "Search" not in screen
         assert input_rows(screen) == 1
         assert "keep draft" in screen
