@@ -2824,9 +2824,27 @@ class PromptLayout:
         return self.thought_rows() if attached else []
 
     def band_height(self) -> int:
-        """Rows the band adds to the editor box: its rows and the divider under them."""
+        """Rows the band adds to the editor box: its rows and any divider under them."""
         rows = self.band_rows()
-        return len(rows) + 1 if rows else 0
+        return len(rows) + self.band_divided() if rows else 0
+
+    def band_divided(self) -> bool:
+        """Whether a divider row closes the band.
+
+        Shaded, the divider is a blank row in the box's colour. Over attached
+        tasks the step from the header's shade to the box's already parts the
+        two, and a blank row only read as a gap between thought and tasks;
+        over the draft it keeps the prompt off the thought. Borders draw it as
+        the line it is. Read from activity state alone, as `preview_layout`
+        asks for the band's height before the task rows exist.
+        """
+        activity = self.activity
+        tasks = (
+            activity.attach_tasks
+            and activity.tasks_shown
+            and bool(activity.displayed_plan or activity.tools.delegates)
+        )
+        return not (self.frame_shaded() and tasks)
 
     @_per_render
     def aside_rows(self):
@@ -3402,7 +3420,7 @@ class PromptLayout:
                     ],
                     style=lambda: "class:shaded.top" if self.top_row_filled() else "",
                 ),
-                ConditionalContainer(divider(), filter=band),
+                ConditionalContainer(divider(), filter=band & Condition(self.band_divided)),
                 ConditionalContainer(
                     HSplit([VSplit([side(), self.plan_body(), side()]), divider()]),
                     filter=attached,

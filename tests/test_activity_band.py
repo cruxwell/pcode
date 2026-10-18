@@ -174,7 +174,20 @@ def test_the_band_takes_the_header_shade_and_its_divider_the_box(monkeypatch):
     # and prompt keep the box's shade.
     assert header not in shades[status - 1] and box not in shades[status - 1], shades
     assert all(shades[row] == {header} for row in range(status, status + 3)), shades
-    assert all(shades[row] == {box} for row in range(status + 3, status + 8)), shades
+    assert all(shades[row] == {box} for row in range(status + 3, status + 7)), shades
+    # No blank row between the thought and the tasks: the change of shade
+    # parts them.
+    assert lines[status + 3].startswith("│✔ Read the config loader"), lines
+
+
+@pytest.mark.usefixtures("true_color")
+def test_a_shaded_band_keeps_a_blank_row_over_the_draft(monkeypatch):
+    monkeypatch.setattr(theme, "_background", (BACKGROUND, "dark"))
+    lines, _ = render(shaded=True, configure=lambda activity: activity.plan.clear())
+    status = status_index(lines)
+    assert lines[status + 2].startswith("│❝ ")
+    assert lines[status + 3].strip("│ ├┤─") == ""
+    assert lines[status + 4].startswith("│❯"), lines
 
 
 @pytest.fixture
