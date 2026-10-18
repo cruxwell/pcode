@@ -102,12 +102,16 @@ all, so a mistake made in four sessions counts as stronger evidence than one.
 It also checks whether each lesson you applied before actually stopped the
 mistake; if it came back anyway, the next proposal uses a stronger form. With
 `--all`, a lesson only goes to your user scope when it shows up in more than
-one project, and nothing from another project (names, paths, quotes) is
-copied into your files. This needs session history, which is on unless you
-turned it off with `/extensions off session_history`.
+one project (or to a shared file above them, such as one employer's folder), a
+lesson about some other project is pointed out rather than applied, and
+nothing from another project (names, paths, quotes) is copied into your
+files. This searches the same saved history as
+[recalling earlier sessions](sessions.md#recalling-earlier-sessions), so
+sessions that weren't saved, or a machine with recall turned off, give it
+nothing extra to work with.
 
 **Where changes go.** Habits that would help in any project go to your user
-scope; anything about this codebase goes to the project. The prompt lists the
+scope (with `--all`, only once they show up in more than one); anything about this codebase goes to the project. The prompt lists the
 exact files for this machine, worked out the same way pcode finds them for
 the workspace:
 

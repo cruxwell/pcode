@@ -79,19 +79,23 @@ def test_session_scope_by_default_and_saved_sessions_on_request(home):
 
     plain = command.handler("")
     assert plain.startswith("Reflect on this session ")
-    assert "search_sessions` (scope=" not in plain
+    assert "both with scope=" not in plain
     assert "sessions after its date" not in plain
 
     project = command.handler("--project  the flaky test")
     assert "focus on: the flaky test\n" in project
-    assert "search_sessions` (scope='project')" in project
+    assert "`read_session`, both with scope='project'" in project
     assert "sessions after its date" in project
     assert "span projects" not in project
+    assert "those logged for this project" in project
+    assert "Reflect on this session and the saved sessions of this project" in project
 
     everywhere = command.handler("--all")
-    assert "search_sessions` (scope='all')" in everywhere
+    assert "`read_session`, both with scope='all'" in everywhere
     assert "never copy another project's names" in everywhere
+    assert "`applied` lesson in scope (every one)" in everywhere
     assert "focus on" not in everywhere
+    assert "focus on: {oops} {0}\n" in command.handler("--all {oops} {0}")
     for prompt in (plain, project, everywhere):
         assert "{" not in prompt
         assert "lessons come only from `harness` rows" in prompt
@@ -105,13 +109,17 @@ def test_session_scope_by_default_and_saved_sessions_on_request(home):
         ("  why the tmux test --all hung ", (None, "why the tmux test --all hung")),
         ("--all", ("--all", "")),
         ("--project tmux", ("--project", "tmux")),
+        ("--all\tthe tmux\ntest", ("--all", "the tmux\ntest")),
+        ("\n--project\n", ("--project", "")),
     ],
 )
 def test_parse_arguments(argument, expected):
     assert reflect.parse_arguments(argument) == expected
 
 
-@pytest.mark.parametrize("argument", ["--everything", "--all --project", "--project --project x"])
+@pytest.mark.parametrize(
+    "argument", ["--everything", "--all --project", "--project\t--project x", "--all\n--all"]
+)
 def test_bad_options_are_reported_not_sent(home, argument):
     notices = []
     extension = load_extension(
