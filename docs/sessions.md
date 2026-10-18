@@ -359,6 +359,11 @@ By default it searches the current repository, including its linked worktrees
 ask. It can also search the current conversation, which recovers details that
 `/compact` or automatic compaction dropped from the model's context.
 
+You can also point it at a session directly: paste its ID, or the first eight
+characters as `/resume` shows them, and ask "what happened in this one?" It
+gets an overview of that session (its title and every turn's prompt, outcome,
+and any failure) and reads the turns it needs from there.
+
 What it can find:
 
 - Saved prompts, steering messages you sent mid-turn, the model's replies,

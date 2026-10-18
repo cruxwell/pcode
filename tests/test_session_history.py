@@ -780,3 +780,37 @@ def test_results_carry_the_session_title(tmp_path, root):
     save(root, tmp_path, title="Editor flicker fix")
     (group,) = call(tools(tmp_path, root)["search_sessions"], query="redraws")["results"]
     assert group["title"] == "Editor flicker fix"
+
+
+def test_overview_lists_turns_with_prompts_conclusions_and_failures(tmp_path, root, monkeypatch):
+    records = (
+        turn("Fix flicker\n\nwith details", "Suspend the editor.", "run-a")
+        + [
+            {"kind": "turn_started", "run_id": "run-b", "prompt": "Ship it"},
+            {"kind": "turn_failed", "run_id": "run-b", "error": {"type": "Boom", "message": "x"}},
+        ]
+        + turn("Third", "Done.", "run-c")
+    )
+    save(root, tmp_path, "0d59e869-0bce-4594-a658-3e15a5954410", records=records, title="Flicker")
+    monkeypatch.setattr("pcode.history.OVERVIEW_TURNS", 2)
+    read = tools(tmp_path, root)["read_session"].function
+    context = SimpleNamespace(conversation_id="other")
+    first = asyncio.run(read(context, session_id="0d59e869"))
+    assert first["session_id"].startswith("0d59e869") and first["title"] == "Flicker"
+    assert first["turn_count"] == 3 and first["next_offset"] == 2
+    a, b = first["turns"]
+    assert a["prompt"] == "User: Fix flicker" and a["conclusion"] == "Suspend the editor."
+    assert b["status"] == "failed" and b["failure"] == "Boom: x" and "conclusion" not in b
+    rest = asyncio.run(read(context, session_id="0d59e869", offset=2))
+    assert [t["turn_id"] for t in rest["turns"]] == ["run-c"] and rest["next_offset"] is None
+
+
+def test_session_prefixes_must_be_long_and_unique(tmp_path, root):
+    save(root, tmp_path, "abcdef12-one")
+    save(root, tmp_path, "abcdef12-two")
+    history = History(tmp_path, root)
+    with pytest.raises(ValueError, match="2 sessions"):
+        history.read("abcdef12")
+    with pytest.raises(ValueError, match="at least 8"):
+        history.read("abcdef1")
+    assert history.read("abcdef12-o", "run-a")["session_id"] == "abcdef12-one"
