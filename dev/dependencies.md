@@ -467,6 +467,21 @@ marks changed bodies with `REDUCED_SHELL_OUTPUT`.
 Keep the real-shell parent/worker tests, long-line recovery, serialized-history
 readback, and spill-failure fallback tests in `tests/test_tool_output_limits.py`.
 
+### Browser toolset (verified Harness 0.56.0)
+
+`pcode.browser._toolset_class()` subclasses `PlaywrightBrowserToolset` and
+leans on its private surface: it overrides `_truncate_output`, `_frame_text`
+and `screenshot` (a copy of the upstream body with `scale="css"`), and calls
+`_in_operation`, `_refuse`, `_error`, `_await_with_timeout`,
+`_oversized_screenshot_error`, `_session.decide` and the module's `_truncate`
+and `_without_credentials`. `test_harness_browser_internals_still_exist` fails
+when an upgrade renames one; on any Harness bump, also diff upstream
+`screenshot` and `_frame_text` against the copies, since a fix there would be
+silently lost here. The browser's text cap (`MAX_CONTENT_TOKENS`, 10k chars)
+equals the default spill threshold, which is why the deliberate reads
+(`get_text`, `execute_js`) bypass it: capped first, a spill only stored the cut
+text.
+
 ### Images (verified Pydantic AI 2.56.0, Harness 0.56.0)
 
 Pydantic AI carries an image as `BinaryContent`, an `ImageUrl` or an

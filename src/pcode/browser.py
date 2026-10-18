@@ -32,6 +32,7 @@ Two decisions differ from Harness's own `PlaywrightBrowser` capability:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import os
 import shutil
 import socket
@@ -39,6 +40,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin
 
 # A coding agent's usual target is its own dev server on localhost, which the
 # Harness default (an SSRF guard for untrusted deployments) would refuse.
@@ -184,7 +186,7 @@ def _session_class():
                 context = browser.contexts[0]
             else:  # pragma: no cover - a launched Chromium has none until asked
                 context = await self._bounded(
-                    browser.new_context(service_workers="block", accept_downloads=False)
+                    browser.new_context(service_workers="block", accept_downloads=True)
                 )
             self._context = context
             page = await self._bounded(context.new_page())
@@ -225,6 +227,325 @@ def _session_class():
     return SharedContextSession
 
 
+# In-page JavaScript for the two transfers Playwright has no API for.
+_READ_IN_PAGE = """async ([url, limit]) => {
+  const response = await fetch(url, {credentials: 'include'});
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.length > limit) throw new Error(`${bytes.length} bytes is over the save limit`);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}"""
+_DROP_FILES = """(target, files) => {
+  const transfer = new DataTransfer();
+  for (const file of files) {
+    const bytes = Uint8Array.from(atob(file.data), (c) => c.charCodeAt(0));
+    transfer.items.add(new File([bytes], file.name, {type: file.type}));
+  }
+  const box = target.getBoundingClientRect();
+  const at = {clientX: box.left + box.width / 2, clientY: box.top + box.height / 2};
+  for (const type of ['dragenter', 'dragover', 'drop', 'dragleave']) {
+    target.dispatchEvent(new DragEvent(type, {
+      bubbles: true, cancelable: true, dataTransfer: transfer, ...at,
+    }));
+  }
+}"""
+# Whether an <iframe> shows anything. Its client box excludes the default
+# border, which gives even a width=0 height=0 frame a 4x4 bounding box.
+_RENDERED_FRAME = """(e) => e.clientWidth > 0 && e.clientHeight > 0
+  && getComputedStyle(e).visibility !== 'hidden'"""
+# Set inside `get_text` and `execute_js`. A ContextVar, so another tool waiting
+# on the operation lock in a different task still gets its result capped.
+_WHOLE_OUTPUT = contextvars.ContextVar("pcode_browser_whole_output", default=False)
+# A backstop for those whole results where no output limit spills them (an
+# agent built without pcode's limits, or `tool_output_mode off`).
+_MAX_WHOLE_CHARS = 1_000_000
+# Files cross the CDP connection whole, and in-page as base64 strings.
+_MAX_TRANSFER_BYTES = 100 * 1024 * 1024
+_MAX_REDIRECTS = 10
+
+
+def _toolset_class():
+    """Harness's toolset, adjusted where its defaults lose data or mislead the model.
+
+    - `get_text` and `execute_js` return their whole result. Harness caps every
+      result at `MAX_CONTENT_TOKENS`, which is pcode's spill threshold too, so a
+      large read was cut first and then spilled: the stored copy held only the
+      cut text, and data pulled out of a page (JSON, base64) was lost. These two
+      are deliberate reads; pcode's own output limits spill them whole. Page text
+      returned beside an action stays capped.
+    - The child-frame sweep skips frames that are not rendered. `innerText` of a
+      document with no layout falls back to its raw text, scripts included, so
+      every hidden helper frame (Google apps carry several) added kilobytes of
+      inline JavaScript to each result.
+    - Screenshots are taken in CSS pixels. On a HiDPI display the device-pixel
+      image is twice the size of the coordinates `click('x,y')` takes, so a
+      point read off the picture missed.
+    - `download` and `upload` move files between disk and the logged-in page.
+    """
+    import base64
+    import mimetypes
+
+    from playwright.async_api import Error as PlaywrightError
+    from pydantic_ai import BinaryContent, ToolReturn
+    from pydantic_ai_harness.playwright import EgressRequest, PlaywrightBrowserToolset
+    from pydantic_ai_harness.playwright._toolset import _truncate, _without_credentials
+
+    whole = _WHOLE_OUTPUT
+
+    class PcodeBrowserToolset(PlaywrightBrowserToolset):
+        def _truncate_output(self, text: str) -> str:
+            if whole.get():
+                return _truncate(text, _MAX_WHOLE_CHARS)
+            return super()._truncate_output(text)
+
+        async def _frame_text(self, page, budget_ms: int) -> list[str]:
+            texts: list[str] = []
+
+            async def rendered(frame) -> bool:
+                # A frame inside a hidden frame has no layout either, so every
+                # ancestor up to the page must be showing.
+                while frame.parent_frame is not None:
+                    element = await frame.frame_element()
+                    try:
+                        if not await element.evaluate(_RENDERED_FRAME):
+                            return False
+                    finally:
+                        await element.dispose()
+                    frame = frame.parent_frame
+                return True
+
+            async def sweep() -> None:
+                for frame in page.frames[1:]:
+                    try:
+                        if not await rendered(frame):
+                            continue
+                        text = await frame.inner_text("body", timeout=budget_ms)
+                    except PlaywrightError:
+                        continue
+                    if text.strip():
+                        texts.append(f"[frame {_without_credentials(frame.url)}]\n{text}")
+
+            try:
+                await asyncio.wait_for(sweep(), budget_ms / 1000)
+            except TimeoutError:
+                pass
+            return texts
+
+        async def get_text(self, selector: str | None = None, timeout_ms: int | None = None) -> str:
+            """Extract text from the page or a specific element.
+
+            The whole text comes back, not a page-sized excerpt; a large one is
+            handled by the output limits like any other large result.
+
+            Args:
+                selector: CSS selector to read, or an `aria-ref=` handle from
+                    `snapshot`. A CSS selector matches the main frame only; reading
+                    inside an iframe needs the `aria-ref=` handle. Omit for the whole
+                    page's visible text, which includes embedded frames.
+                timeout_ms: Override the default timeout for this call, in milliseconds.
+                    Must be greater than 0.
+
+            Returns:
+                The element's text, or the full page's visible text when no selector
+                is given.
+            """
+            token = whole.set(True)
+            try:
+                return await super().get_text(selector, timeout_ms)
+            finally:
+                whole.reset(token)
+
+        async def execute_js(self, script: str, timeout_ms: int | None = None) -> str:
+            """Evaluate a JavaScript expression and return its result.
+
+            The whole result comes back, not a page-sized excerpt; a large one
+            is handled by the output limits like any other large result. To
+            move a file, use `save_file` / `upload_file` instead of passing its
+            bytes here.
+
+            Args:
+                script: JavaScript expression to evaluate, e.g. `document.title`.
+                timeout_ms: Override the default timeout for this call, in milliseconds.
+                    Must be greater than 0.
+
+            Returns:
+                A string result as-is, objects/arrays as JSON, `null`/`undefined` as
+                `'undefined'`, or `JS error: ...` when evaluation raises.
+            """
+            token = whole.set(True)
+            try:
+                return await super().execute_js(script, timeout_ms)
+            finally:
+                whole.reset(token)
+
+        async def screenshot(
+            self, full_page: bool = False, timeout_ms: int | None = None
+        ) -> Any:  # str | ToolReturn; the import is local, so not resolvable here.
+            """Capture a screenshot of the current page.
+
+            The image is in CSS pixels, so a point read off it is the `'x,y'`
+            that `click` takes.
+
+            Args:
+                full_page: Capture the full scrollable page when `True`, else the
+                    current viewport.
+                timeout_ms: Override the default timeout for this call, in milliseconds.
+                    Must be greater than 0.
+
+            Returns:
+                A short note with the page URL, and the PNG as image content so
+                vision models can see it.
+            """
+
+            async def _screenshot(page, deadlines):
+                png = await page.screenshot(
+                    full_page=full_page, scale="css", timeout=deadlines.action
+                )
+                if (oversized := self._oversized_screenshot_error(png)) is not None:
+                    return self._error(oversized)
+                return ToolReturn(
+                    f"Screenshot captured (CSS pixels). URL: {_without_credentials(page.url)}",
+                    content=[BinaryContent(data=png, media_type="image/png")],
+                )
+
+            return await self._in_operation("screenshot", timeout_ms, _screenshot)
+
+        async def download(
+            self,
+            destination: Path,
+            url: str | None = None,
+            selector: str | None = None,
+            timeout_ms: int | None = None,
+        ) -> str:
+            """Write a file the browser can reach to `destination`; see `save_file`."""
+
+            async def fetch(page, source: str, deadlines) -> bytes | str | None:
+                """The body at `source` with the login's cookies, or why it was refused.
+
+                Redirects are followed here, one hop at a time, so each one passes
+                the egress policy: this client is not behind the page's route guard.
+                None means the request could not be completed, not a refusal.
+                """
+                for _ in range(_MAX_REDIRECTS + 1):
+                    reason = await self._session.decide(EgressRequest(url=source, kind="data"))
+                    if reason is not None:
+                        return f"Error: {reason}: {_without_credentials(source)}"
+                    try:
+                        response = await page.context.request.get(
+                            source, max_redirects=0, timeout=deadlines.navigation
+                        )
+                    except PlaywrightError:
+                        return None
+                    try:
+                        location = response.headers.get("location")
+                        if 300 <= response.status < 400 and location:
+                            source = urljoin(source, location)
+                            continue
+                        return await response.body() if response.ok else None
+                    finally:
+                        await response.dispose()
+                return f"Error: more than {_MAX_REDIRECTS} redirects from {url}"
+
+            async def _download(page, deadlines):
+                source = urljoin(page.url, url) if url else page.url
+                if selector is not None:
+                    async with page.expect_download(timeout=deadlines.action) as started:
+                        await page.click(selector, timeout=deadlines.action)
+                    download = await started.value
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        await download.save_as(destination)
+                    except PlaywrightError:
+                        # Chrome's default context, reached over CDP, keeps
+                        # downloads out of Playwright's hands; fetch the same URL.
+                        source = download.url
+                    else:
+                        size = destination.stat().st_size
+                        how = f"the download {selector} started"
+                        return f"Saved {size:,} bytes to {destination} from {how}."
+                data = None
+                if not source.startswith(("blob:", "data:")):
+                    data = await fetch(page, source, deadlines)
+                    if isinstance(data, str):
+                        return self._error(data)
+                if data is None:
+                    # A blob: URL, or a link only the page can still read (an
+                    # expired signed URL the tab already loaded).
+                    encoded = await self._await_with_timeout(
+                        page.evaluate(_READ_IN_PAGE, [source, _MAX_TRANSFER_BYTES]),
+                        deadlines.navigation,
+                    )
+                    data = base64.b64decode(encoded)
+                if len(data) > _MAX_TRANSFER_BYTES:
+                    return self._error(f"Error: {len(data):,} bytes is over the save limit.")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(data)
+                how = _without_credentials(source)
+                return f"Saved {len(data):,} bytes to {destination} from {how}."
+
+            try:
+                return await self._in_operation(
+                    "save_file", timeout_ms, _download, governed_by_navigation=True
+                )
+            except OSError as error:
+                return self._error(f"Error: could not write {destination}: {error}")
+
+        async def upload(
+            self,
+            selector: str,
+            files: list[Path],
+            drop: bool = False,
+            timeout_ms: int | None = None,
+        ) -> str:
+            """Give local files to the page; see `upload_file`."""
+            missing = [str(path) for path in files if not path.is_file()]
+            if missing:
+                return await self._refuse(
+                    "upload_file", timeout_ms, f"Error: no such file: {', '.join(missing)}"
+                )
+            if sum(path.stat().st_size for path in files) > _MAX_TRANSFER_BYTES:
+                return await self._refuse(
+                    "upload_file", timeout_ms, "Error: the files are over the upload limit."
+                )
+
+            async def _upload(page, deadlines):
+                target = page.locator(selector).first
+                names = ", ".join(path.name for path in files)
+                if drop:
+                    payload = [
+                        {
+                            "name": path.name,
+                            "type": mimetypes.guess_type(path.name)[0]
+                            or "application/octet-stream",
+                            "data": base64.b64encode(path.read_bytes()).decode(),
+                        }
+                        for path in files
+                    ]
+                    await target.evaluate(_DROP_FILES, payload, timeout=deadlines.action)
+                    return f"Dropped {names} on {selector}; check the page for the upload."
+                is_input = await target.evaluate(
+                    "e => e.tagName === 'INPUT' && e.type === 'file'", timeout=deadlines.action
+                )
+                if is_input:
+                    await target.set_input_files(files, timeout=deadlines.action)
+                else:
+                    async with page.expect_file_chooser(timeout=deadlines.action) as chooser:
+                        await target.click(timeout=deadlines.action)
+                    await (await chooser.value).set_files(files, timeout=deadlines.action)
+                return f"Gave {names} to {selector}; check the page for the upload."
+
+            try:
+                return await self._in_operation("upload_file", timeout_ms, _upload)
+            except OSError as error:
+                return self._error(f"Error: could not read a file to upload: {error}")
+
+    return PcodeBrowserToolset
+
+
 class BrowserState:
     """Whether the browser tools are offered, and the live session behind them."""
 
@@ -249,7 +570,7 @@ class BrowserState:
         Raises `ValueError` in attach mode when no running Chrome is found.
         """
         if self.session is None:
-            from pydantic_ai_harness.playwright import EgressPolicy, PlaywrightBrowserToolset
+            from pydantic_ai_harness.playwright import EgressPolicy
 
             if self.attach:
                 self.cdp_url = running_chrome_url()
@@ -272,7 +593,7 @@ class BrowserState:
                 cdp_url=self.cdp_url,
                 auto_install_chromium=True,
             )
-            self.toolset = PlaywrightBrowserToolset(
+            self.toolset = _toolset_class()(
                 session=self.session, max_content_tokens=MAX_CONTENT_TOKENS
             )
         return self.toolset

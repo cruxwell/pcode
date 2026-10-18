@@ -1,9 +1,10 @@
 """A real Chrome the model can drive, with the user logging in by hand.
 
 Off by default and per conversation: `/browser launch` or `/browser attach`
-adds Harness's eighteen Playwright tools plus `browser_open` and
-`browser_tabs`, and a `browser` sub-agent that runs multi-step flows without
-the page text landing in the parent's context. `/browser off` closes it and
+adds Harness's eighteen Playwright tools plus `browser_open`,
+`browser_tabs`, `save_file` and `upload_file`, and a `browser` sub-agent
+that runs multi-step flows without the page text landing in the parent's
+context. `/browser off` closes it and
 removes the tools.
 
 The browser is the user's own Chrome, started with a debugging port and a
@@ -21,7 +22,9 @@ an empty `setup` removes the feature.
 """
 
 import asyncio
+from pathlib import Path
 
+from pcode import sandbox
 from pcode.browser import REMOTE_DEBUGGING_PAGE, STATE, show_remote_debugging_toggle
 
 DELEGATE_INSTRUCTIONS = (
@@ -48,6 +51,15 @@ SIGN_IN_INSTRUCTIONS = (
     "`browser_open` so the window is in front, then end your turn asking the user to "
     "log in there and tell you when they are done; continue from the same page when "
     "they do."
+)
+
+FILE_INSTRUCTIONS = (
+    "Move files with `save_file` (a URL, the current tab, or a download button, saved "
+    "with the login's cookies) and `upload_file` (a file input, a button that opens "
+    "a file picker, or `drop=True` for a drag-and-drop zone) rather than passing "
+    "bytes through `execute_js` or a local server. `get_text` and `execute_js` return "
+    "their whole result, which the output limits store or trim like any large one. "
+    "Screenshots are in CSS pixels, the coordinates `click('x,y')` takes."
 )
 
 SUBAGENT_INSTRUCTIONS = (
@@ -106,7 +118,93 @@ def _capability(pcode, toolset):
     from pydantic_ai.capabilities import Capability
     from pydantic_ai_harness.playwright import BrowserUnavailableError, PlaywrightBrowser
 
-    browser_tools = set(toolset.tools) | {"browser_open", "browser_tabs"}
+    browser_tools = set(toolset.tools) | {
+        "browser_open",
+        "browser_tabs",
+        "save_file",
+        "upload_file",
+    }
+
+    workspace = Path(pcode.workspace)
+
+    def local(path: str) -> Path:
+        # Resolved as the file tools and the sandbox resolve it, so the sandbox
+        # judges the file these tools touch.
+        return sandbox.tool_target(path, workspace)
+
+    def refusal(targets: list[Path], *, write: bool) -> str | None:
+        """Why a target is off limits even with the sandbox off, or None.
+
+        A page can ask for these: a download written into `.git/hooks` or
+        pcode's config runs as code, and an upload of a credential file
+        hands it to the page.
+        """
+        try:
+            policy = sandbox.Policy.build(sandbox.base_roots(workspace))
+        except ValueError as error:
+            return f"Error: the sandbox policy is invalid ({error})."
+        for target in targets:
+            if write and policy.guards(target):
+                return f"Error: {target} is in a protected location."
+            if not write and not policy.can_read(target):
+                return f"Error: {target} holds credentials and cannot be uploaded."
+        return None
+
+    async def save_file(
+        path: str,
+        url: str | None = None,
+        selector: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> str:
+        """Save a file from the browser to disk, using the browser's logins.
+
+        With neither `url` nor `selector`, saves what the active tab shows (a
+        PDF, an image, a JSON response). With `url`, fetches it with the
+        browser's cookies; a `blob:` URL is read inside the page. With
+        `selector`, clicks it and saves the download it starts. The saved file
+        is then on disk for the file and shell tools, or for `upload_file`.
+
+        Args:
+            path: Where to write the file, absolute or relative to the workspace
+                (`~` is not expanded). Parent directories are created.
+            url: The file's URL. Omit to save the active tab.
+            selector: A link or button that starts a download, as a CSS selector
+                or an `aria-ref=` handle. Takes the place of `url`.
+            timeout_ms: Override the default timeout for this call, in milliseconds.
+        """
+        url = url or None
+        if url and selector:
+            return "Error: pass `url` or `selector`, not both."
+        target = local(path)
+        if reason := refusal([target], write=True):
+            return reason
+        return await toolset.download(target, url, selector, timeout_ms)
+
+    async def upload_file(
+        selector: str,
+        paths: list[str],
+        drop: bool = False,
+        timeout_ms: int | None = None,
+    ) -> str:
+        """Give local files to the page, as a user picking them would.
+
+        `selector` may be an `<input type=file>` (hidden ones work), or a button
+        or menu item that opens the file picker (Google Drive's "File upload").
+        With `drop=True` the files are dropped onto the element instead, for
+        drag-and-drop zones with no picker. Check the page afterwards.
+
+        Args:
+            selector: CSS selector or `aria-ref=` handle of the input, the button
+                that opens the picker, or the drop zone.
+            paths: Files to give, absolute or relative to the workspace
+                (`~` is not expanded).
+            drop: Drop the files on the element rather than pick them.
+            timeout_ms: Override the default timeout for this call, in milliseconds.
+        """
+        targets = [local(p) for p in paths]
+        if reason := refusal(targets, write=False):
+            return reason
+        return await toolset.upload(selector, targets, drop, timeout_ms)
 
     async def browser_tabs() -> str:
         """List every tab open in the browser, including the user's own, as title and URL.
@@ -173,10 +271,11 @@ def _capability(pcode, toolset):
     return Browser(
         id="browser",
         toolsets=[toolset],
-        tools=[browser_open, browser_tabs],
+        tools=[browser_open, browser_tabs, save_file, upload_file],
         instructions="\n".join(
             (
                 guidance,
+                FILE_INSTRUCTIONS,
                 LOGIN_INSTRUCTIONS["attach" if STATE.attach else "own"],
                 SIGN_IN_INSTRUCTIONS,
             )
