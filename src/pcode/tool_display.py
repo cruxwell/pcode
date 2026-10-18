@@ -545,6 +545,15 @@ def result_detail(
             result += " · truncated"
         elif text.endswith("(empty file)\n"):
             result = "0 lines · empty file"
+    elif name == "grep" and (
+        summary := re.match(
+            r"(At least )?([\d,]+) matching lines? in ([\d,]+) (files?)\b.*?: too many to show",
+            text,
+        )
+    ):
+        # pcode.filesystem.grep_summary: counts in place of lines too many to show.
+        plus = "+" if summary[1] else ""
+        result = f"{summary[2]}{plus} matches in {summary[3]} {summary[4]} · summarized"
     elif name in {"search_files", "grep"}:
         matches = re.findall(r"^(.+?):\d+:", text, re.MULTILINE)
         result = (

@@ -161,6 +161,13 @@ results pass through unchanged. This applies to every tool, including web, MCP,
 and delegation results, for the main agent and workers. It makes no extra model
 calls and works with automatic compaction off.
 
+`grep` is the exception. A search over the threshold with more than 50
+matching lines comes back inline as match counts per file, busiest first, with
+a note on how to narrow it. Paging through a long list of matches wastes turns;
+seeing where the matches cluster lets the model narrow the search or open the
+right file. Fewer but longer matches are saved to disk like any other result.
+With `tool_output_mode off`, `grep` returns its matching lines (up to 1,000).
+
 ```sh
 pcode config set tool_output_mode spill          # Default: store, preview, read back
 pcode config set tool_output_threshold 8000      # Trigger at 8,000 characters

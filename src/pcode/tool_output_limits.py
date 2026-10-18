@@ -90,15 +90,27 @@ class CodingToolOutputLimits(ToolOutputLimits):
         return replace(reduced, return_value=value) if isinstance(reduced, ToolReturn) else value
 
 
+def _setting(preferences: dict[str, str], suffix: str) -> str:
+    key = f"tool_output_{suffix}"
+    result = preferences.get(key, SETTINGS[key].default)
+    assert result is not None
+    return result
+
+
+def inline_result_limit() -> int | None:
+    """Characters a tool result may have before it is reduced; `None` when reduction is off."""
+    preferences = load_preferences()
+    if _setting(preferences, "mode") == "off":
+        return None
+    return int(_setting(preferences, "threshold"))
+
+
 def create_tool_output_limits() -> ToolOutputLimits:
     """Snapshot saved settings; all reduction and retrieval behavior stays upstream."""
     preferences = load_preferences()
 
     def value(suffix: str) -> str:
-        key = f"tool_output_{suffix}"
-        result = preferences.get(key, SETTINGS[key].default)
-        assert result is not None
-        return result
+        return _setting(preferences, suffix)
 
     mode = value("mode")
     threshold = int(value("threshold"))
