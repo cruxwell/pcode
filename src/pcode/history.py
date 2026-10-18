@@ -46,6 +46,7 @@ CONCLUSION_CHARS = 240
 # A session overview lists this many turns per page, each prompt cut to this.
 OVERVIEW_TURNS = 40
 OVERVIEW_PROMPT_CHARS = 300
+TITLE_CHARS = 200
 # Shortest session ID prefix accepted: what /resume and tool labels show.
 MIN_PREFIX = 8
 # Why a failed turn or tool failed, as much as a search needs to find it.
@@ -351,6 +352,29 @@ def fuse(rankings: list[list[int]]) -> list[int]:
     return sorted(scores, key=lambda key: (-scores[key], order[key]))
 
 
+def session_title(info: SessionInfo) -> str:
+    """The /rename name, else the auto title; titles come from prompts, so redacted."""
+    return redact((info.name or info.title or "")[:TITLE_CHARS])
+
+
+# Blocks that can follow a turn's prompt; the prompt may hold blank lines itself.
+_AFTER_PROMPT = re.compile(r"\n\n(?:Assistant|Tool|User \(steering\)|Turn failed): ")
+
+
+def _prompt(text: str) -> str:
+    """The turn's prompt, label included, cut to what an overview shows."""
+    end = _AFTER_PROMPT.search(text, 0, OVERVIEW_PROMPT_CHARS + 40)
+    return text[: end.start() if end else len(text)][:OVERVIEW_PROMPT_CHARS]
+
+
+def _failure(turn: StoredTurn) -> str:
+    """A failed turn's error: always its final block, never a line quoted earlier."""
+    if turn.status != "failed":
+        return ""
+    _, found, error = turn.text.rpartition("\n\nTurn failed: ")
+    return error if found and "\n" not in error else ""
+
+
 class History:
     def __init__(
         self,
@@ -516,12 +540,16 @@ class History:
         if len(matches) == 1:
             return matches[0]
         if matches:
+            listed = "; ".join(f"{s.id} ({session_title(s)})" for s in matches[:5])
             raise ValueError(
-                f"{len(matches)} sessions in scope start with {session_id!r}; give more of the ID."
+                f"{len(matches)} sessions in scope start with {session_id!r}: {listed}. "
+                "Use one of these IDs."
             )
+        short = f" A prefix needs at least {MIN_PREFIX} characters." if session_id else ""
         raise ValueError(
-            "Session not found in scope. Use a session_id from search_sessions or the user, "
-            f"at least {MIN_PREFIX} characters, or widen the scope."
+            "Session not found in scope. Use a session_id from search_sessions or the user; "
+            "a session from another project needs scope='all'."
+            + (short if len(session_id) < MIN_PREFIX else "")
         )
 
     def read(
@@ -543,7 +571,7 @@ class History:
                 raise ValueError("Session transcript is unreadable.")
             turns = self.index.turns(db, info.id)
         if not turn_id:
-            return self._overview(info, turns, offset, coverage)
+            return self._overview(info, turns, offset, max_chars, coverage)
         if turn_id not in turns:
             raise ValueError("Turn not found. Use a turn_id from search_sessions.")
         turn = turns[turn_id]
@@ -581,37 +609,39 @@ class History:
 
     @staticmethod
     def _overview(
-        info: SessionInfo, turns: dict[str, StoredTurn], offset: int, coverage: Coverage
+        info: SessionInfo,
+        turns: dict[str, StoredTurn],
+        offset: int,
+        max_chars: int,
+        coverage: Coverage,
     ) -> dict:
         """What a session was about, turn by turn: the map to pick turns to read from."""
         listed = list(turns.values())
         if offset > len(listed):
             raise ValueError("offset exceeds the session's turn count")
-        page = listed[offset : offset + OVERVIEW_TURNS]
-        entries = []
-        for turn in page:
-            # The first block is the prompt; a long one is cut, not lost: read the turn.
-            prompt = turn.text.split("\n\n", 1)[0]
+        entries, used, end = [], 0, offset
+        for turn in listed[offset : offset + OVERVIEW_TURNS]:
             entry = {
                 "turn_id": turn.id,
                 "time": turn.time,
                 "status": turn.status,
                 "branch": turn.branch,
                 "chars": len(turn.text),
-                "prompt": redact(prompt[:OVERVIEW_PROMPT_CHARS]),
+                "prompt": redact(_prompt(turn.text)),
             }
             if turn.conclusion:
                 entry["conclusion"] = redact(turn.conclusion[:CONCLUSION_CHARS])
-            failure = next(
-                (line for line in turn.text.splitlines() if line.startswith("Turn failed: ")), ""
-            )
-            if failure:
-                entry["failure"] = redact(failure.removeprefix("Turn failed: "))
+            if failure := _failure(turn):
+                entry["failure"] = redact(failure[:CONCLUSION_CHARS])
+            used += len(json.dumps(entry))
+            # A page holds at least one turn, then stops at the size budget.
+            if entries and used > max_chars:
+                break
             entries.append(entry)
-        end = offset + len(page)
+            end += 1
         return {
             "session_id": info.id,
-            "title": info.name or info.title or "",
+            "title": session_title(info),
             "workspace": redact(info.workspace),
             "created": info.created,
             "updated": info.updated,
@@ -661,7 +691,7 @@ def group_results(
             {
                 "session_id": chunk.session.id,
                 "workspace": redact(chunk.session.workspace),
-                "title": chunk.session.title or "",
+                "title": session_title(chunk.session),
                 "current": chunk.session.id == current_session,
                 "turns": [],
             },

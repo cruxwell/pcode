@@ -157,7 +157,7 @@ def setup(pcode) -> None:
             context_turns: Number of ancestor excerpts (0..3), never sibling branches.
             offset: For a turn, a character offset in its redacted text; for the overview,
                 the first turn to list. Use next_offset for more.
-            max_chars: Maximum selected-turn characters (1..16000).
+            max_chars: Maximum characters of turn text, or of one overview page (1..16000).
         """
         try:
             return await asyncio.to_thread(

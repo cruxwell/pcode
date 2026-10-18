@@ -799,7 +799,8 @@ def test_overview_lists_turns_with_prompts_conclusions_and_failures(tmp_path, ro
     assert first["session_id"].startswith("0d59e869") and first["title"] == "Flicker"
     assert first["turn_count"] == 3 and first["next_offset"] == 2
     a, b = first["turns"]
-    assert a["prompt"] == "User: Fix flicker" and a["conclusion"] == "Suspend the editor."
+    assert a["prompt"] == "User: Fix flicker\n\nwith details"
+    assert a["conclusion"] == "Suspend the editor."
     assert b["status"] == "failed" and b["failure"] == "Boom: x" and "conclusion" not in b
     rest = asyncio.run(read(context, session_id="0d59e869", offset=2))
     assert [t["turn_id"] for t in rest["turns"]] == ["run-c"] and rest["next_offset"] is None
@@ -814,3 +815,16 @@ def test_session_prefixes_must_be_long_and_unique(tmp_path, root):
     with pytest.raises(ValueError, match="at least 8"):
         history.read("abcdef1")
     assert history.read("abcdef12-o", "run-a")["session_id"] == "abcdef12-one"
+
+
+def test_overview_ignores_quoted_failures_and_pages_by_size(tmp_path, root):
+    quoted = "Seen before:\nTurn failed: not this one"
+    records = [record for i in range(30) for record in turn(f"Task {i}", quoted, f"run-{i}")]
+    save(root, tmp_path, records=records, name="secret ghp_" + "a" * 36)
+    history = History(tmp_path, root)
+    page = history.read("session-a", max_chars=2000)
+    assert not any("failure" in entry for entry in page["turns"])
+    assert 1 < len(page["turns"]) < 30 and page["next_offset"] == len(page["turns"])
+    assert "ghp_" not in page["title"]
+    # One turn always fits, however small the budget.
+    assert len(history.read("session-a", max_chars=1)["turns"]) == 1
