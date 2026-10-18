@@ -183,7 +183,7 @@ Every key works with `pcode config set KEY VALUE` and `/config set KEY VALUE`.
 | `key_prefix` | `ctrl` | Direct Ctrl+letter shortcuts, such as Ctrl+L for models and Ctrl+Y to copy. No global action-menu leader by default. Set `ctrl+b`, `ctrl+p`, `ctrl+space`, `f2` or `"ctrl+x ctrl+p"` to use a leader before the action letter. Ctrl+/ browses contextual help. See [shortcut prefix](commands.md#shortcut-prefix) |
 | `popup_mouse` | `on` | `on`, `off` (popups capture clicks and the wheel, and a drag selects and copies a pane's text; `off` leaves selection to the terminal, Ctrl+Q flips it inside one popup (Ctrl+G in the `/btw` viewer), see [selecting text](commands.md#selecting-and-copying-text-in-popups)) |
 | `btw_auto_open` | `on` | `on`, `off` (open the viewer when a [side answer](side-questions.md) is ready) |
-| `btw_view` | `popup` | `popup`, `swap` (show side threads in a full-screen popup, or [swap them in](side-questions.md#swapping-a-thread-in) for the conversation, scrollback and all, where the main editor replies to them) |
+| `btw_view` | `swap` | `popup`, `swap` (show side threads in a full-screen popup, or [swap them in](side-questions.md#swapping-a-thread-in) for the conversation, scrollback and all, where the main editor replies to them) |
 
 ### Scrollback and display
 
@@ -210,7 +210,7 @@ Every key works with `pcode config set KEY VALUE` and `/config set KEY VALUE`.
 | `error_scrollback_lines` | `20` | Positive integer, lines of an error notice kept in scrollback before it is clipped |
 | `show_activity` | `on` | `on`, `off` (show the [activity panel](commands.md#activity-panel): thinking, tool calls, tasks and running commands together; Ctrl+O or `/show-activity`) |
 | `show_tasks` | `on` | `on`, `off` (show the task list in the activity panel; `/show-tasks`) |
-| `autohide_tasks` | `off` | `on`, `off` (hide the task list when a turn ends; `/autohide-tasks`) |
+| `autohide_tasks` | `on` | `on`, `off` (hide the task list when a turn ends; `/autohide-tasks`) |
 | `tasks_min_rows` | `30` | Hide the activity panel (thinking and tool rows included; the status row says what runs) in a pane shorter than this, such as a stacked split; `0` never hides. Ctrl+O overrides it until the pane crosses the threshold again |
 | `tasks_min_columns` | `100` | Hide the activity panel in a pane narrower than this, such as a side-by-side split; `0` never hides. Ctrl+O overrides it the same way |
 | `show_hints` | `on` | `on`, `off` (show one compact help indicator at the prompt instead of shortcut hints beside individual controls) |

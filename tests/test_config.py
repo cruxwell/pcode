@@ -74,7 +74,7 @@ def test_defaults_and_path_do_not_create_files():
         "thinking_max_lines": "10",
         "show_activity": "on",
         "show_tasks": "on",
-        "autohide_tasks": "off",
+        "autohide_tasks": "on",
         # conftest's override; the shipped thresholds are 30 and 100.
         "tasks_min_rows": "0",
         "tasks_min_columns": "0",
@@ -116,7 +116,7 @@ def test_defaults_and_path_do_not_create_files():
         "key_prefix": "ctrl",
         "popup_mouse": "on",
         "btw_auto_open": "on",
-        "btw_view": "popup",
+        "btw_view": "swap",
         "job_wake": "on",
         "code_mode": "off",
         "web_search": "auto",

@@ -49,9 +49,9 @@ def test_reset_clears_the_auto_hidden_state():
 
 def test_command_and_preference(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    assert SETTINGS["autohide_tasks"].default == "off"
+    assert SETTINGS["autohide_tasks"].default == "on"
     app = PreviewApp(console=Console(file=StringIO()))
-    assert not app.activity.autohide_tasks
+    assert app.activity.autohide_tasks
     assert app.registry.dispatch("/autohide-tasks on")
     app.activity.finish_prompt("done")
     assert app.registry.dispatch("/autohide-tasks off")

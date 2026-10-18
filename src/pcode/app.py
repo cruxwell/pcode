@@ -155,7 +155,10 @@ class PreviewApp:
         self.activity = Activity(
             show_activity=load_preferences().get("show_activity", "on") == "on",
             show_tasks=load_preferences().get("show_tasks", "on") == "on",
-            autohide_tasks=load_preferences().get("autohide_tasks", "off") == "on",
+            autohide_tasks=load_preferences().get(
+                "autohide_tasks", SETTINGS["autohide_tasks"].default
+            )
+            == "on",
             attach_tasks=load_preferences().get("attach_tasks", SETTINGS["attach_tasks"].default)
             == "on",
             attach_activity=load_preferences().get(

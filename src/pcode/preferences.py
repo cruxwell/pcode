@@ -581,7 +581,7 @@ SETTINGS = {
         "on", ("on", "off"), description="Show the task list in the activity panel"
     ),
     "autohide_tasks": Setting(
-        "off", ("on", "off"), description="Hide the task list when a turn ends"
+        "on", ("on", "off"), description="Hide the task list when a turn ends"
     ),
     # Checked against each terminal's own pane on every resize, so a split
     # hides the list and unsplitting brings it back; 0 never hides.
@@ -755,7 +755,7 @@ SETTINGS = {
     ),
     # Read each time the viewer opens, so `/config set` applies without a restart.
     "btw_view": Setting(
-        "popup",
+        "swap",
         ("popup", "swap"),
         description=(
             "Show /btw threads in a full-screen popup, or swap them into the "

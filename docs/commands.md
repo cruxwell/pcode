@@ -141,13 +141,13 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   to edit it, or an assistant response to continue from there. Existing branches are kept.
   Browsable at any time; forking waits for the running turn.
 - `/btw QUESTION` (alias `/side`): [ask a side question](side-questions.md) against the context the model
-  is working with right now, without interrupting or queueing it. The answer opens in a
-  [full-screen viewer](side-questions.md#the-popup) when ready (`btw_auto_open`);
-  bare `/btw` or **Ctrl+Q** opens it at any time. There you can send a
-  [follow-up](side-questions.md#following-up) to the thread, or
+  is working with right now, without interrupting or queueing it. The answer is
+  [swapped in](side-questions.md#swapping-a-thread-in) for the conversation when ready
+  (`btw_auto_open`), and the main editor replies to it; bare `/btw` or **Ctrl+Q** swaps it in at any time.
+  You can send a [follow-up](side-questions.md#following-up) to the thread, or
   [keep it](side-questions.md#keeping-a-thread) in the conversation
-  (`btw_view swap` [swaps it in](side-questions.md#swapping-a-thread-in) for the
-  conversation instead, and the main editor replies to it). `/btw $PROVIDER:MODEL [$PROVIDER:MODEL ...] QUESTION` asks other models
+  (`btw_view popup` shows threads in a [full-screen viewer](side-questions.md#the-popup)
+  instead). `/btw $PROVIDER:MODEL [$PROVIDER:MODEL ...] QUESTION` asks other models
   instead, one side question each ([choosing the model](side-questions.md#choosing-the-model)).
   A `+EFFORT` suffix (`$openai:gpt-5+high`), or a bare `+EFFORT` word for the
   conversation's model, sets that question's reasoning effort from the `/effort` levels.
@@ -452,9 +452,10 @@ Each part can also be switched on its own, inside the panel:
 | Tasks | `/show-tasks [on|off]` |
 | A running command's output | `/show-commands activity-panel` (or `off`, or `scrollback` to also keep it there); Ctrl+G |
 
-`/autohide-tasks on` (or `pcode config set autohide_tasks on`) hides the task
-list when the model finishes a turn, keeping the idle prompt compact. It
-returns on the next turn, and Ctrl+O brings it back immediately. Default off.
+By default the task list hides when the model finishes a turn, keeping the
+idle prompt compact. It returns on the next turn, and Ctrl+O brings it back
+immediately. `/autohide-tasks off` (or `pcode config set autohide_tasks off`)
+keeps it on screen.
 
 The panel also hides in a pane shorter than `tasks_min_rows` (default 30) or narrower
 than `tasks_min_columns` (default 100), thinking and tool rows included, and

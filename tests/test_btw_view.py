@@ -29,7 +29,7 @@ from pcode.ui import Activity, CursorSafeOutput, Handoff, TerminalOutput, Transc
 
 @pytest.fixture(autouse=True)
 def swap_view():
-    """The swap is opt-in (`btw_view swap`); these tests exercise it."""
+    """These tests exercise the swap (`btw_view swap`, the default)."""
     save_preferences(btw_view="swap")
 
 
@@ -548,7 +548,7 @@ def test_the_shortcut_opens_the_viewer_when_the_popup_is_the_view():
 
 
 @pytest.mark.parametrize("terminal", [True, False])
-def test_the_popup_shows_threads_by_default_and_off_a_terminal(monkeypatch, terminal):
+def test_the_popup_shows_threads_when_chosen_and_off_a_terminal(monkeypatch, terminal):
     if terminal:
         save_preferences(btw_view="popup")
     app, _ = seeded_app(terminal=terminal)
