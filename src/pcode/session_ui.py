@@ -93,6 +93,50 @@ def in_name(word: str, info: SessionInfo) -> bool:
     )
 
 
+def fork_forest(records: list[SessionInfo]) -> list[tuple[SessionInfo, str]]:
+    """Sessions with each fork nested under the one it was copied from, as (info, guide).
+
+    A family is placed by its most recently updated member, so a fork still
+    being worked on keeps its original near the top; siblings go the same way.
+    A session whose original is not listed (deleted, or another workspace) is
+    a root, with no guide.
+    """
+    listed = {info.id for info in records}
+    children: dict[str | None, list[SessionInfo]] = {}
+    for info in records:
+        parent = info.forked_from if info.forked_from in listed else None
+        children.setdefault(parent, []).append(info)
+    latest: dict[str, str] = {}
+
+    def newest(info: SessionInfo, seen: frozenset[str] = frozenset()) -> str:
+        if info.id not in latest:
+            below = [
+                newest(child, seen | {info.id})
+                for child in children.get(info.id, ())
+                if child.id not in seen
+            ]
+            latest[info.id] = max([info.updated, *below])
+        return latest[info.id]
+
+    rows: list[tuple[SessionInfo, str]] = []
+    placed: set[str] = set()
+
+    def place(info: SessionInfo, guide: str, below: str) -> None:
+        placed.add(info.id)
+        rows.append((info, guide))
+        family = [child for child in children.get(info.id, ()) if child.id not in placed]
+        family.sort(key=newest, reverse=True)
+        for index, child in enumerate(family):
+            last = index == len(family) - 1
+            place(child, below + ("└─ " if last else "├─ "), below + ("   " if last else "│  "))
+
+    for root in sorted(children.get(None, ()), key=newest, reverse=True):
+        place(root, "", "")
+    # A cycle of forks (never written, but read from disk) has no root: list it flat.
+    rows += [(info, "") for info in records if info.id not in placed]
+    return rows
+
+
 class SessionBrowser:
     """Full-screen browser over saved sessions: list, per-turn detail, and search.
 
@@ -132,7 +176,9 @@ class SessionBrowser:
         # keystroke does not rebuild it from every transcript in scope.
         self._haystacks: dict[tuple[str, bool], list[str]] = {}
         self.first_match: int | None = None
-        self._titles: dict[str, str] = {}
+        self._titles: dict[str, tuple[str, str]] = {}
+        # Each visible session's fork guide (`├─ `), empty while searching.
+        self._guides: dict[str, str] = {}
         self._refreshing = False
         self.pending_delete: str | None = None
         self.status = ""
@@ -376,13 +422,20 @@ class SessionBrowser:
             if name := display_name(info):
                 first = f"{name} · {first}"
             when = info.updated[5:16].replace("T", " ")
-            self._titles[info.id] = f"{marker}{when}  {info.id[:8]}  {plain(first, limit=None)}"
-        return self._titles[info.id]
+            self._titles[info.id] = (
+                f"{marker}{when}  ",
+                f"{info.id[:8]}  {plain(first, limit=None)}",
+            )
+        # The guide sits after the date, so dates stay in one column.
+        start, rest = self._titles[info.id]
+        return start + self._guides.get(info.id, "") + rest
 
     def heading(self, info: SessionInfo, shown: int, total: int) -> str:
         parts = [info.id[:8], plain(info.model, 40), info.updated[:16].replace("T", " ")]
         if name := display_name(info):
             parts.insert(0, plain(name, 60))
+        if info.forked_from:
+            parts.append(f"forked from {info.forked_from[:8]}")
         if info.id == self.active_id:
             parts.append("active")
         noun = "turn" if total == 1 else "turns"
@@ -396,6 +449,11 @@ class SessionBrowser:
         if self.words():
             # sorted() is stable, so equally good matches stay newest first.
             self.visible.sort(key=self.rank, reverse=True)
+            self._guides = {}
+        else:
+            forest = fork_forest(self.visible)
+            self.visible = [info for info, _ in forest]
+            self._guides = {info.id: guide for info, guide in forest if guide}
         selected = next((i for i, info in enumerate(self.visible) if info is previous), 0)
         lines = [self.title(info) for info in self.visible]
         text = "\n".join(lines) or "No matching sessions."

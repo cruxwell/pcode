@@ -52,6 +52,8 @@ class SessionInfo(BaseModel):
     name: str | None = None
     # Asked of the model beside the first turn (`session_naming`); `name` wins.
     title: str | None = None
+    # The session this one was copied from (`--fork`, `/switch fork`); /resume nests it there.
+    forked_from: str | None = None
     turns: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -955,7 +957,13 @@ class SavedSession(SessionJournal):
                 origin.close()
             stamp = now()
             info = info.model_copy(
-                update={"id": identity, "created": stamp, "updated": stamp, "packages": versions()}
+                update={
+                    "id": identity,
+                    "created": stamp,
+                    "updated": stamp,
+                    "packages": versions(),
+                    "forked_from": source.name,
+                }
             )
             session = cls(directory, info)
         except BaseException:

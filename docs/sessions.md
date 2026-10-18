@@ -57,6 +57,9 @@ Inside a hosted session:
 - `/switch new` starts a new session and switches to it. `/switch new PROMPT`
   starts one working on PROMPT and leaves it in the background; this terminal
   stays where it is.
+- `/switch fork` and `/switch fork PROMPT` do the same with a copy of this
+  conversation, in a worktree of its own
+  ([forking](#forking-a-session-on-purpose)).
 - `/resume` resumes a saved conversation in a host of its own, or shows it where
   it is already running.
 - `/restart` restarts this session's host on the pcode installed now and picks the
@@ -212,7 +215,10 @@ process already has open
 `/resume` opens a full-screen browser of saved conversations in the current
 repository and its linked worktrees (or the exact workspace outside Git), newest
 first and labeled by date, short session ID, name, and first prompt, with the
-selected session's prompts, responses, and tool calls alongside.
+selected session's prompts, responses, and tool calls alongside. A
+[fork](#forking-a-session-on-purpose) is listed under the session it was copied
+from, so a family of attempts reads as a tree, ordered by its most recently
+updated member. Searching lists matches flat, best first.
 
 - It opens in the search line: typing searches prompts, responses, and tool calls
   (file paths, shell commands) across sessions. A session is listed when every
@@ -303,6 +309,25 @@ try a different direction from the same history while keeping the original
 conversation exactly as it was. The copy gets its own ID and works in the same
 directory as the original, as above. To branch from an earlier point inside one
 session instead, use [`/tree`](conversation-tree.md).
+
+`/switch fork` does this from inside the session, for parallel work that should
+not share files. The copy runs in a background host and, in a git repository, in
+a new `pcode-<id>` worktree started from the commit this session's checkout is
+on. Uncommitted changes stay behind, and pcode says so. Run mid-turn, the copy
+starts from the turn's last settled step, as any copy of a running session does.
+With a prompt, `/switch fork PROMPT` sets the copy working on it and this terminal
+stays where it is, even if this session runs in the terminal and is mid-turn; bare,
+the terminal switches to the copy. Outside git, or before the first commit, the
+copy shares this session's directory instead.
+
+The fork's worktree merges into the mainline like any session's. Its branch
+starts with every commit this session had made when you forked, so merging the
+fork lands those too. A fork that never committed anything past that point is
+removed on exit like any untouched worktree, and this session's commits stay
+where they were.
+
+Every copy records the session it came from: `/resume` lists it under that
+session and its header says `forked from <id>`.
 
 ### When the workspace was deleted
 

@@ -367,8 +367,37 @@ def is_untouched(worktree: Worktree) -> bool:
     return not keep_reason(worktree)
 
 
-def delete_branch(worktree: Worktree) -> None:
-    """Drop a fully merged branch; `-d` refuses anything unmerged, which is the point."""
+def fork_untouched(worktree: Worktree, base: str) -> bool:
+    """A forked session's worktree with nothing of its own to lose.
+
+    It starts at its original's commit (`base`), so `unmerged_commits` counts
+    the original's work too, and a fork that did nothing would never look
+    untouched. Here it is when the checkout is clean, has no commit past
+    `base`, and another branch still holds `base`, so deleting it loses nothing.
+    """
+    status = _git(worktree.path, "status", "--porcelain", check=False)
+    if status.returncode or status.stdout.strip():
+        return False
+    ahead = _git(worktree.path, "rev-list", "--count", f"{base}..HEAD", check=False)
+    if ahead.returncode or ahead.stdout.strip() != "0":
+        return False
+    holders = _git(
+        worktree.main,
+        "for-each-ref",
+        "--contains",
+        base,
+        "--format=%(refname:short)",
+        "refs/heads",
+        check=False,
+    )
+    return any(name != worktree.branch for name in holders.stdout.split())
+
+
+def delete_branch(worktree: Worktree, *, force: bool = False) -> None:
+    """Drop a fully merged branch; `-d` refuses anything unmerged, which is the point.
+
+    `force` is for a branch whose commits another branch is known to hold.
+    """
     from pcode.task_worktrees import records
 
     # Integrated children still need their parent's ref as the cleanup safety anchor,
@@ -379,7 +408,7 @@ def delete_branch(worktree: Worktree) -> None:
     ):
         return
     if worktree.branch != DETACHED:
-        _git(worktree.main, "branch", "-d", worktree.branch, check=False)
+        _git(worktree.main, "branch", "-D" if force else "-d", worktree.branch, check=False)
 
 
 def finish(worktree: Worktree) -> str:
@@ -577,6 +606,16 @@ def leave_worktree(workspace: Path, session, *, ask, notify, merge: bool = True)
         dirty = is_dirty(linked.path)
         unmerged = unmerged_commits(linked)
         untouched = ours and is_untouched(linked)
+        # A fork (`/switch fork`) starts at its original's commit, recorded as
+        # its start: what lies before that is the original's to merge.
+        info = getattr(session, "info", None)
+        fork_base = (
+            getattr(info, "start_commit", None) if getattr(info, "forked_from", None) else None
+        )
+        abandoned_fork = (
+            not untouched and ours and fork_base is not None and fork_untouched(linked, fork_base)
+        )
+        untouched = untouched or abandoned_fork
     except WorktreeError:
         return False
     if session is not None:
@@ -609,7 +648,7 @@ def leave_worktree(workspace: Path, session, *, ask, notify, merge: bool = True)
     try:
         if untouched:
             remove(linked)
-            delete_branch(linked)
+            delete_branch(linked, force=abandoned_fork)
             deleted = session is not None and session.info.turns == 0
             if deleted:
                 session.close()

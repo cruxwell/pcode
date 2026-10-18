@@ -374,9 +374,10 @@ class PreviewApp:
             self.controller.registry.find("/rename"),
             Command(
                 "/switch",
-                "Switch to another running session; 'new [PROMPT]' starts one in the background",
+                "Switch to another running session; 'new [PROMPT]' starts one in the background, "
+                "'fork [PROMPT]' a copy of this one in its own worktree",
                 self.switch,
-                ("new",),
+                ("new", "fork"),
                 free_arguments=True,
                 group="Session",
             ),
@@ -1422,7 +1423,16 @@ class PreviewApp:
             raise ValueError("/switch needs a model; this is a local UI preview.")
         if argument.strip() == "-" and self.previous_host is None:
             raise ValueError("No previous session in this terminal yet; /switch lists them all.")
-        if not self.hosted and (self.activity.busy or self.activity.queued_prompts):
+        start = _session_start(argument)
+        if start is not None and start[0] == "fork" and self.active_session_id() is None:
+            raise ValueError(
+                "Nothing to fork yet: a session is saved with its first prompt. "
+                "/switch new starts an empty one."
+            )
+        # With a prompt, `new` and `fork` leave the new session working in the
+        # background, and this terminal stays where it is.
+        stays = start is not None and bool(start[1])
+        if not stays and not self.hosted and (self.activity.busy or self.activity.queued_prompts):
             raise ValueError(
                 "This session runs in this terminal, so leaving it stops its turn. "
                 "Wait or cancel, then /switch."
@@ -1600,8 +1610,12 @@ class PreviewApp:
         previous = argument == "-"
         if previous:
             argument = self.previous_host or ""
-        if argument == "new" or argument.startswith("new "):
-            await self.start_host_session(argument[3:].strip())
+        if start := _session_start(argument):
+            action, prompt = start
+            if action == "fork":
+                await self.fork_session(prompt)
+            else:
+                await self.start_host_session(prompt)
             return
         current = getattr(self.runtime, "id", None) if self.hosted else None
         if argument:
@@ -1713,14 +1727,44 @@ class PreviewApp:
             return
         await self.adopt_controller(controller, welcome, f"Switched to session {entry.id}")
 
+    async def fork_session(self, prompt: str) -> None:
+        """`/switch fork`: continue a copy of this conversation in a host of its own.
+
+        The copy has this conversation's active branch, up to its last settled
+        step when a turn is running, and in git a worktree of its own started
+        from the commit this workspace is on.
+        """
+        from pcode import worktree
+
+        identity = self.active_session_id()
+        if identity is None:  # `switch` checked; the session cannot go unsaved since.
+            return
+        workspace = self.workspace
+        if await asyncio.to_thread(worktree.head_commit, workspace) is None:
+            outside = await asyncio.to_thread(worktree.main_checkout, workspace) is None
+            why = "is not a git checkout" if outside else "has no commit to branch from"
+            self.transcript.note(f"{workspace} {why}, so the fork shares it with this session.")
+        elif await asyncio.to_thread(worktree.is_dirty, workspace):
+            self.transcript.note(
+                "Uncommitted changes here stay behind: the fork's worktree starts from HEAD."
+            )
+        await self.start_host_session(prompt, resume=identity, fork=True)
+
     async def start_host_session(
-        self, prompt: str = "", *, resume: str | None = None, note: str | None = None
+        self,
+        prompt: str = "",
+        *,
+        resume: str | None = None,
+        note: str | None = None,
+        fork: bool = False,
     ) -> None:
         """Start a host for a new (or resumed) conversation beside this one.
 
         A new one starts from the main checkout, so with the worktree setting on
-        it gets its own worktree rather than sharing this one. With a prompt it
-        is left working in the background; without, this terminal switches to it.
+        it gets its own worktree rather than sharing this one. A `fork` of
+        `resume` continues a copy of it in a worktree cut from this one's HEAD.
+        With a prompt it is left working in the background; without, this
+        terminal switches to it.
         """
         from pcode import worktree
         from pcode.remote import spawn_host, wait_for_host
@@ -1728,9 +1772,13 @@ class PreviewApp:
         base = (
             self.workspace if resume else worktree.main_checkout(self.workspace) or self.workspace
         )
-        wait = self.activity.begin_wait(
-            f"Resuming {resume[:8]} in a new session host" if resume else "Starting a session host"
-        )
+        if fork:
+            waiting = f"Forking {resume[:8]} into a new session host"
+        elif resume:
+            waiting = f"Resuming {resume[:8]} in a new session host"
+        else:
+            waiting = "Starting a session host"
+        wait = self.activity.begin_wait(waiting)
         try:
             identity, process, log = await asyncio.to_thread(
                 spawn_host,
@@ -1738,6 +1786,8 @@ class PreviewApp:
                 workspace=base,
                 resume=resume,
                 session_dir=self.session_dir,
+                fork=fork,
+                worktree=fork,
             )
             self.transcript.note(f"Starting session {identity}… (log: {log})")
             if prompt:
@@ -1752,16 +1802,20 @@ class PreviewApp:
         if prompt:
             controller.submit(prompt, "queue")
             controller.close()
+            what = f"Forked into session {identity}, which is" if fork else f"Session {identity} is"
             self.transcript.note(
-                f"Session {identity} is working on it in the background. "
+                f"{what} working on it in the background. "
                 "/switch shows it; this terminal stays here."
             )
             if self._host_watch is not None:
                 self._host_watch()
             return
-        what = (
-            f"Resumed {resume} in session host {identity}" if resume else f"New session {identity}"
-        )
+        if fork:
+            what = f"Forked into session {identity}"
+        elif resume:
+            what = f"Resumed {resume} in session host {identity}"
+        else:
+            what = f"New session {identity}"
         await self.adopt_controller(controller, welcome, f"{note} ({identity})" if note else what)
 
     async def adopt_controller(
@@ -3174,6 +3228,14 @@ async def _stopping_provider_processes(main):
         return await main
     finally:
         await shutdown()
+
+
+def _session_start(argument: str) -> tuple[str, str] | None:
+    """`/switch new [PROMPT]` or `fork [PROMPT]` as (action, prompt); None for a host."""
+    words = argument.split(maxsplit=1)
+    if words and words[0] in ("new", "fork"):
+        return words[0], words[1] if len(words) > 1 else ""
+    return None
 
 
 def forked_note(saved) -> str:
