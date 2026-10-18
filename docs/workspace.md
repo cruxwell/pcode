@@ -84,6 +84,28 @@ one lesson the evidence best supports and proposes the cheapest change that
 carries it, as exact diffs. Nothing changes until you approve, and "nothing
 worth changing" is a normal answer.
 
+It also sorts what went wrong. A step that was skipped, a convention nobody
+mentioned, or a misleading tool result can be fixed with a file. A plain
+reasoning slip can't, so it doesn't produce a lesson. Deleting a rule that
+turned out false or stale counts as a lesson too, and is often the best one.
+
+**Looking across sessions.** One session is thin evidence: a mistake that
+happened once may not happen again. Widen the search to saved sessions:
+
+```
+/reflect --project            # this project, its worktrees included
+/reflect --all the tmux tests  # every project on this machine
+```
+
+The model searches past sessions for the same failure instead of reading them
+all, so a mistake made in four sessions counts as stronger evidence than one.
+It also checks whether each lesson you applied before actually stopped the
+mistake; if it came back anyway, the next proposal uses a stronger form. With
+`--all`, a lesson only goes to your user scope when it shows up in more than
+one project, and nothing from another project (names, paths, quotes) is
+copied into your files. This needs session history, which is on unless you
+turned it off with `/extensions off session_history`.
+
 **Where changes go.** Habits that would help in any project go to your user
 scope; anything about this codebase goes to the project. The prompt lists the
 exact files for this machine, worked out the same way pcode finds them for

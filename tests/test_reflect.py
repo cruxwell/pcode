@@ -72,6 +72,61 @@ def test_ships_on_and_sends_the_prompt_as_a_turn(tmp_path, home):
     assert "focus on" not in command.handler("  ")
 
 
+def test_session_scope_by_default_and_saved_sessions_on_request(home):
+    workspace = repo(home / "app")
+    [command] = load(workspace).commands
+    assert command.arguments == ("--project", "--all")
+
+    plain = command.handler("")
+    assert plain.startswith("Reflect on this session ")
+    assert "search_sessions` (scope=" not in plain
+    assert "sessions after its date" not in plain
+
+    project = command.handler("--project  the flaky test")
+    assert "focus on: the flaky test\n" in project
+    assert "search_sessions` (scope='project')" in project
+    assert "sessions after its date" in project
+    assert "span projects" not in project
+
+    everywhere = command.handler("--all")
+    assert "search_sessions` (scope='all')" in everywhere
+    assert "never copy another project's names" in everywhere
+    assert "focus on" not in everywhere
+    for prompt in (plain, project, everywhere):
+        assert "{" not in prompt
+        assert "lessons come only from `harness` rows" in prompt
+        assert "A removal is a lesson" in prompt
+
+
+@pytest.mark.parametrize(
+    ("argument", "expected"),
+    [
+        ("", (None, "")),
+        ("  why the tmux test --all hung ", (None, "why the tmux test --all hung")),
+        ("--all", ("--all", "")),
+        ("--project tmux", ("--project", "tmux")),
+    ],
+)
+def test_parse_arguments(argument, expected):
+    assert reflect.parse_arguments(argument) == expected
+
+
+@pytest.mark.parametrize("argument", ["--everything", "--all --project", "--project --project x"])
+def test_bad_options_are_reported_not_sent(home, argument):
+    notices = []
+    extension = load_extension(
+        Extension("reflect", BUNDLED_DIR / "reflect.py", "bundled"),
+        repo(home / "app"),
+        ExtensionUI(lambda text, level: notices.append((level, text))),
+        set(),
+        set(),
+    )
+    [command] = extension.commands
+    assert command.handler(argument) is None
+    [(level, _)] = notices
+    assert level == "error"
+
+
 def test_workers_get_no_command(home):
     assert load(repo(home / "app"), is_worker=True).commands == []
 
