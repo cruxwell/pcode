@@ -416,8 +416,16 @@ sign in, the model leaves it on screen and asks; log in there and tell it when
 you are done. A `browser` sub-agent shares the same window, so a multi-step
 task can run without every page landing in the main context. `/browser off`
 quits that Chrome and removes the tools; a fresh pcode starts with them off.
-All three work mid-turn: the running turn keeps the tools it started with, and
-the change applies once it finishes.
+
+Files move between the browser and your disk directly. `save_file()` saves the
+open tab, a URL, or what a download button starts, using the browser's logins,
+so a lab report or an invoice behind a sign-in lands as a real file.
+`upload_file()` hands local files to a file input, a button that opens the
+file picker, or a drag-and-drop zone such as Google Drive's. Together they
+move a file from one signed-in site to another.
+
+All three commands work mid-turn: the running turn keeps the tools it started
+with, and the change applies once it finishes.
 
 pcode starts Chrome with its own profile under `~/.local/state/pcode/chrome`,
 apart from your everyday one. Because it is your real Chrome rather than

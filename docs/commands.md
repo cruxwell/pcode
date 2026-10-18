@@ -397,9 +397,7 @@ while the next calls run, newest last, so parallel calls each get a row. The
 turn's three latest calls are shown, fewer in a short pane;
 `/config set tool_max_lines 1` keeps just the call the status row is on.
 A finished call's row clears after 10 seconds (`tool_linger_seconds`; `0` keeps
-it until newer calls push it out). The thought keeps the room it grew to for a
-moment after it shrinks, so the tasks and your draft don't jump on every
-step.
+it until newer calls push it out).
 
 Work pcode runs itself has no tool row, just its detail on the status row:
 

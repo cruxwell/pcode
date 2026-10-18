@@ -18,7 +18,6 @@ from pcode.app import PreviewApp
 from pcode.commands import CommandRegistry
 from pcode.runtime import ToolStarted, ToolSummary
 from pcode.ui import (
-    BAND_HOLD_SECONDS,
     Activity,
     PromptLayout,
     create_prompt,
@@ -175,7 +174,20 @@ def test_the_band_takes_the_header_shade_and_its_divider_the_box(monkeypatch):
     # and prompt keep the box's shade.
     assert header not in shades[status - 1] and box not in shades[status - 1], shades
     assert all(shades[row] == {header} for row in range(status, status + 3)), shades
-    assert all(shades[row] == {box} for row in range(status + 3, status + 8)), shades
+    assert all(shades[row] == {box} for row in range(status + 3, status + 7)), shades
+    # No blank row between the thought and the tasks: the change of shade
+    # parts them.
+    assert lines[status + 3].startswith("│✔ Read the config loader"), lines
+
+
+@pytest.mark.usefixtures("true_color")
+def test_a_shaded_band_keeps_a_blank_row_over_the_draft(monkeypatch):
+    monkeypatch.setattr(theme, "_background", (BACKGROUND, "dark"))
+    lines, _ = render(shaded=True, configure=lambda activity: activity.plan.clear())
+    status = status_index(lines)
+    assert lines[status + 2].startswith("│❝ ")
+    assert lines[status + 3].strip("│ ├┤─") == ""
+    assert lines[status + 4].startswith("│❯"), lines
 
 
 @pytest.fixture
@@ -203,43 +215,23 @@ def layout():
         yield layout
 
 
-def test_the_band_grows_at_once_and_gives_rows_back_after_a_hold(layout):
+def test_the_band_follows_the_thought_without_padding(layout):
     activity = layout.activity
-    clock = [100.0]
-    with patch("pcode.ui.monotonic", lambda: clock[0]):
-        tall = len(layout.band_rows())
-        assert tall == 2  # The thought wraps to two rows at this width.
-        # A new thought starting over on one row keeps the band's height.
-        activity.forget_thought()
-        activity.think("Short")
-        rows = layout.band_rows()
-        assert len(rows) == tall and rows[-1] == []
-        clock[0] += BAND_HOLD_SECONDS - 0.1
-        assert len(layout.band_rows()) == tall
-        clock[0] += 0.2
-        assert len(layout.band_rows()) == 1
-        # Growing back never waits.
-        activity.forget_thought()
-        activity.think(THOUGHT)
-        assert len(layout.band_rows()) == tall
+    assert len(layout.band_rows()) == 2  # The thought wraps to two rows here.
+    # A shorter thought shrinks the band at once: no blank rows held under it.
+    activity.forget_thought()
+    activity.think("Short")
+    assert len(layout.band_rows()) == 1 and all(layout.band_rows())
+    activity.forget_thought()
+    activity.think(THOUGHT)
+    assert len(layout.band_rows()) == 2
 
 
 def test_an_empty_band_goes_at_once(layout):
-    with patch("pcode.ui.monotonic", lambda: 100.0):
-        assert layout.band_rows()
-        layout.activity.show_activity = False
-        assert layout.band_rows() == []
-        assert layout.band_height() == 0
-
-
-def test_a_resize_drops_the_held_height(layout):
-    activity = layout.activity
-    with patch("pcode.ui.monotonic", lambda: 100.0):
-        assert len(layout.band_rows()) == 2
-        activity.forget_thought()
-        activity.think("Short")
-        with patch.object(layout, "size", return_value=Size(rows=40, columns=60)):
-            assert len(layout.band_rows()) == 1
+    assert layout.band_rows()
+    layout.activity.show_activity = False
+    assert layout.band_rows() == []
+    assert layout.band_height() == 0
 
 
 def test_a_height_cap_gives_the_thought_up_first(layout):

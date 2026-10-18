@@ -5,6 +5,7 @@ around it, and a fake page stands in for the launched browser.
 """
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -73,7 +74,7 @@ def test_rebound_worker_does_not_close_parent_browser(tmp_path, fresh_state, mon
 def test_on_adds_the_tools_and_a_subagent_sharing_one_session(tmp_path, fresh_state):
     fresh_state.enabled = True
     loaded, extension = browser_extension(tmp_path)
-    assert extension.summary() == "20 tools, @browser, /browser"
+    assert extension.summary() == "22 tools, @browser, /browser"
     assert [c.id for c in extension.capabilities] == ["browser", "ext.browser"]
     capability = extension.capabilities[0]
     (delegate,) = loaded.subagents
@@ -721,3 +722,274 @@ def test_subagent_reaches_delegate_task(tmp_path, monkeypatch):
     agent = create_agent("test", tmp_path, subagents=[delegate])
     assert agent.run_sync("hi", model=FunctionModel(stream_function=respond)).output == "done"
     assert calls == 3  # parent, child, parent
+
+
+def _toolset_on(fresh_state, page):
+    """The pcode toolset driving `page`, with no browser behind it."""
+    toolset = fresh_state.open()
+    fresh_state.session.ensure_page = AsyncMock(return_value=page)
+    fresh_state.session.page = page
+    return toolset
+
+
+def _fake_page(**overrides):
+    page = SimpleNamespace(**{"url": "https://x/doc", "frames": [], **overrides})
+    page.frames = page.frames or [page]  # The main frame alone: no child frames.
+    return page
+
+
+def test_reads_come_back_whole_while_action_text_stays_capped(fresh_state):
+    """A capped read was cut to the spill threshold, so the spilled copy lost data."""
+    long = "x" * 50_000
+    page = _fake_page(
+        evaluate=AsyncMock(return_value=long), inner_text=AsyncMock(return_value=long)
+    )
+    toolset = _toolset_on(fresh_state, page)
+
+    async def scenario():
+        assert await toolset.execute_js("big()") == long
+        assert await toolset.get_text("#data") == long
+        assert len(await toolset.get_text()) == len(long)
+
+    asyncio.run(scenario())
+    capped = toolset._truncate_output(long)
+    assert len(capped) <= browser_state.MAX_CONTENT_TOKENS * 4
+
+
+def test_frame_sweep_skips_frames_that_are_not_rendered(fresh_state):
+    """A hidden frame's innerText is its raw text, inline scripts and all."""
+
+    main = SimpleNamespace(parent_frame=None)
+    elements = []
+
+    def frame(url, rendered, text, parent=main):
+        element = SimpleNamespace(evaluate=AsyncMock(return_value=rendered), dispose=AsyncMock())
+        elements.append(element)
+        return SimpleNamespace(
+            url=url,
+            parent_frame=parent,
+            frame_element=AsyncMock(return_value=element),
+            inner_text=AsyncMock(return_value=text),
+        )
+
+    hidden = frame("https://x/hidden", False, "window.WIZ_global_data = {...}")
+    # Shown in its own box, but inside the hidden frame, so not laid out either.
+    nested = frame("https://x/nested", True, "var junk = 1;", parent=hidden)
+    shown = frame("https://x/shown", True, "checkout")
+    page = _fake_page(frames=[main, hidden, nested, shown])
+    toolset = _toolset_on(fresh_state, page)
+    texts = asyncio.run(toolset._frame_text(page, 1000))
+    assert texts == ["[frame https://x/shown]\ncheckout"]
+    hidden.inner_text.assert_not_awaited()
+    nested.inner_text.assert_not_awaited()
+    # Every handle is released: a page that never navigates would pile them up.
+    assert all(e.dispose.await_count == e.evaluate.await_count for e in elements)
+
+
+def test_screenshots_are_taken_in_css_pixels(fresh_state):
+    """On HiDPI a device-pixel image is twice the coordinates `click('x,y')` takes."""
+    page = _fake_page(screenshot=AsyncMock(return_value=b"\x89PNG"))
+    toolset = _toolset_on(fresh_state, page)
+    result = asyncio.run(toolset.screenshot())
+    assert page.screenshot.await_args.kwargs["scale"] == "css"
+    assert result.content[0].data == b"\x89PNG"
+
+
+def _response(status, body=b"", location=None):
+    return SimpleNamespace(
+        status=status,
+        ok=200 <= status < 300,
+        headers={"location": location} if location else {},
+        body=AsyncMock(return_value=body),
+        dispose=AsyncMock(),
+    )
+
+
+def test_save_file_uses_the_logins_cookies_then_falls_back_to_the_page(fresh_state, tmp_path):
+    import base64
+
+    responses = [_response(200, b"%PDF-1.4"), _response(403)]
+    request = SimpleNamespace(get=AsyncMock(side_effect=responses))
+    page = _fake_page(
+        context=SimpleNamespace(request=request),
+        evaluate=AsyncMock(return_value=base64.b64encode(b"from the tab").decode()),
+    )
+    toolset = _toolset_on(fresh_state, page)
+
+    async def scenario():
+        fetched = await toolset.download(tmp_path / "a" / "lab.pdf", "https://x/lab.pdf")
+        assert fetched.startswith("Saved 8 bytes")
+        # The signed link expired, but the tab still holds what it loaded.
+        fallback = await toolset.download(tmp_path / "tab.pdf")
+        assert fallback.startswith("Saved 12 bytes")
+
+    asyncio.run(scenario())
+    assert (tmp_path / "a" / "lab.pdf").read_bytes() == b"%PDF-1.4"
+    assert (tmp_path / "tab.pdf").read_bytes() == b"from the tab"
+    assert request.get.await_args_list[1].args[0] == "https://x/doc"
+
+
+def test_upload_file_fills_an_input_or_answers_the_picker(fresh_state, tmp_path):
+    from contextlib import asynccontextmanager
+
+    upload = tmp_path / "labs.pdf"
+    upload.write_bytes(b"%PDF")
+    chooser = SimpleNamespace(set_files=AsyncMock())
+
+    def locator(is_input):
+        target = SimpleNamespace(
+            evaluate=AsyncMock(return_value=is_input),
+            set_input_files=AsyncMock(),
+            click=AsyncMock(),
+        )
+        return SimpleNamespace(first=target)
+
+    @asynccontextmanager
+    async def expect_file_chooser(timeout):
+        async def value():
+            return chooser
+
+        yield SimpleNamespace(value=value())
+
+    targets = {"#input": locator(True), "#button": locator(False)}
+    page = _fake_page(locator=targets.__getitem__, expect_file_chooser=expect_file_chooser)
+    toolset = _toolset_on(fresh_state, page)
+
+    async def scenario():
+        assert (await toolset.upload("#input", [upload])).startswith("Gave labs.pdf")
+        assert (await toolset.upload("#button", [upload])).startswith("Gave labs.pdf")
+        missing = await toolset.upload("#input", [tmp_path / "gone.pdf"])
+        assert missing.startswith("Error: no such file")
+
+    asyncio.run(scenario())
+    targets["#input"].first.set_input_files.assert_awaited_once()
+    targets["#button"].first.click.assert_awaited_once()
+    chooser.set_files.assert_awaited_once()
+
+
+def test_file_tools_resolve_paths_against_the_workspace(tmp_path, fresh_state):
+    fresh_state.enabled = True
+    _, extension = browser_extension(tmp_path)
+    tools = extension.capabilities[0].get_toolset().toolsets[0].tools
+    fresh_state.toolset.download = AsyncMock(return_value="saved")
+    result = asyncio.run(tools["save_file"].function("out/lab.pdf", url="https://x/a"))
+    assert result == "saved"
+    assert fresh_state.toolset.download.await_args.args[0] == tmp_path / "out" / "lab.pdf"
+    both = asyncio.run(tools["save_file"].function("a", url="https://x", selector="#b"))
+    assert both.startswith("Error")
+    assert "save_file" in str(extension.capabilities[0].get_instructions())
+
+
+def test_save_file_checks_every_redirect_against_the_egress_policy(fresh_state, tmp_path):
+    """The request client is not behind the page's route guard, so each hop is checked."""
+    request = SimpleNamespace(
+        get=AsyncMock(side_effect=[_response(302, location="https://evil/steal")])
+    )
+    page = _fake_page(context=SimpleNamespace(request=request))
+    toolset = _toolset_on(fresh_state, page)
+
+    async def decide(egress):
+        return "refused host" if "evil" in egress.url else None
+
+    fresh_state.session.decide = decide
+    result = asyncio.run(toolset.download(tmp_path / "f.pdf", "/report.pdf"))
+    assert result == "Error: refused host: https://evil/steal"
+    # A relative URL is the page's: resolved against it before anything is fetched.
+    assert request.get.await_args.args[0] == "https://x/report.pdf"
+    assert request.get.await_args.kwargs["max_redirects"] == 0
+    assert not (tmp_path / "f.pdf").exists()
+
+
+def test_save_file_fetches_a_download_playwright_cannot_save(fresh_state, tmp_path):
+    """Over CDP, Chrome's default context keeps downloads from Playwright."""
+    from contextlib import asynccontextmanager
+
+    from playwright.async_api import Error as PlaywrightError
+
+    download = SimpleNamespace(
+        url="https://x/export.csv", save_as=AsyncMock(side_effect=PlaywrightError("no"))
+    )
+
+    @asynccontextmanager
+    async def expect_download(timeout):
+        async def value():
+            return download
+
+        yield SimpleNamespace(value=value())
+
+    request = SimpleNamespace(get=AsyncMock(return_value=_response(200, b"a,b")))
+    page = _fake_page(
+        context=SimpleNamespace(request=request),
+        expect_download=expect_download,
+        click=AsyncMock(),
+    )
+    toolset = _toolset_on(fresh_state, page)
+    result = asyncio.run(toolset.download(tmp_path / "out.csv", selector="#export"))
+    assert result.startswith("Saved 3 bytes")
+    page.click.assert_awaited_once()
+    assert request.get.await_args.args[0] == "https://x/export.csv"
+
+
+def test_upload_file_drops_files_on_a_zone(fresh_state, tmp_path):
+    import base64
+
+    upload = tmp_path / "labs.pdf"
+    upload.write_bytes(b"%PDF")
+    target = SimpleNamespace(evaluate=AsyncMock())
+    page = _fake_page(locator=lambda selector: SimpleNamespace(first=target))
+    toolset = _toolset_on(fresh_state, page)
+    result = asyncio.run(toolset.upload("#zone", [upload], drop=True))
+    assert result.startswith("Dropped labs.pdf")
+    script, payload = target.evaluate.await_args.args
+    assert "DataTransfer" in script
+    assert payload == [
+        {"name": "labs.pdf", "type": "application/pdf", "data": base64.b64encode(b"%PDF").decode()}
+    ]
+
+
+def test_file_tools_refuse_protected_and_credential_paths(tmp_path, fresh_state):
+    """Even with the sandbox off: a page can ask for either."""
+    from pcode import sandbox
+
+    fresh_state.enabled = True
+    _, extension = browser_extension(tmp_path)
+    tools = extension.capabilities[0].get_toolset().toolsets[0].tools
+    fresh_state.toolset.download = AsyncMock()
+    fresh_state.toolset.upload = AsyncMock()
+    hook = asyncio.run(tools["save_file"].function(".git/hooks/pre-commit", url="https://x"))
+    assert "protected location" in hook
+    key = str(sandbox.real(Path.home()) / ".ssh" / "id_ed25519")
+    sent = asyncio.run(tools["upload_file"].function("#f", [key]))
+    assert "holds credentials" in sent
+    fresh_state.toolset.download.assert_not_awaited()
+    fresh_state.toolset.upload.assert_not_awaited()
+
+
+def test_harness_browser_internals_still_exist():
+    """`PcodeBrowserToolset` overrides and calls these; a rename must fail here, loudly."""
+    import inspect
+
+    from pydantic_ai_harness.playwright import PlaywrightBrowserToolset
+    from pydantic_ai_harness.playwright import _toolset as harness
+
+    assert callable(harness._truncate) and callable(harness._without_credentials)
+    for name in (
+        "_truncate_output",
+        "_frame_text",
+        "screenshot",
+        "_in_operation",
+        "_refuse",
+        "_error",
+        "_await_with_timeout",
+        "_oversized_screenshot_error",
+    ):
+        assert callable(getattr(PlaywrightBrowserToolset, name)), name
+    assert list(inspect.signature(PlaywrightBrowserToolset._frame_text).parameters) == [
+        "self",
+        "page",
+        "budget_ms",
+    ]
+    assert (
+        "governed_by_navigation"
+        in inspect.signature(PlaywrightBrowserToolset._in_operation).parameters
+    )

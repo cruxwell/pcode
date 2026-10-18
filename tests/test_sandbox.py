@@ -347,3 +347,35 @@ def test_file_tools_are_checked_where_the_tool_resolves_them(repo, monkeypatch):
     )
     assert not escaped.exists()
     assert "outside the writable paths" in results[0]
+
+
+def test_browser_file_tools_are_checked_like_file_tools(repo, tmp_path, monkeypatch):
+    """A page can ask for a download into a hook or an upload of a key file."""
+    from pydantic_ai.capabilities import Capability
+
+    monkeypatch.delenv("EXA_API_KEY", raising=False)
+    done = []
+
+    def save_file(path: str) -> str:
+        done.append(("save", path))
+        return "saved"
+
+    def upload_file(selector: str, paths: list[str]) -> str:
+        done.append(("upload", paths))
+        return "uploaded"
+
+    key = sandbox.real(Path.home()) / ".ssh" / "id_ed25519"
+    api = load(repo, monkeypatch)
+    results = run(
+        repo,
+        [*api.capabilities(), Capability(tools=[save_file, upload_file])],
+        [
+            ("save_file", {"path": "docs/lab.pdf"}),
+            ("save_file", {"path": ".git/hooks/pre-commit"}),
+            ("upload_file", {"selector": "#f", "paths": ["docs/lab.pdf", str(key)]}),
+        ],
+    )
+    assert results[0] == "saved"
+    assert "protected location" in results[1]
+    assert "holds credentials" in results[2]
+    assert done == [("save", "docs/lab.pdf")]

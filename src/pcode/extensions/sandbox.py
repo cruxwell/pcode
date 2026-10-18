@@ -17,8 +17,10 @@ from pcode.jobs import COMMAND_SANDBOX
 
 DEFAULT_ENABLED = False
 
-WRITE_TOOLS = frozenset({"write_file", "edit_file", "create_directory"})
-READ_TOOLS = frozenset({"read_file", "list_files", "grep"})
+# `save_file` and `upload_file` are the browser's: one writes what a page
+# serves, the other hands local files to a page.
+WRITE_TOOLS = frozenset({"write_file", "edit_file", "create_directory", "save_file"})
+READ_TOOLS = frozenset({"read_file", "list_files", "grep", "upload_file"})
 
 INSTRUCTIONS = (
     "File writes and shell commands run under a write policy: the workspace's "
@@ -52,9 +54,15 @@ def setup(pcode) -> None:
         name = tool_def.name
         if name not in WRITE_TOOLS and name not in READ_TOOLS:
             return args
-        raw = str(args.get("path") or ".")
-        target = sandbox.tool_target(raw, workspace)
+        paths = args.get("paths")
+        raws = [str(p) for p in paths] if isinstance(paths, list) else [args.get("path") or "."]
         current = enforced(policy)
+        for raw in raws:
+            check(name, str(raw), current)
+        return args
+
+    def check(name: str, raw: str, current: sandbox.Policy) -> None:
+        target = sandbox.tool_target(raw, workspace)
         if name in WRITE_TOOLS and not current.can_write(target):
             pcode.ui.notify(f"Blocked write to {target}", "warning")
             if current.guards(target):
@@ -67,7 +75,6 @@ def setup(pcode) -> None:
         if not current.can_read(target):
             pcode.ui.notify(f"Blocked read of {target}", "warning")
             raise ModelRetry(f"{raw} holds credentials and is not readable.")
-        return args
 
     @pcode.hooks.on.tool_execute
     async def sandbox_shell(ctx, *, call, tool_def, args, handler):
