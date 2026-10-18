@@ -454,26 +454,27 @@ def test_bare_btw_picks_among_several_threads(monkeypatch, choose):
     assert not app.aside_view_open
 
 
-def test_the_picker_starts_on_the_list_and_enter_picks_the_selection():
+@pytest.mark.parametrize(("keys", "picks"), [("\x1b[A\r", 0), ("\x11", None)])
+def test_the_picker_starts_on_the_list_and_enter_picks_the_selection(keys, picks):
     from prompt_toolkit.input import create_pipe_input
 
     from pcode.aside_ui import AsideBrowser
 
     app, _ = seeded_app()
-    first, second = app.controller.asides.items
+    items = app.controller.asides.items
     with create_pipe_input() as pipe:
         browser = AsideBrowser(
             app.controller.asides,
-            selected=second.id,
+            selected=items[-1].id,
             pick=True,
-            edit=True,
+            key_prefix="ctrl",
             input=pipe,
             output=DummyOutput(),
         )
         assert browser.listing()
-        pipe.send_text("\x1b[A\r")  # Up to the older thread, then Enter.
+        pipe.send_text(keys)  # Up to the older thread and Enter, or Ctrl+Q to close.
         assert asyncio.run(browser.run()) is None
-    assert browser.picked == first.thread
+    assert browser.picked == (None if picks is None else items[picks].thread)
 
 
 def test_an_answer_that_opens_by_itself_never_takes_a_thread_or_a_draft():

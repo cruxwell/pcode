@@ -1907,10 +1907,8 @@ class PreviewApp:
         no command waits on it. Asked for with several threads, it lets the
         reader pick which; Ctrl+Q already goes straight back to the last one.
         """
-        from pcode.aside_ui import AsideBrowser
         from pcode.btw_view import current, open_thread
 
-        output, session = self.output, self.prompt_session
         latest = self.asides.latest()
         auto = (
             self._command_popup_generation is not None
@@ -1925,37 +1923,23 @@ class PreviewApp:
                 return None
             thread = latest.thread
             if not auto and len(self.asides.threads()) > 1:
-                thread = await self._pick_thread(latest.id)
+                browser, _ = await self._browse_asides(selected=latest.id, pick=True)
+                thread = browser.picked if browser else None
                 if thread is None:
                     return None
             open_thread(self.activity, thread)
             self.redraw()
             return None
-        self.aside_view_open = True
-        try:
-            async with self.popup(output, session) as modal_input:
-                browser = AsideBrowser(
-                    self.asides,
-                    ask=self.controller.follow_up_aside,
-                    check_bridge=self.controller.check_bridge,
-                    stop=self.controller.cancel_asides,
-                    selected=latest.id if latest else None,
-                    edit=not auto,
-                    rich_theme=self.transcript.rich_theme,
-                    code_theme=self.transcript.code_theme,
-                    color_system=self.transcript.console.color_system,
-                    input=modal_input,
-                    output=session.app.output,
-                    style=session.app.style,
-                )
-                return await browser.run()
-        except _PopupSuperseded:
-            return None
-        finally:
-            self.aside_view_open = False
+        _, request = await self._browse_asides(
+            ask=self.controller.follow_up_aside,
+            check_bridge=self.controller.check_bridge,
+            selected=latest.id if latest else None,
+            edit=not auto,
+        )
+        return request
 
-    async def _pick_thread(self, selected: str) -> str | None:
-        """The side-thread list, for `btw_view swap`; returns the thread chosen, if any."""
+    async def _browse_asides(self, **options):
+        """Run the side-answer viewer: it and what it returned, or Nones if superseded."""
         from pcode.aside_ui import AsideBrowser
 
         output, session = self.output, self.prompt_session
@@ -1965,19 +1949,17 @@ class PreviewApp:
                 browser = AsideBrowser(
                     self.asides,
                     stop=self.controller.cancel_asides,
-                    selected=selected,
-                    pick=True,
                     rich_theme=self.transcript.rich_theme,
                     code_theme=self.transcript.code_theme,
                     color_system=self.transcript.console.color_system,
                     input=modal_input,
                     output=session.app.output,
                     style=session.app.style,
+                    **options,
                 )
-                await browser.run()
-                return browser.picked
+                return browser, await browser.run()
         except _PopupSuperseded:
-            return None
+            return None, None
         finally:
             self.aside_view_open = False
 

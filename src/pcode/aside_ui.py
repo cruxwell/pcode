@@ -342,7 +342,8 @@ class AsideBrowser:
         # The key that opened the viewer closes it, as it leaves a swapped-in
         # thread; the mouse toggle that other popups keep on `q` moves to `g`.
         # Never over a half-written follow-up, which closing would lose.
-        @shortcuts.add("q", "Back to the conversation", filter=idle)
+        # Picking, `q` leaves whatever was on screen, a thread or the conversation.
+        @shortcuts.add("q", "Close" if pick else "Back to the conversation", filter=idle)
         def close_viewer(event):
             if self.input is not None and (self.input.text.strip() or self.input.prompting):
                 self.notice = "A follow-up draft is open: send or clear it, or Ctrl+C to close"
