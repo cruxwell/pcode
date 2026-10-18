@@ -1904,7 +1904,8 @@ class PreviewApp:
 
         With `btw_view swap` it draws the thread in the conversation's place
         and returns at once: the view keeps a thread itself (`keep_thread`), so
-        no command waits on it.
+        no command waits on it. Asked for with several threads, it lets the
+        reader pick which; Ctrl+Q already goes straight back to the last one.
         """
         from pcode.aside_ui import AsideBrowser
         from pcode.btw_view import current, open_thread
@@ -1922,7 +1923,12 @@ class PreviewApp:
             # opened a thread and be mid-reply, which this must not take over.
             if auto and (current(self.activity) or self._swap_hides_draft()):
                 return None
-            open_thread(self.activity, latest.thread)
+            thread = latest.thread
+            if not auto and len(self.asides.threads()) > 1:
+                thread = await self._pick_thread(latest.id)
+                if thread is None:
+                    return None
+            open_thread(self.activity, thread)
             self.redraw()
             return None
         self.aside_view_open = True
@@ -1943,6 +1949,33 @@ class PreviewApp:
                     style=session.app.style,
                 )
                 return await browser.run()
+        except _PopupSuperseded:
+            return None
+        finally:
+            self.aside_view_open = False
+
+    async def _pick_thread(self, selected: str) -> str | None:
+        """The side-thread list, for `btw_view swap`; returns the thread chosen, if any."""
+        from pcode.aside_ui import AsideBrowser
+
+        output, session = self.output, self.prompt_session
+        self.aside_view_open = True
+        try:
+            async with self.popup(output, session) as modal_input:
+                browser = AsideBrowser(
+                    self.asides,
+                    stop=self.controller.cancel_asides,
+                    selected=selected,
+                    pick=True,
+                    rich_theme=self.transcript.rich_theme,
+                    code_theme=self.transcript.code_theme,
+                    color_system=self.transcript.console.color_system,
+                    input=modal_input,
+                    output=session.app.output,
+                    style=session.app.style,
+                )
+                await browser.run()
+                return browser.picked
         except _PopupSuperseded:
             return None
         finally:

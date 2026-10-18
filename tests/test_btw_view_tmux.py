@@ -1,9 +1,10 @@
 """The /btw thread view over a real terminal: the thread swaps in for the conversation."""
 
 import shutil
+import time
 
 import pytest
-from test_tmux import capture, resize
+from test_tmux import TIMEOUT, capture, resize
 from test_tmux import pane as pane
 from test_tmux import release as release
 
@@ -46,6 +47,17 @@ def history(pane) -> str:
     return pane("capture-pane", "-p", "-S", "-", "-t", "preview:0.0")
 
 
+def popup(pane, *expected: str) -> str:
+    """A full-screen popup once it shows all of `expected`; `capture` waits for the prompt."""
+    deadline = time.monotonic() + TIMEOUT
+    while time.monotonic() < deadline:
+        screen = pane("capture-pane", "-p", "-t", "preview:0.0")
+        if all(text in screen for text in expected):
+            return screen
+        time.sleep(0.05)
+    pytest.fail(f"Popup did not show {expected!r}:\n{screen}")
+
+
 def row(screen: str, text: str) -> int:
     return next(i for i, line in enumerate(screen.splitlines()) if text in line)
 
@@ -55,7 +67,10 @@ def test_btw_thread_swaps_in_for_the_conversation_and_back(pane):
     capture(pane, "❯")
     pane("send-keys", "-t", "preview:0.0", "first main message", "Enter")
     capture(pane, "message arrived intact")
+    # With two threads, a bare /btw lists them to pick one, the newest selected.
     pane("send-keys", "-t", "preview:0.0", "/btw", "Enter")
+    popup(pane, "Side questions ·", "why is the parser LL(1)?", "make cache-report")
+    pane("send-keys", "-t", "preview:0.0", "Enter")
     screen = capture(pane, "Esc back to the conversation")
     # The newest thread, in place of the conversation, scrollback and all.
     assert " btw  what does the cache key on?" in screen

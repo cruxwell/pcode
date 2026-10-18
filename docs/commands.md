@@ -143,7 +143,8 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
 - `/btw QUESTION` (alias `/side`): [ask a side question](side-questions.md) against the context the model
   is working with right now, without interrupting or queueing it. The answer is
   [swapped in](side-questions.md#swapping-a-thread-in) for the conversation when ready
-  (`btw_auto_open`), and the main editor replies to it; bare `/btw` or **Ctrl+Q** swaps it in at any time.
+  (`btw_auto_open`), and the main editor replies to it; **Ctrl+Q** swaps it in at any time,
+  and bare `/btw` lists the threads to pick one when there are several.
   You can send a [follow-up](side-questions.md#following-up) to the thread, or
   [keep it](side-questions.md#keeping-a-thread) in the conversation
   (`btw_view popup` shows threads in a [full-screen viewer](side-questions.md#the-popup)

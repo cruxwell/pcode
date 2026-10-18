@@ -409,11 +409,71 @@ def test_threads_cycle_newest_first_and_wrap():
     assert reopen_thread(activity) == second.thread
 
 
-def test_bare_btw_shows_the_newest_thread():
+def test_bare_btw_shows_a_lone_thread_at_once():
     app, _ = seeded_app()
+    del app.controller.asides.items[0]
     newest = app.controller.asides.items[-1]
     assert asyncio.run(app.read_asides()) is None
     assert app.activity.btw_thread == newest.thread
+
+
+def stub_popup(monkeypatch, app) -> None:
+    class Popup:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(app, "popup", lambda output, session: Popup())
+    app.prompt_session = SimpleNamespace(
+        app=SimpleNamespace(output=None, style=None),
+        default_buffer=SimpleNamespace(text=""),
+    )
+
+
+@pytest.mark.parametrize("choose", [True, False])
+def test_bare_btw_picks_among_several_threads(monkeypatch, choose):
+    app, _ = seeded_app()
+    first, second = app.controller.asides.items
+    opened = []
+
+    class Browser:
+        def __init__(self, asides, **kwargs):
+            opened.append((kwargs.get("selected"), kwargs.get("pick")))
+            self.picked = None
+
+        async def run(self):
+            self.picked = first.thread if choose else None
+
+    monkeypatch.setattr("pcode.aside_ui.AsideBrowser", Browser)
+    stub_popup(monkeypatch, app)
+    assert asyncio.run(app.read_asides()) is None
+    assert opened == [(second.id, True)]
+    assert app.activity.btw_thread == (first.thread if choose else None)
+    assert not app.aside_view_open
+
+
+def test_the_picker_starts_on_the_list_and_enter_picks_the_selection():
+    from prompt_toolkit.input import create_pipe_input
+
+    from pcode.aside_ui import AsideBrowser
+
+    app, _ = seeded_app()
+    first, second = app.controller.asides.items
+    with create_pipe_input() as pipe:
+        browser = AsideBrowser(
+            app.controller.asides,
+            selected=second.id,
+            pick=True,
+            edit=True,
+            input=pipe,
+            output=DummyOutput(),
+        )
+        assert browser.listing()
+        pipe.send_text("\x1b[A\r")  # Up to the older thread, then Enter.
+        assert asyncio.run(browser.run()) is None
+    assert browser.picked == first.thread
 
 
 def test_an_answer_that_opens_by_itself_never_takes_a_thread_or_a_draft():

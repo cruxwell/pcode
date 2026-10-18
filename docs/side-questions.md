@@ -112,6 +112,10 @@ completion, vi mode, `@file`s):
   conversation, however many threads there are, and from the conversation it
   shows the thread you last looked at (the newest the first time). It works
   the same in every editor mode.
+- **A bare `/btw`** lists the threads when there is more than one, with the
+  newest unread answer selected and a preview beside the list. Enter shows
+  the highlighted thread in the conversation's place; Escape leaves things as
+  they were. With a single thread it shows that one at once.
 - **Ctrl+\\** shows the next older thread, and from the oldest wraps to the
   newest. The divider says which thread of how many is shown
   (`Ctrl+\ next thread (1/3)`). With a
@@ -123,8 +127,8 @@ completion, vi mode, `@file`s):
   Ctrl+Q needs no second press.
 
 An answer that opens by itself waits while you have a draft in the editor:
-swapping then would send your half-written message to the thread. A bare
-`/btw` or Ctrl+Q shows it when you are ready.
+swapping then would send your half-written message to the thread. Ctrl+Q,
+or picking it after a bare `/btw`, shows it when you are ready.
 
 The conversation is rebuilt from what pcode keeps of it, so a very long one
 comes back trimmed the way a resize trims it (`transcript_max_chars`).

@@ -188,6 +188,10 @@ class AsideBrowser:
     replies at once, and Esc from an empty draft does what it would from the
     answer. Leave it off for a viewer that opens by itself: it could arrive
     mid-keystroke at the main prompt, and Enter would send what was typed.
+
+    With `pick`, for `btw_view swap`, the viewer only chooses a thread: it
+    opens on the list, and Enter closes it with the selected thread in
+    `picked`, for the app to swap in where the main editor replies to it.
     """
 
     def __init__(
@@ -203,9 +207,12 @@ class AsideBrowser:
         code_theme: str = "ansi_dark",
         color_system: str | None = "truecolor",
         key_prefix: str | None = None,
+        pick: bool = False,
         **app_options,
     ) -> None:
         self.asides = asides
+        self.pick = pick
+        self.picked: str | None = None
         self.ask = ask
         self.edit = edit and ask is not None
         self.check_bridge = check_bridge
@@ -228,7 +235,7 @@ class AsideBrowser:
         # one that arrives meanwhile does not pull the list in beside it. One
         # opened to type in (`edit`) starts reading the newest thread too, with
         # the cursor in its editor; Esc shows the list.
-        self.reading = len(self.threads) <= 1 or self.edit
+        self.reading = len(self.threads) <= 1 or (self.edit and not pick)
         self._ids: list[str] = []
         self.notice = ""
         # The link picker over the viewer, while one is open.
@@ -265,7 +272,10 @@ class AsideBrowser:
 
         @keys.add("enter")
         def enter(event):
-            if self.listing():
+            if self.pick:
+                self.picked = self.selected
+                event.app.exit(result=None)
+            elif self.listing():
                 self.read(event.app)
             else:
                 event.app.exit(result=None)
@@ -509,7 +519,9 @@ class AsideBrowser:
             ("Ctrl+U/D", "Half page"),
             (
                 "Enter",
-                ("Reply to selected thread" if self.edit else "Read selected thread")
+                "Show selected thread"
+                if self.pick
+                else ("Reply to selected thread" if self.edit else "Read selected thread")
                 if self.listing()
                 else "Close",
             ),
