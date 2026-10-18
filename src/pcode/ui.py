@@ -562,9 +562,6 @@ PHASE_GAP_SECONDS = 1.0
 # rewrites itself that fast cannot be read. Once the hold is up the row jumps
 # to whatever is current, skipping anything that came and went meanwhile.
 STATUS_HOLD_SECONDS = 2.5
-# Seconds the editor box's activity band keeps rows it no longer fills before
-# giving them back (see `PromptLayout.band_rows`).
-BAND_HOLD_SECONDS = 2.5
 # Status text the row leads with verbatim; anything longer is detail.
 PHASE_WORDS = 3
 # Cells of detail worth more than the status row's tally and clock.
@@ -2538,9 +2535,6 @@ class PromptLayout:
         self.btw = ThreadView(activity, transcript, self.key_name)
         # Whether the open menu made the layout taller than the measured rows.
         self.menu_overflowed = False
-        # The band's held height, when it last filled it, and the pane size
-        # it was held at (`band_rows`).
-        self.band_hold = (0, 0.0, None)
 
     def key_name(self, key: str) -> str:
         """Where the prompt's shortcut ``key`` sits now, after any /bind; or "unbound"."""
@@ -2822,30 +2816,12 @@ class PromptLayout:
         """The activity band: the newest thought, in the editor box under the
         status row and in its header's shade (`attach_activity`).
 
-        It grows at once but gives rows back only once it has held fewer for
-        `BAND_HOLD_SECONDS`, padding the gap with blank rows: a new thought
-        starting over on one row would otherwise jolt the tasks and the
-        draft up and down. With nothing left to show (the answer is
-        streaming, or Ctrl+O hid the panel) it goes at once: a band of blank
-        rows would only look stuck.
+        Exactly as tall as the thought, never padded: the box is anchored to
+        the bottom, so a shorter thought only moves the status row down a
+        row, while held blank rows read as a gap between thought and tasks.
         """
         attached = self.activity.attach_activity and self.activity.status_shown
-        rows = self.thought_rows() if attached else []
-        size = self.size()
-        if not rows:
-            self.band_hold = (0, 0.0, size)
-            return []
-        now = monotonic()
-        held, since, sized = self.band_hold
-        budget = self.band_budget()
-        if budget is not None:
-            held = min(held, budget)
-        # A resize sizes the rows afresh: a height held from a taller pane
-        # could crowd the editor out of this one.
-        if len(rows) >= held or now - since >= BAND_HOLD_SECONDS or sized != size:
-            self.band_hold = (len(rows), now, size)
-            return rows
-        return rows + [[] for _ in range(held - len(rows))]
+        return self.thought_rows() if attached else []
 
     def band_height(self) -> int:
         """Rows the band adds to the editor box: its rows and the divider under them."""
