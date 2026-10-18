@@ -290,10 +290,16 @@ def stored_slice(args: dict, source: str = "") -> str:
 def session_recall(name: str, args: dict) -> str:
     """What a recall call looks for: the query searched, or the session being read."""
     if name == "search_sessions":
-        query = args.get("query")
-        if not isinstance(query, str):
+        # `query` is the single-query form older transcripts recorded.
+        queries = args.get("queries", [args.get("query")])
+        queries = [q for q in queries if isinstance(q, str)] if isinstance(queries, list) else []
+        if not queries:
             return "query unavailable"
-        parts = [json.dumps(plain(argument(query), 80), ensure_ascii=False)]
+        parts = [
+            ", ".join(
+                json.dumps(plain(argument(query), 80), ensure_ascii=False) for query in queries
+            )
+        ]
     else:
         session_id = args.get("session_id")
         if not isinstance(session_id, str):

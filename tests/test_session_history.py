@@ -1,9 +1,8 @@
-"""Session recall is scoped, read-only, bounded, and survives compaction."""
+"""Session recall is scoped, read-only, indexed, and survives compaction."""
 
 import asyncio
 import json
 import subprocess
-from collections import OrderedDict
 from types import SimpleNamespace
 
 import pytest
@@ -12,15 +11,15 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolRetu
 from pydantic_ai.models.function import FunctionModel
 
 from pcode.ext import BUNDLED_DIR, Extension, ExtensionUI, load_extension, user_extension_dir
-from pcode.history import CHUNK_CHARS, History, keyword_ranking, read_turns
+from pcode.history import CHUNK_CHARS, History, read_turns
 from pcode.history_embeddings import CACHE_NAME, semantic_ranking
+from pcode.history_index import INDEX_NAME
 from pcode.sessions import SavedSession, SessionInfo
 
 
 @pytest.fixture(autouse=True)
 def no_embeddings(monkeypatch):
     monkeypatch.delenv("PCODE_HISTORY_EMBEDDING_MODEL", raising=False)
-    monkeypatch.setattr("pcode.history_cursor._continuations", OrderedDict())
 
 
 @pytest.fixture
@@ -74,6 +73,8 @@ def tools(workspace, root):
 
 
 def call(tool, **kwargs):
+    if "query" in kwargs:
+        kwargs["queries"] = [kwargs.pop("query")]
     return asyncio.run(tool.function(SimpleNamespace(conversation_id="session-a"), **kwargs))
 
 
@@ -106,7 +107,7 @@ def test_tools_search_and_read_with_custom_root(tmp_path, root):
 
 def test_empty_scope_is_complete_and_distinct_from_a_pending_page(tmp_path, root):
     result = call(tools(tmp_path, root)["search_sessions"], query="absent")
-    assert result["scan_complete"] and result["next_cursor"] is None
+    assert result["scan_complete"] and not result["warnings"]
     assert result["sessions_in_scope"] == 0 and not result["results"]
     assert "No saved history" in result["note"]
 
@@ -122,7 +123,9 @@ def test_real_agent_context_scopes_to_current_session(tmp_path, root):
         ]
         if not returns:
             return ModelResponse(
-                parts=[ToolCallPart("search_sessions", {"query": "flicker", "scope": "session"})]
+                parts=[
+                    ToolCallPart("search_sessions", {"queries": ["flicker"], "scope": "session"})
+                ]
             )
         calls.append(returns[-1].content)
         return ModelResponse(parts=[TextPart("Found it.")])
@@ -197,7 +200,7 @@ def test_compaction_preserves_recall_and_ancestor_context(tmp_path, root):
         + turn("After compaction", "Continue.", "run-b", parent_id="compact")
     )
     info = save(root, tmp_path, records=records)
-    turns = read_turns(info, root)
+    _, turns, _ = read_turns(info, root)
     assert turns["run-a"].active
     assert turns["run-b"].parent == "run-a"
     registered = tools(tmp_path, root)
@@ -239,10 +242,12 @@ def test_searches_all_text_blocks_and_tool_summaries_not_raw_results(tmp_path, r
         {"kind": "turn_completed"},
     ]
     save(root, tmp_path, records=records)
-    chunks = History(tmp_path, root).chunks("project").chunks
-    assert keyword_ranking(chunks, "redraws")
-    assert keyword_ranking(chunks, "pytest")
-    assert not keyword_ranking(chunks, "private-output")
+    chunks = History(tmp_path, root).chunks("project")[0]
+    assert chunks
+    history = History(tmp_path, root)
+    assert history.search("project", ["redraws"])[0]
+    assert history.search("project", ["pytest"])[0]
+    assert not history.search("project", ["private-output"])[0]
 
 
 def test_live_locked_session_read_without_open_or_resume(tmp_path, root):
@@ -267,12 +272,11 @@ def test_torn_journal_legacy_ids_unreadable_and_symlinks(tmp_path, root):
     (root / other.id / "transcript.jsonl").unlink()
     (root / other.id / "transcript.jsonl").symlink_to(root / info.id / "transcript.jsonl")
     (root / "alias").symlink_to(root / info.id, target_is_directory=True)
-    scan = History(tmp_path, root).chunks("project")
-    chunks, warnings = scan.chunks, scan.warnings
+    chunks, coverage = History(tmp_path, root).chunks("project")
     assert len(chunks) == 1
-    assert "Skipped unreadable session other." in warnings
-    assert any("Unfinished final record" in warning for warning in warnings)
-    assert not scan.scan_complete
+    assert "Skipped unreadable session other." in coverage.warnings
+    assert any("Unfinished final record" in warning for warning in coverage.warnings)
+    assert not coverage.complete
 
 
 def test_redaction_before_return_and_pagination(tmp_path, root, monkeypatch):
@@ -332,7 +336,7 @@ class FakeEmbedder:
 
 def test_embedding_cache_incremental_model_specific_and_private(tmp_path, root):
     save(root, tmp_path)
-    chunks = History(tmp_path, root).chunks("project").chunks
+    chunks = History(tmp_path, root).chunks("project")[0]
     embedder = FakeEmbedder()
     for _ in range(2):
         ranking, warnings = asyncio.run(
@@ -385,7 +389,7 @@ def test_provider_failure_falls_back_without_echoing_error(tmp_path, root, monke
 def test_embedding_batch_budget_and_deleted_sessions_not_returned(tmp_path, root, monkeypatch):
     save(root, tmp_path, records=turn(response="x" * CHUNK_CHARS * 3))
     monkeypatch.setattr("pcode.history_embeddings.MAX_NEW_CHUNKS", 1)
-    chunks = History(tmp_path, root).chunks("project").chunks
+    chunks = History(tmp_path, root).chunks("project")[0]
     embedder = FakeEmbedder()
     ranking, warnings = asyncio.run(
         semantic_ranking(chunks, "query", "test:model", root, embedder=embedder)
@@ -394,7 +398,7 @@ def test_embedding_batch_budget_and_deleted_sessions_not_returned(tmp_path, root
     assert "partial" in warnings[0]
     assert len(embedder.documents) == 1
     (root / "session-a" / "session.json").unlink()
-    assert History(tmp_path, root).chunks("project").chunks == []
+    assert History(tmp_path, root).chunks("project")[0] == []
 
 
 def test_app_passes_session_dir_on_load_and_reload(tmp_path, root):
@@ -439,39 +443,9 @@ def test_explicit_session_root_matches_storage_path_semantics(tmp_path, monkeypa
         saved.close()
 
 
-def test_scan_budget_reports_partial_results(tmp_path, root, monkeypatch):
-    save(root, tmp_path, records=turn(response="x" * CHUNK_CHARS * 3))
-    monkeypatch.setattr("pcode.history.MAX_CHUNKS", 1)
-    scan = History(tmp_path, root).chunks("project")
-    chunks, warnings = scan.chunks, scan.warnings
-    assert len(chunks) == 1
-    assert "limited" in warnings[0]
-
-
-def test_scan_byte_budget_stops_before_decoding_oversized_record(tmp_path, root, monkeypatch):
-    from pcode.sessions import SessionReadBudget, session_records
-
-    records = turn() + [{"kind": "Message", "markdown": "x" * 10000}]
-    info = save(root, tmp_path, records=records)
-    prefix_size = sum(len((json.dumps(r) + "\n").encode()) for r in records[:3])
-    monkeypatch.setattr("pcode.history.MAX_SCAN_BYTES", prefix_size)
-    scan = History(tmp_path, root).chunks("project")
-    chunks, warnings = scan.chunks, scan.warnings
-    assert not chunks  # Defer hits until ancestry and turn text are fully resolved.
-    assert scan.next_cursor and not scan.scan_complete
-    assert "byte budget" in warnings[0]
-    budget = SessionReadBudget(prefix_size)
-    assert len(list(session_records(info, root, budget=budget))) == 3
-    assert budget.remaining == 0 and budget.exhausted
-    read = History(tmp_path, root).read("session-a", "run-a")
-    assert read["warnings"] and read["next_cursor"]
-    assert not read["scan_complete"]
-    assert not read["text"]
-
-
 def test_semantic_shortlist_keeps_distinct_turns(tmp_path, root):
     save(root, tmp_path, records=turn(response="x" * CHUNK_CHARS * 55) + turn(identity="run-b"))
-    chunks = History(tmp_path, root).chunks("project").chunks
+    chunks = History(tmp_path, root).chunks("project")[0]
     # Simulate the long turn ranking first, so a chunk-level top-50 would hide run-b.
     chunks.sort(key=lambda chunk: chunk.turn.id)
     ranking, _ = asyncio.run(
@@ -521,10 +495,10 @@ def test_consumed_steering_is_journaled_and_recallable(tmp_path, root):
                 after=10,
             )
             history = History(tmp_path, root, saved.info.id)
-            chunks = history.chunks("session").chunks
-            hits = keyword_ranking(chunks, "bounded queue")
-            assert hits
-            read = history.read(saved.info.id, chunks[hits[0]].turn.id, "session")
+            chunks = history.chunks("session")[0]
+            assert chunks
+            hits, _ = history.search("session", ["bounded queue"])
+            read = history.read(saved.info.id, hits[0].turn.id, "session")
             assert "User (steering): Use a bounded queue instead" in read["text"]
         finally:
             runtime.close()
@@ -540,16 +514,19 @@ def test_bm25_ranking_prefers_rare_terms_and_short_documents(tmp_path, root):
         + turn("Nothing", "Unrelated database migration.", "none")
     )
     save(root, tmp_path, records=records)
-    chunks = History(tmp_path, root).chunks("project").chunks
-    by_turn = {chunk.turn.id: index for index, chunk in enumerate(chunks)}
-    ranking = keyword_ranking(chunks, "editor flicker")
-    assert [chunks[i].turn.id for i in ranking][0] == "rare-term"
-    assert by_turn["none"] not in ranking
+    history = History(tmp_path, root)
+
+    def ranking(query):
+        return [chunk.turn.id for chunk in history.search("project", [query])[0]]
+
+    ranked = ranking("editor flicker")
+    assert ranked[0] == "rare-term"
+    assert "none" not in ranked
     # Repeating a common term does not beat the document holding the rare one.
-    assert ranking.index(by_turn["many-common"]) > ranking.index(by_turn["phrase"])
+    assert ranked.index("many-common") > ranked.index("phrase")
     # Punctuation and case are ignored; an empty or symbol-only query matches nothing.
-    assert keyword_ranking(chunks, "FLICKER.") == keyword_ranking(chunks, "flicker")
-    assert keyword_ranking(chunks, "!!!") == []
+    assert ranking("FLICKER.") == ranking("flicker")
+    assert ranking("!!!") == []
 
 
 def test_current_turn_excluded_and_current_session_flagged(tmp_path, root):
@@ -560,7 +537,7 @@ def test_current_turn_excluded_and_current_session_flagged(tmp_path, root):
     registered = tools(tmp_path, root)
     search = registered["search_sessions"].function
     context = SimpleNamespace(conversation_id="session-a", run_id="live")
-    (group,) = asyncio.run(search(context, query="bounded queue", scope="session"))["results"]
+    (group,) = asyncio.run(search(context, queries=["bounded queue"], scope="session"))["results"]
     assert group["current"]
     assert [t["turn_id"] for t in group["turns"]] == ["run-a"]
     # Without the in-flight run ID the prompt itself still comes back.
@@ -579,7 +556,7 @@ def test_in_flight_turn_returns_once_auto_compaction_drops_it_from_context(tmp_p
     save(root, tmp_path, records=records)
     search = tools(tmp_path, root)["search_sessions"].function
     context = SimpleNamespace(conversation_id="session-a", run_id="live")
-    (group,) = asyncio.run(search(context, query="bounded queue", scope="session"))["results"]
+    (group,) = asyncio.run(search(context, queries=["bounded queue"], scope="session"))["results"]
     (hit,) = group["turns"]
     assert hit["turn_id"] == "live"
     assert hit["current_turn"]
@@ -629,373 +606,6 @@ def test_excerpt_anchors_on_the_densest_match_and_carries_the_conclusion(tmp_pat
     assert hit["conclusion"] == "Shipped: strict tools is the default now."
 
 
-def test_partial_scan_reports_session_coverage(tmp_path, root, monkeypatch):
-    save(root, tmp_path, records=turn())
-    save(root, tmp_path, "older", records=turn())
-    monkeypatch.setattr("pcode.history.MAX_SCAN_BYTES", 10)
-    result = call(tools(tmp_path, root)["search_sessions"], query="flicker")
-    assert (result["sessions_searched"], result["sessions_in_scope"]) == (0, 2)
-    assert "inside session" in result["warnings"][-1]
-    assert result["sessions_partial"] == 1
-    assert not result["scan_complete"]
-    assert "empty page does not establish absence" in result["note"]
-    assert result["next_cursor"] not in {None, "session-a", "older"}
-
-
-def test_cursor_continues_into_sessions_the_budget_did_not_reach(tmp_path, root, monkeypatch):
-    save(
-        root,
-        tmp_path,
-        records=turn("Recent", "Recent work on the editor."),
-        updated="2026-02-01T00:00:00Z",
-    )
-    save(root, tmp_path, "older", records=turn("Older", "The editor flicker fix we shipped."))
-    # One session per scan, so reaching the older one requires the cursor.
-    monkeypatch.setattr(
-        "pcode.history.MAX_SCAN_BYTES",
-        sum(len(json.dumps(record)) + 1 for record in turn()) + 20,
-    )
-    registered = tools(tmp_path, root)
-    first = call(registered["search_sessions"], query="flicker fix")
-    assert not [g for g in first["results"] if g["session_id"] == "older"]
-    second = call(registered["search_sessions"], query="flicker fix", after=first["next_cursor"])
-    (group,) = second["results"]
-    assert group["session_id"] == "older"
-    assert second["next_cursor"] is None
-    with pytest.raises(ModelRetry, match="Unknown cursor"):
-        call(registered["search_sessions"], query="flicker", after="no-such-session")
-
-
-def collect_pages(workspace, root, scope="project"):
-    """Use a fresh History per call, just like the extension does."""
-    after, seen, pages = None, set(), []
-    for _ in range(1000):
-        scan = History(workspace, root, "session-a").chunks(scope, after=after)
-        pages.append(scan)
-        if scan.next_cursor is None:
-            return pages
-        assert not scan.scan_complete
-        assert scan.next_cursor not in seen
-        seen.add(scan.next_cursor)
-        after = scan.next_cursor
-    pytest.fail("pagination did not terminate")
-
-
-@pytest.mark.parametrize("byte_limit", [97, 997, 100_000])
-@pytest.mark.parametrize("chunk_limit", [1, 2, 10_000])
-def test_pagination_covers_every_chunk_and_preserves_ancestry(
-    tmp_path, root, monkeypatch, byte_limit, chunk_limit
-):
-    records = (
-        turn("First", "x" * (CHUNK_CHARS * 2) + " only-tail-match")
-        + turn("Abandoned", "Do not ship.", "abandoned", parent_id="run-a")
-        + [
-            {"kind": "tree_selected", "node_id": "run-a"},
-            {"kind": "compaction_checkpoint", "node_id": "compact", "parent_id": "run-a"},
-        ]
-        + turn("Final", "Shipped.", "final", parent_id="compact")
-        + [{"kind": "Message", "run_id": "run-a", "markdown": "Delayed original response."}]
-    )
-    save(root, tmp_path, records=records)
-    save(root, tmp_path, "older", records=turn("Older", "Older evidence."), updated="2025")
-
-    def signature(chunk):
-        return (
-            chunk.session.id,
-            chunk.turn.id,
-            chunk.offset,
-            chunk.text,
-            chunk.turn.branch,
-            chunk.turn.parent,
-            chunk.turn.status,
-        )
-
-    expected = [signature(c) for c in History(tmp_path, root).chunks("project").chunks]
-    monkeypatch.setattr("pcode.history.MAX_SCAN_BYTES", byte_limit)
-    monkeypatch.setattr("pcode.history.MAX_CHUNKS", chunk_limit)
-    pages = collect_pages(tmp_path, root)
-    assert all(len(page.chunks) <= chunk_limit for page in pages)
-    assert [signature(c) for page in pages for c in page.chunks] == expected
-    assert pages[-1].scan_complete
-    assert pages[-1].sessions_searched == pages[-1].sessions_in_scope == 2
-    assert all(page.sessions_searched < 2 for page in pages[:-1])
-
-
-def test_tail_only_hit_is_found_and_read_across_byte_pages(tmp_path, root, monkeypatch):
-    records = turn("Beginning", "No answer here.")
-    records += [{"kind": "TextDelta", "content": "discarded delta " * 50} for _ in range(3)]
-    records += turn("Later", "The answer is tail-only-evidence.", "later", parent_id="run-a")
-    save(root, tmp_path, records=records)
-    monkeypatch.setattr("pcode.history.MAX_SCAN_BYTES", 100)
-    registered = tools(tmp_path, root)
-    result, after = None, ""
-    for _ in range(100):
-        result = call(registered["search_sessions"], query="tail-only-evidence", after=after)
-        if not result["next_cursor"]:
-            break
-        assert not result["results"]  # No misleading partial turn text or branch labels.
-        assert "absence" in result["note"]
-        after = result["next_cursor"]
-    assert result["scan_complete"]
-    (group,) = result["results"]
-    (hit,) = group["turns"]
-    assert hit["turn_id"] == "later"
-    after = ""
-    for _ in range(100):
-        read = call(
-            registered["read_session"],
-            session_id=group["session_id"],
-            turn_id=hit["turn_id"],
-            after=after,
-        )
-        if not read["next_cursor"]:
-            break
-        assert not read["scan_complete"] and not read["text"]
-        after = read["next_cursor"]
-    assert read["scan_complete"]
-    assert "tail-only-evidence" in read["text"]
-    assert read["context"][0]["turn_id"] == "run-a"
-
-
-def test_byte_pages_do_not_rescan_prefixes_and_redact_after_assembly(tmp_path, root, monkeypatch):
-    from pcode.history_cursor import JournalReader
-
-    info = save(root, tmp_path, records=turn(response="évidence password=synthetic-secret " * 10))
-    path = root / info.id / "transcript.jsonl"
-    # Force actual multibyte characters into the journal, not JSON escape sequences.
-    path.write_text(path.read_text().replace("\\u00e9", "é"))
-    consumed = []
-    records = JournalReader.records
-
-    def measured(self, budget):
-        before, allowed = self.offset, budget.remaining
-        yield from records(self, budget)
-        consumed.append(self.offset - before)
-        assert 0 <= consumed[-1] <= allowed
-
-    monkeypatch.setattr(JournalReader, "records", measured)
-    monkeypatch.setattr("pcode.history.MAX_SCAN_BYTES", 17)
-    pages = collect_pages(tmp_path, root)
-    assert sum(consumed) == path.stat().st_size
-    assert len(consumed) > 2
-    text = "".join(c.text for page in pages for c in page.chunks)
-    assert "synthetic-secret" not in text
-    assert "évidence" in text and "[redacted]" in text
-
-
-def test_chunk_limit_does_not_mark_a_partial_session_complete(tmp_path, root, monkeypatch):
-    save(root, tmp_path, records=turn("Only match is early", "Older decision.", "early") + turn())
-    monkeypatch.setattr("pcode.history.MAX_CHUNKS", 1)
-    first, last = collect_pages(tmp_path, root)
-    assert first.sessions_searched == 0
-    assert first.sessions_partial == 1
-    assert first.next_cursor and not first.scan_complete
-    assert last.chunks[0].turn.id == "early"
-    assert last.sessions_searched == 1 and last.scan_complete
-    assert History(tmp_path, root).read("session-a", "early")["text"].startswith("User: Only match")
-
-
-def test_complete_final_record_without_newline_remains_searchable(tmp_path, root, monkeypatch):
-    save(root, tmp_path)
-    path = root / "session-a" / "transcript.jsonl"
-    path.write_bytes(path.read_bytes().rstrip(b"\n"))
-    monkeypatch.setattr("pcode.history.MAX_SCAN_BYTES", 17)
-    pages = collect_pages(tmp_path, root)
-    assert pages[-1].scan_complete
-    (chunk,) = [chunk for page in pages for chunk in page.chunks]
-    assert chunk.turn.status == "completed" and chunk.turn.branch == "active"
-
-
-def test_exact_byte_and_chunk_limits_need_no_extra_page(tmp_path, root, monkeypatch):
-    save(root, tmp_path)
-    size = (root / "session-a" / "transcript.jsonl").stat().st_size
-    monkeypatch.setattr("pcode.history.MAX_SCAN_BYTES", size)
-    monkeypatch.setattr("pcode.history.MAX_CHUNKS", 1)
-    (page,) = collect_pages(tmp_path, root)
-    assert len(page.chunks) == 1 and page.scan_complete
-
-
-def test_continuations_freeze_session_order_and_journal_end(tmp_path, root, monkeypatch):
-    save(root, tmp_path, records=turn("Original", "Original evidence."), updated="2026")
-    save(root, tmp_path, "older", records=turn("Older", "Old evidence."), updated="2025")
-    monkeypatch.setattr("pcode.history.MAX_SCAN_BYTES", 50)
-    history = History(tmp_path, root, "session-a")
-    first = history.chunks("project")
-    # Appends are outside the first session's captured snapshot; reordering the
-    # metadata must not make the second session vanish behind a session-ID cursor.
-    path = root / "session-a" / "transcript.jsonl"
-    with path.open("a") as stream:
-        stream.write("".join(json.dumps(r) + "\n" for r in turn("Appended", "New", "new")))
-    metadata = root / "older" / "session.json"
-    info = json.loads(metadata.read_text())
-    info["updated"] = "2027"
-    metadata.write_text(json.dumps(info))
-    pages, after = [first], first.next_cursor
-    for _ in range(50):
-        page = History(tmp_path, root, "session-a").chunks("project", after=after)
-        pages.append(page)
-        if page.next_cursor is None:
-            break
-        after = page.next_cursor
-    assert pages[-1].scan_complete
-    assert [c.session.id for p in pages for c in p.chunks] == ["session-a", "older"]
-    assert all(c.turn.id != "new" for p in pages for c in p.chunks)
-    assert any(c.turn.id == "new" for p in collect_pages(tmp_path, root) for c in p.chunks)
-
-
-@pytest.mark.parametrize("change", ["truncate", "replace", "delete", "symlink"])
-def test_changed_journal_never_resumes_at_stale_offset(tmp_path, root, monkeypatch, change):
-    save(root, tmp_path)
-    monkeypatch.setattr("pcode.history.MAX_SCAN_BYTES", 10)
-    history = History(tmp_path, root)
-    first = history.chunks("project")
-    path = root / "session-a" / "transcript.jsonl"
-    if change == "truncate":
-        path.write_text("")
-    elif change == "replace":
-        other = path.with_suffix(".new")
-        other.write_text(path.read_text())
-        other.replace(path)
-    elif change == "delete":
-        (path.parent / "session.json").unlink()
-    else:
-        other = tmp_path / "other.jsonl"
-        path.rename(other)
-        path.symlink_to(other)
-    if change == "symlink":
-        scan = history.chunks("project", after=first.next_cursor)
-        assert scan.sessions_unreadable == 1 and not scan.scan_complete and not scan.chunks
-    else:
-        with pytest.raises(ValueError, match="restart without after"):
-            history.chunks("project", after=first.next_cursor)
-
-
-def test_cursors_are_bound_single_use_and_expire(tmp_path, root, monkeypatch):
-    save(root, tmp_path)
-    monkeypatch.setattr("pcode.history.MAX_SCAN_BYTES", 10)
-    now = [100.0]
-    monkeypatch.setattr("pcode.history_cursor.time.monotonic", lambda: now[0])
-    history = History(tmp_path, root)
-    first = history.chunks("project")
-    with pytest.raises(ValueError, match="does not match"):
-        history.chunks("all", after=first.next_cursor)
-    with pytest.raises(ValueError, match="does not match"):
-        History(tmp_path / "other", root).chunks("project", after=first.next_cursor)
-    with pytest.raises(ValueError, match="does not match"):
-        history.read("session-a", "run-a", after=first.next_cursor)
-    second = history.chunks("project", after=first.next_cursor)
-    with pytest.raises(ValueError, match="Unknown cursor"):
-        history.chunks("project", after=first.next_cursor)
-    now[0] += 1801
-    with pytest.raises(ValueError, match="expired"):
-        history.chunks("project", after=second.next_cursor)
-
-
-def test_cursor_retention_is_bounded(tmp_path, root, monkeypatch):
-    save(root, tmp_path)
-    monkeypatch.setattr("pcode.history.MAX_SCAN_BYTES", 10)
-    monkeypatch.setattr("pcode.history_cursor.MAX_CURSORS", 2)
-    history = History(tmp_path, root)
-    first = history.chunks("project")
-    second = history.chunks("project")
-    third = history.chunks("project")
-    with pytest.raises(ValueError, match="expired"):
-        history.chunks("project", after=first.next_cursor)
-    assert history.chunks("project", after=second.next_cursor).next_cursor
-    assert history.chunks("project", after=third.next_cursor).next_cursor
-
-
-@pytest.mark.parametrize("boundary", ["inside", "between"])
-@pytest.mark.parametrize("change", ["scope", "invalid"])
-def test_unvisited_session_is_revalidated_after_continuation(
-    tmp_path, root, monkeypatch, boundary, change
-):
-    save(root, tmp_path, updated="2026")
-    save(root, tmp_path, "older", updated="2025")
-    size = (root / "session-a" / "transcript.jsonl").stat().st_size
-    monkeypatch.setattr("pcode.history.MAX_SCAN_BYTES", size if boundary == "between" else size - 1)
-    history = History(tmp_path, root)
-    first = history.chunks("project")
-    metadata = root / "older" / "session.json"
-    if change == "scope":
-        info = json.loads(metadata.read_text())
-        info["workspace"] = str(tmp_path / "elsewhere")
-        metadata.write_text(json.dumps(info))
-    else:
-        metadata.write_text("invalid")
-    with pytest.raises(ValueError, match="no longer in scope"):
-        history.chunks("project", after=first.next_cursor)
-
-
-def test_legacy_attribution_and_compacted_current_turn_survive_byte_pages(
-    tmp_path, root, monkeypatch
-):
-    records = [
-        {"kind": "turn_started", "prompt": "Legacy request"},
-        {"kind": "Message", "markdown": "Legacy reply"},
-        {"kind": "turn_completed"},
-        {"kind": "turn_started", "run_id": "live", "prompt": "Current task"},
-        {"kind": "tree_selected", "node_id": "turn-1"},
-        {"kind": "steering", "prompt": "Steered current task"},
-        {"kind": "auto_compacted", "run_id": "live"},
-        {"kind": "Message", "markdown": "Current reply"},
-    ]
-    save(root, tmp_path, records=records)
-    monkeypatch.setattr("pcode.history.MAX_SCAN_BYTES", 13)
-    search = tools(tmp_path, root)["search_sessions"].function
-    context = SimpleNamespace(conversation_id="session-a", run_id="live")
-    after = ""
-    for _ in range(100):
-        result = asyncio.run(search(context, query="Steered", scope="session", after=after))
-        if not result["next_cursor"]:
-            break
-        after = result["next_cursor"]
-    assert result["scan_complete"]
-    (hit,) = result["results"][0]["turns"]
-    assert hit["turn_id"] == "live" and hit["current_turn"]
-    assert hit["branch"] == "inactive"
-    assert "User (steering): Steered" in hit["excerpt"]
-
-
-def test_read_scan_continuation_precedes_redacted_text_pagination(tmp_path, root, monkeypatch):
-    save(root, tmp_path, records=turn(response="password=synthetic-secret " + "evidence " * 30))
-    expected = History(tmp_path, root).read("session-a", "run-a")["text"]
-    monkeypatch.setattr("pcode.history.MAX_SCAN_BYTES", 43)
-    offset, text = 0, ""
-    for _ in range(50):
-        after = None
-        for _ in range(50):
-            result = History(tmp_path, root).read(
-                "session-a", "run-a", offset=offset, max_chars=37, after=after
-            )
-            if not result["next_cursor"]:
-                break
-            after = result["next_cursor"]
-        assert result["scan_complete"]
-        text += result["text"]
-        if result["next_offset"] is None:
-            break
-        offset = result["next_offset"]
-    assert text == expected
-    assert "synthetic-secret" not in text
-
-
-def test_missing_turn_is_only_rejected_after_read_scan_finishes(tmp_path, root, monkeypatch):
-    save(root, tmp_path)
-    monkeypatch.setattr("pcode.history.MAX_SCAN_BYTES", 10)
-    history = History(tmp_path, root)
-    result = history.read("session-a", "absent")
-    assert not result["scan_complete"] and result["next_cursor"]
-    for _ in range(100):
-        try:
-            result = history.read("session-a", "absent", after=result["next_cursor"])
-        except ValueError as error:
-            assert "Turn not found" in str(error)
-            break
-    else:
-        pytest.fail("missing turn scan did not terminate")
-
-
 def test_snapshot_compaction_leaves_search_intact(tmp_path, root):
     # `pcode --sessions --compact` prunes the step store, never the transcript.
     from pcode.sessions import compact_snapshots
@@ -1019,3 +629,113 @@ def test_user_override_disables_extension(tmp_path, root):
     (selected,) = [e for e in loaded.extensions if e.name == "session_history"]
     assert selected.scope == "user"
     assert not selected.capabilities
+
+
+def test_index_is_private_reused_refreshed_and_pruned(tmp_path, root, monkeypatch):
+    import pcode.history
+
+    parsed = []
+    original = pcode.history.read_turns
+
+    def counting(info, directory):
+        parsed.append(info.id)
+        return original(info, directory)
+
+    monkeypatch.setattr("pcode.history.read_turns", counting)
+    save(root, tmp_path)
+    save(root, tmp_path, "other", records=turn(response="Unrelated"))
+    history = History(tmp_path, root)
+    assert history.search("project", ["redraws"])[0]
+    assert sorted(parsed) == ["other", "session-a"]
+    assert (root / INDEX_NAME).stat().st_mode & 0o777 == 0o600
+    # An unchanged transcript is not parsed again.
+    assert history.search("project", ["redraws"])[0]
+    assert len(parsed) == 2
+    # An appended one is, and its new text is searchable.
+    with (root / "session-a" / "transcript.jsonl").open("a") as stream:
+        stream.write(json.dumps({"kind": "Message", "run_id": "run-a", "markdown": "zebra"}) + "\n")
+    assert history.search("project", ["zebra"])[0]
+    assert parsed[2:] == ["session-a"]
+    # A deleted session's rows go on the next refresh, whatever its scope.
+    (root / "session-a" / "session.json").unlink()
+    History(tmp_path / "elsewhere", root).search("workspace", ["anything"])
+    assert b"zebra" not in (root / INDEX_NAME).read_bytes()
+
+
+def test_out_of_time_refresh_reports_pending_sessions(tmp_path, root, monkeypatch):
+    save(root, tmp_path)
+    monkeypatch.setattr("pcode.history.REFRESH_SECONDS", -1.0)
+    registered = tools(tmp_path, root)
+    result = call(registered["search_sessions"], query="redraws")
+    assert not result["results"] and not result["scan_complete"]
+    assert result["sessions_pending"] == 1 and result["sessions_searched"] == 0
+    assert "still being built" in result["warnings"][0]
+    # Reading a session always indexes it, however long that takes.
+    read = call(registered["read_session"], session_id="session-a", turn_id="run-a")
+    assert "redraws" in read["text"]
+    # A changed session that has an older copy is still searched while pending.
+    with (root / "session-a" / "transcript.jsonl").open("a") as stream:
+        stream.write(json.dumps({"kind": "Message", "run_id": "run-a", "markdown": "late"}) + "\n")
+    result = call(registered["search_sessions"], query="redraws")
+    assert result["results"] and result["sessions_pending"] == 1
+    monkeypatch.setattr("pcode.history.REFRESH_SECONDS", 30.0)
+    result = call(registered["search_sessions"], query="late")
+    assert result["results"] and result["scan_complete"]
+
+
+def test_index_from_another_version_is_rebuilt(tmp_path, root):
+    import sqlite3
+
+    save(root, tmp_path)
+    History(tmp_path, root).search("project", ["redraws"])
+    with sqlite3.connect(root / INDEX_NAME) as db:
+        db.execute("PRAGMA user_version = 0")
+    assert History(tmp_path, root).search("project", ["redraws"])[0]
+
+
+def test_several_queries_fuse_and_agreement_ranks_first(tmp_path, root):
+    records = (
+        turn("One", "The flicker came back.", "only-first")
+        + turn("Two", "The redraw is slow.", "only-second")
+        + turn("Both", "Flicker during each redraw.", "both")
+    )
+    save(root, tmp_path, records=records)
+    registered = tools(tmp_path, root)
+    result = call(registered["search_sessions"], queries=["flicker", "redraw"])
+    (group,) = result["results"]
+    ids = [hit["turn_id"] for hit in group["turns"]]
+    assert ids[0] == "both" and set(ids) == {"both", "only-first", "only-second"}
+    with pytest.raises(ModelRetry):
+        call(registered["search_sessions"], queries=["a"] * 6)
+    with pytest.raises(ModelRetry):
+        call(registered["search_sessions"], queries=["  "])
+
+
+def test_failure_messages_are_searchable(tmp_path, root):
+    records = [
+        {"kind": "turn_started", "run_id": "run-a", "prompt": "Use the drive"},
+        {
+            "kind": "ToolSummary",
+            "name": "mcp_gdrive_read",
+            "failed": True,
+            "error": "OAuthFlowError: refresh token expired",
+        },
+        {
+            "kind": "turn_failed",
+            "run_id": "run-a",
+            "error": {"type": "ModelHTTPError", "status": 400, "provider_message": "out of usage"},
+        },
+    ]
+    save(root, tmp_path, records=records)
+    history = History(tmp_path, root)
+    (tool,) = history.search("project", ["OAuthFlowError"])[0]
+    assert "[failed: OAuthFlowError: refresh token expired]" in tool.text
+    (failed,) = history.search("project", ["out of usage"])[0]
+    assert "Turn failed: ModelHTTPError 400: out of usage" in failed.text
+    assert failed.turn.status == "failed"
+
+
+def test_results_carry_the_session_title(tmp_path, root):
+    save(root, tmp_path, title="Editor flicker fix")
+    (group,) = call(tools(tmp_path, root)["search_sessions"], query="redraws")["results"]
+    assert group["title"] == "Editor flicker fix"

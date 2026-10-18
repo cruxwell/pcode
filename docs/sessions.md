@@ -361,14 +361,21 @@ ask. It can also search the current conversation, which recovers details that
 
 What it can find:
 
-- Saved prompts, steering messages you sent mid-turn, the model's replies, and
-  tool summaries and commands.
+- Saved prompts, steering messages you sent mid-turn, the model's replies,
+  tool summaries and commands, and why a turn or a tool call failed.
 - Not full tool output, reasoning, or conversations run with `--no-save`.
 
 Results from abandoned `/tree` branches and failed attempts are labeled as
 such, and the model is told to treat past claims as evidence, not proof that a
-change shipped. Very large histories are searched in stages, so the model may
-need several searches to cover everything.
+change shipped.
+
+Search runs over a local index, `.history-index.sqlite3` in the session
+directory (mode 0600). It holds the redacted text of what recall can find, and
+only sessions whose transcript changed are read again, so a search takes a
+fraction of a second. The first search after upgrading builds it, which takes
+seconds for a few hundred sessions. When a session is deleted, its text is
+removed from the index on the next search. Deleting the file is always safe:
+the next search rebuilds it.
 
 ### Semantic search (opt-in)
 
@@ -385,7 +392,10 @@ enable a hosted model for history you cannot send off-machine. Local embedding
 models need their provider's optional dependencies. No model is chosen for you,
 and if the provider fails, search falls back to keywords with a warning.
 
-Vectors are cached in `.history-embeddings.sqlite3` in the session directory
+Embeddings need a provider that offers them. Claude models, including
+signing in with a Claude subscription, have none, so this needs another
+provider's key or a local model. Vectors are cached in
+`.history-embeddings.sqlite3` in the session directory
 (mode 0600). It holds content hashes and vectors, not transcript text, but
 vectors are still sensitive. Old vectors stay after a session is deleted; delete
 the file with pcode stopped to clear the cache (also needed if a provider changes

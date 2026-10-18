@@ -223,20 +223,11 @@ _TURN_KINDS = (
 )
 
 
-@dataclass
-class SessionReadBudget:
-    """A shared byte budget for readers that can report partial coverage."""
-
-    remaining: int
-    exhausted: bool = False
-
-
 def session_records(
     info: SessionInfo,
     root: Path | None = None,
     *,
     kinds: tuple[str, ...] = _TURN_KINDS,
-    budget: SessionReadBudget | None = None,
 ):
     """Yield turn-level records without opening or locking the session.
 
@@ -249,12 +240,7 @@ def session_records(
         raise OSError("symlinked session")
     markers = tuple(f'"{kind}"'.encode() for kind in kinds)
     with path.open("rb") as stream:
-        while line := stream.readline(budget.remaining + 1 if budget else -1):
-            if budget:
-                if len(line) > budget.remaining:
-                    budget.exhausted = True
-                    return
-                budget.remaining -= len(line)
+        for line in stream:
             if not any(marker in line for marker in markers):
                 continue
             try:

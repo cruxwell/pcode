@@ -629,6 +629,8 @@ def test_session_search_shows_its_query_scope_and_paging():
         == '"x" · scope all · next page'
     )
     assert target("search_sessions", {}) == "query unavailable"
+    assert target("search_sessions", {"queries": ["a", "b"]}) == '"a", "b"'
+    assert target("search_sessions", {"queries": "a"}) == "query unavailable"
 
 
 def test_session_read_shows_the_sessions_name(tmp_path, monkeypatch):
