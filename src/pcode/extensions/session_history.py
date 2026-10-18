@@ -9,6 +9,7 @@ entirely.
 
 import asyncio
 import os
+import sqlite3
 
 from pydantic_ai import ModelRetry, RunContext, Tool
 from pydantic_ai.capabilities import Capability
@@ -87,15 +88,20 @@ def setup(pcode) -> None:
             )
         except ValueError as error:
             raise ModelRetry(str(error)) from None
-        except OSError:
-            raise ModelRetry("Cannot read saved session history in the requested scope.") from None
+        except (OSError, sqlite3.Error) as error:
+            raise ModelRetry(
+                f"Cannot search saved session history ({type(error).__name__}); try again."
+            ) from None
         mode = "keyword"
         if model and semantic and coverage.sessions_in_scope:
             from pcode.history_embeddings import semantic_ranking
 
             try:
                 async with asyncio.timeout(45):
-                    chunks, _ = await asyncio.to_thread(recall.chunks, scope, exclude_turn=run_id)
+                    # The index exactly as the search left it: no second refresh.
+                    chunks, _ = await asyncio.to_thread(
+                        recall.chunks, scope, exclude_turn=run_id, refresh=False
+                    )
                     rankings = [[chunk.id for chunk in ranked]]
                     for query in queries:
                         hits, notices = await semantic_ranking(
@@ -153,8 +159,10 @@ def setup(pcode) -> None:
             )
         except ValueError as error:
             raise ModelRetry(str(error)) from None
-        except OSError:
-            raise ModelRetry("Cannot read saved session history.") from None
+        except (OSError, sqlite3.Error) as error:
+            raise ModelRetry(
+                f"Cannot read saved session history ({type(error).__name__}); try again."
+            ) from None
 
     pcode.add_capability(
         Capability(

@@ -163,11 +163,10 @@ class Coverage:
     sessions_unreadable: int = 0
     # Not yet indexed, or changed since, when the refresh ran out of time.
     sessions_pending: int = 0
+    # Every session in scope was searched as it is now. Warnings added later,
+    # such as a semantic provider failing, do not change what was covered.
+    complete: bool = True
     warnings: list[str] = field(default_factory=list)
-
-    @property
-    def complete(self) -> bool:
-        return not self.warnings
 
 
 def _turn_of(record: dict, turns: dict[str, "HistoryTurn"], recording: str | None):
@@ -391,7 +390,7 @@ class History:
         coverage = Coverage(sessions_in_scope=len(sessions))
         saved = self.index.signatures(db)
         listed = {info.id for info in list_sessions(self.root)}
-        self.index.forget(db, [identity for identity in saved if identity not in listed])
+        gone = [identity for identity in saved if identity not in listed]
         for info in sessions:
             known = saved.get(info.id)
             try:
@@ -403,6 +402,8 @@ class History:
                     coverage.sessions_pending += 1
                     if known is None:
                         continue
+                elif (fresh := self.index.state(db, info.id)) and fresh[0] == current:
+                    known = fresh  # Another process indexed it meanwhile.
                 else:
                     current, turns, torn = read_turns(info, self.root)
                     self.index.store(
@@ -417,16 +418,21 @@ class History:
                     known = (current, torn)
             except OSError:
                 coverage.sessions_unreadable += 1
+                coverage.complete = False
                 coverage.warnings.append(f"Skipped unreadable session {info.id}.")
-                self.index.forget(db, [info.id] if known else [])
+                if known:
+                    gone.append(info.id)
                 continue
             if known[1]:
+                coverage.complete = False
                 coverage.warnings.append(
                     f"Unfinished final record in session {info.id}; search again later."
                 )
             if known[0] == current:
                 coverage.sessions_searched += 1
+        self.index.forget(db, gone)
         if coverage.sessions_pending:
+            coverage.complete = False
             coverage.warnings.append(
                 f"The search index is still being built: {coverage.sessions_pending} sessions "
                 "were not indexed or are out of date. Search again to cover them."
@@ -448,8 +454,7 @@ class History:
 
     @staticmethod
     def _chunk(hit: Hit, infos: dict[str, SessionInfo]) -> Chunk:
-        text = hit.turn.text[hit.start : hit.start + hit.length]
-        return Chunk(infos[hit.session], hit.turn, hit.start, text, hit.chunk)
+        return Chunk(infos[hit.session], hit.turn, hit.start, hit.text, hit.chunk)
 
     def search(
         self, scope: Scope, queries: list[str], *, exclude_turn: str | None = None
@@ -457,31 +462,37 @@ class History:
         """Chunks matching any query, fused across queries, best first."""
         with self.index.connect() as db:
             infos, coverage = self._scope(db, scope, self._deadline())
-            rankings, chunks = [], {}
-            for query in queries:
-                expression = match_expression(query)
-                if not expression or not infos:
-                    continue
-                phrase = " ".join(query.casefold().split())
-                scored = []
-                for hit in self.index.match(
-                    db, expression, list(infos), self._exclude(exclude_turn)
-                ):
-                    chunk = self._chunk(hit, infos)
-                    bonus = PHRASE_BONUS if phrase in " ".join(chunk.text.casefold().split()) else 0
-                    scored.append((hit.score + bonus, len(scored), chunk))
-                scored.sort(key=lambda item: (-item[0], item[1]))
-                rankings.append([chunk.id for _, _, chunk in scored])
-                chunks.update((chunk.id, chunk) for _, _, chunk in scored)
+            exclude = self._exclude(exclude_turn)
+            with self.index.snapshot(db):
+                ranked = [self._rank(db, query, infos, exclude) for query in queries]
+        chunks = {chunk.id: chunk for ranking in ranked for chunk in ranking}
+        rankings = [[chunk.id for chunk in ranking] for ranking in ranked]
         ranking = rankings[0] if len(rankings) == 1 else fuse(rankings)
         return [chunks[key] for key in ranking], coverage
 
+    def _rank(self, db, query: str, infos, exclude) -> list[Chunk]:
+        """BM25 order, plus a bonus for chunks holding the query as an exact phrase."""
+        expression = match_expression(query)
+        if not expression or not infos:
+            return []
+        phrase = " ".join(query.casefold().split())
+        scored = []
+        for hit in self.index.match(db, expression, list(infos), exclude):
+            chunk = self._chunk(hit, infos)
+            bonus = PHRASE_BONUS if phrase in " ".join(chunk.text.casefold().split()) else 0
+            scored.append((hit.score + bonus, len(scored), chunk))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [chunk for _, _, chunk in scored]
+
     def chunks(
-        self, scope: Scope, *, exclude_turn: str | None = None
+        self, scope: Scope, *, exclude_turn: str | None = None, refresh: bool = True
     ) -> tuple[list[Chunk], Coverage]:
-        """Every indexed chunk in scope, for semantic ranking."""
+        """Every indexed chunk in scope, for semantic ranking.
+
+        `refresh=False` reads the index as the preceding search left it.
+        """
         with self.index.connect() as db:
-            infos, coverage = self._scope(db, scope, self._deadline())
+            infos, coverage = self._scope(db, scope, self._deadline() if refresh else 0.0)
             hits = self.index.chunks(db, list(infos), self._exclude(exclude_turn))
         return [self._chunk(hit, infos) for hit in hits], coverage
 
@@ -535,7 +546,7 @@ class History:
             "status": turn.status,
             "branch": turn.branch,
             "warnings": coverage.warnings,
-            "complete": coverage.complete,
+            "scan_complete": coverage.complete,
             "context": context[::-1],
             "text": redact(text[offset:end]),
             "offset": offset,

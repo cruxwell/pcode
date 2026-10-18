@@ -13,7 +13,7 @@ from pydantic_ai.models.function import FunctionModel
 from pcode.ext import BUNDLED_DIR, Extension, ExtensionUI, load_extension, user_extension_dir
 from pcode.history import CHUNK_CHARS, History, read_turns
 from pcode.history_embeddings import CACHE_NAME, semantic_ranking
-from pcode.history_index import INDEX_NAME
+from pcode.history_index import index_name
 from pcode.sessions import SavedSession, SessionInfo
 
 
@@ -647,7 +647,7 @@ def test_index_is_private_reused_refreshed_and_pruned(tmp_path, root, monkeypatc
     history = History(tmp_path, root)
     assert history.search("project", ["redraws"])[0]
     assert sorted(parsed) == ["other", "session-a"]
-    assert (root / INDEX_NAME).stat().st_mode & 0o777 == 0o600
+    assert (root / index_name()).stat().st_mode & 0o777 == 0o600
     # An unchanged transcript is not parsed again.
     assert history.search("project", ["redraws"])[0]
     assert len(parsed) == 2
@@ -659,7 +659,7 @@ def test_index_is_private_reused_refreshed_and_pruned(tmp_path, root, monkeypatc
     # A deleted session's rows go on the next refresh, whatever its scope.
     (root / "session-a" / "session.json").unlink()
     History(tmp_path / "elsewhere", root).search("workspace", ["anything"])
-    assert b"zebra" not in (root / INDEX_NAME).read_bytes()
+    assert b"zebra" not in (root / index_name()).read_bytes()
 
 
 def test_out_of_time_refresh_reports_pending_sessions(tmp_path, root, monkeypatch):
@@ -683,14 +683,55 @@ def test_out_of_time_refresh_reports_pending_sessions(tmp_path, root, monkeypatc
     assert result["results"] and result["scan_complete"]
 
 
-def test_index_from_another_version_is_rebuilt(tmp_path, root):
+def test_corrupt_index_is_rebuilt_and_stale_versions_swept(tmp_path, root):
+    import os
+
+    save(root, tmp_path)
+    root.mkdir(exist_ok=True)
+    (root / index_name()).write_bytes(b"not a database" * 100)
+    stale = root / ".history-index-v0-old.sqlite3"
+    recent = root / ".history-index-v2-new.sqlite3"
+    stale.write_bytes(b"x")
+    recent.write_bytes(b"x")
+    os.utime(stale, (0, 0))
+    assert History(tmp_path, root).search("project", ["redraws"])[0]
+    # Another version's index in use stays; one untouched for a week goes.
+    assert recent.exists() and not stale.exists()
+
+
+def test_index_errors_become_retries(tmp_path, root, monkeypatch):
     import sqlite3
 
     save(root, tmp_path)
-    History(tmp_path, root).search("project", ["redraws"])
-    with sqlite3.connect(root / INDEX_NAME) as db:
-        db.execute("PRAGMA user_version = 0")
-    assert History(tmp_path, root).search("project", ["redraws"])[0]
+
+    def locked(self):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr("pcode.history_index.HistoryIndex._open", locked)
+    registered = tools(tmp_path, root)
+    with pytest.raises(ModelRetry, match="OperationalError"):
+        call(registered["search_sessions"], query="redraws")
+    with pytest.raises(ModelRetry, match="OperationalError"):
+        call(registered["read_session"], session_id="session-a", turn_id="run-a")
+
+
+def test_semantic_failure_does_not_mark_keyword_coverage_incomplete(tmp_path, root, monkeypatch):
+    save(root, tmp_path)
+    monkeypatch.setenv("PCODE_HISTORY_EMBEDDING_MODEL", "test:model")
+
+    def fail(model):
+        raise ValueError("down")
+
+    monkeypatch.setattr("pydantic_ai.Embedder", fail)
+    result = call(tools(tmp_path, root)["search_sessions"], query="redraws")
+    assert result["scan_complete"] and result["warnings"]
+
+
+def test_hits_carry_their_chunk_not_the_whole_turn(tmp_path, root):
+    save(root, tmp_path, records=turn(response="needle " * CHUNK_CHARS))
+    hits, _ = History(tmp_path, root).search("project", ["needle"])
+    assert len(hits) > 3
+    assert all(not hit.turn.text and len(hit.text) <= CHUNK_CHARS for hit in hits)
 
 
 def test_several_queries_fuse_and_agreement_ranks_first(tmp_path, root):

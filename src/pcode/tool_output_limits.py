@@ -20,7 +20,7 @@ from pcode.images import has_files
 from pcode.preferences import SETTINGS, load_preferences
 from pcode.shell import REDUCED_SHELL_OUTPUT, split_envelope
 
-# Tools that bound and page their own output (character offsets, cursors). A
+# Tools that bound and page their own output (result limits, character offsets). A
 # spill pages by line instead, and their JSON keeps a turn's text on one line,
 # so the spill is unreadable through read_tool_result and only adds a hop.
 # Exempt means not truncated either: their own caps (read_session's max_chars,

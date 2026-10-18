@@ -369,13 +369,14 @@ Results from abandoned `/tree` branches and failed attempts are labeled as
 such, and the model is told to treat past claims as evidence, not proof that a
 change shipped.
 
-Search runs over a local index, `.history-index.sqlite3` in the session
-directory (mode 0600). It holds the redacted text of what recall can find, and
-only sessions whose transcript changed are read again, so a search takes a
-fraction of a second. The first search after upgrading builds it, which takes
-seconds for a few hundred sessions. When a session is deleted, its text is
-removed from the index on the next search. Deleting the file is always safe:
-the next search rebuilds it.
+Search runs over a local index, a `.history-index-*.sqlite3` file in the
+session directory (mode 0600). It holds the redacted text of what recall can
+find, and only sessions whose transcript changed are read again, so a search
+takes a fraction of a second. The first search after upgrading builds it,
+which takes seconds for a few hundred sessions. When a session is deleted, its
+text is removed from the index on the next search. Deleting the file is always
+safe: the next search rebuilds it. An index left by another pcode version is
+removed once nothing has used it for a week.
 
 ### Semantic search (opt-in)
 
