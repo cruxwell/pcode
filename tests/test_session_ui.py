@@ -650,6 +650,8 @@ def test_resume_without_a_current_model_reports_the_unknown_one(tmp_path):
         reopened.close()
 
     asyncio.run(run())
+    suggested = UserError("Unknown model: claude-opus-5-5. Did you mean 'anthropic:x'?")
+    assert error_message(suggested).endswith("'anthropic:x'? Pick one with /model.")
 
 
 def test_rename_names_the_session_for_resume(tmp_path):

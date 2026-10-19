@@ -3266,8 +3266,6 @@ class SessionController:
             runtime = AgentRuntime(agent, saved)
             await runtime.restore()
             await runtime.refresh_context()
-            if retired is not None:
-                saved.save_info()
         except BaseException:
             saved.abandon()
             raise
@@ -3296,6 +3294,10 @@ class SessionController:
         self.activity.turn_outcome = ""
         self.view.replay_conversation()
         if retired is not None:
+            try:
+                saved.save_info()
+            except OSError:
+                pass  # Unsaved, the next resume just falls back again.
             self.view.warning(
                 f"{retired} is no longer available; continuing this conversation on "
                 f"{saved.info.model}. /model picks another."
