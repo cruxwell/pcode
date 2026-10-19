@@ -3229,7 +3229,9 @@ class SessionController:
     # --- Resuming another saved conversation in this process ---
 
     async def resume_session(self, identity: str) -> None:
-        from pcode.agent import create_agent
+        from pydantic_ai.exceptions import UserError
+
+        from pcode.agent import create_agent, is_unknown_model
         from pcode.live import AgentRuntime
         from pcode.sessions import SavedSession
         from pcode.worktree import leave_worktree
@@ -3248,12 +3250,24 @@ class SessionController:
                 extensions = await asyncio.to_thread(self._load_extensions, target)
             capabilities = extensions.capabilities if extensions else ()
             subagents = extensions.subagents if extensions else ()
-            agent = create_agent(saved.info.model, target, capabilities, subagents)
+            retired = None
+            try:
+                agent = create_agent(saved.info.model, target, capabilities, subagents)
+            except UserError as error:
+                # A provider pcode has since dropped (meridian:) leaves the
+                # conversation stranded; carry it on with the model in use now.
+                if not is_unknown_model(error) or not self.model:
+                    raise
+                retired = saved.info.model
+                agent = create_agent(self.model, target, capabilities, subagents)
+                saved.info.model = self.model
             apply_effort(agent, saved.info.model, effort_for(saved.info.model))
             apply_thinking(agent, saved.info.model, self.activity.thinking_mode)
             runtime = AgentRuntime(agent, saved)
             await runtime.restore()
             await runtime.refresh_context()
+            if retired is not None:
+                saved.save_info()
         except BaseException:
             saved.abandon()
             raise
@@ -3281,6 +3295,11 @@ class SessionController:
         self.activity.prompt_detail = ""
         self.activity.turn_outcome = ""
         self.view.replay_conversation()
+        if retired is not None:
+            self.view.warning(
+                f"{retired} is no longer available; continuing this conversation on "
+                f"{saved.info.model}. /model picks another."
+            )
         self.mcp_defaults_requested = True
 
     def _resume_workspace(self, info) -> Path:

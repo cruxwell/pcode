@@ -41,7 +41,7 @@ from pydantic_ai_harness.subagents import SubAgents
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
 from pcode import retries
-from pcode.agent import SideModel, worker_toolsets
+from pcode.agent import SideModel, is_unknown_model, worker_toolsets
 from pcode.aside import SideReply
 from pcode.background_delegation import AbandonedDelegations
 from pcode.compaction import AutoCompaction, ContextTracking, effective_window, summarize
@@ -1478,6 +1478,10 @@ def error_message(error: Exception, *, unexpected: str | None = None) -> str:
 
     if (hint := failure_hint(error)) is not None:
         return hint
+    if is_unknown_model(error):
+        # A saved session or preference can name a provider pcode has dropped.
+        text = str(error)
+        return f"{text}{'' if text.endswith(('.', '?')) else '.'} Pick one with /model."
     if name == "UserError" and "Codex CLI credentials" in str(error):
         return f"Provider login missing or invalid. {CODEX_LOGIN_HINT}"
     if name == "UserError" and "ANTHROPIC_API_KEY" in str(error):

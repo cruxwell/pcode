@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.text import Text
 
 from pcode.app import PreviewApp
-from pcode.live import AgentRuntime
+from pcode.live import AgentRuntime, error_message
 from pcode.session_ui import SessionBrowser, literal, session_info_dialog
 from pcode.sessions import SavedSession, SessionError, Turn, first_prompt, session_turns
 
@@ -599,6 +599,53 @@ def test_failed_recovery_keeps_current_conversation(tmp_path):
         ):
             await app.controller.resume_session(identity)
         assert app.runtime is original
+        reopened = SavedSession.open(identity, root)
+        reopened.close()
+
+    asyncio.run(run())
+
+
+def test_resume_carries_a_retired_model_on_with_the_current_one(tmp_path):
+    async def run():
+        root = tmp_path / "sessions"
+        saved = SavedSession.create("meridian:claude-opus-5-5", tmp_path, root)
+        identity = saved.info.id
+        saved.close()
+        app = PreviewApp(workspace=tmp_path, session_dir=root, console=Console(file=StringIO()))
+        app.controller.model = "test"
+        await app.controller.resume_session(identity)
+        try:
+            assert app.model == "test"
+            assert app.runtime.session.info.id == identity
+            assert "meridian:claude-opus-5-5 is no longer available" in repr(
+                app.transcript.replay()
+            )
+        finally:
+            app.runtime.close()
+        # The switch is saved, so the next resume needs no fallback.
+        reopened = SavedSession.open(identity, root)
+        try:
+            assert reopened.info.model == "test"
+        finally:
+            reopened.close()
+
+    asyncio.run(run())
+
+
+def test_resume_without_a_current_model_reports_the_unknown_one(tmp_path):
+    from pydantic_ai.exceptions import UserError
+
+    async def run():
+        root = tmp_path / "sessions"
+        saved = SavedSession.create("meridian:claude-opus-5-5", tmp_path, root)
+        identity = saved.info.id
+        saved.close()
+        app = PreviewApp(workspace=tmp_path, session_dir=root, console=Console(file=StringIO()))
+        app.controller.model = None
+        with pytest.raises(UserError) as raised:
+            await app.controller.resume_session(identity)
+        assert error_message(raised.value).startswith("Unknown model: meridian:claude-opus-5-5")
+        assert error_message(raised.value).endswith("Pick one with /model.")
         reopened = SavedSession.open(identity, root)
         reopened.close()
 

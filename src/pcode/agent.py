@@ -492,6 +492,16 @@ def resolve_model(model: str) -> Model | str:
     return anthropic_model(model, key) if key else model
 
 
+def is_unknown_model(error: BaseException) -> bool:
+    """Whether Pydantic AI refused a model name it has no provider for.
+
+    Its message names only the model, so it is safe to show as is.
+    """
+    from pydantic_ai.exceptions import UserError
+
+    return isinstance(error, UserError) and str(error).startswith("Unknown model:")
+
+
 @dataclass(frozen=True)
 class SideModel:
     """A model a single run uses instead of the agent's, with its own settings."""
