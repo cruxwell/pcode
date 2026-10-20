@@ -1,4 +1,4 @@
-"""The `/switch` chooser over running session hosts, and stopped ones nobody has seen."""
+"""The `/attach` chooser over running session hosts, and stopped ones nobody has seen."""
 
 import time
 from pathlib import Path
@@ -16,6 +16,7 @@ from pcode.host_protocol import HostEntry, code_fingerprint
 from pcode.popup_ui import (
     bind_list_paging,
     fit_width,
+    nest_forks,
     popup_container,
     popup_mouse,
     popup_style,
@@ -54,11 +55,19 @@ def age(seconds: float) -> str:
 
 
 def host_row(
-    entry: HostEntry, current: str | None, now: float | None = None, *, code: str | None = None
+    entry: HostEntry,
+    current: str | None,
+    now: float | None = None,
+    *,
+    code: str | None = None,
+    guide: str = "",
 ) -> str:
-    """One line per host; `code` is the installed fingerprint, to flag hosts on older code."""
+    """One line per host; `code` is the installed fingerprint, to flag hosts on older code.
+
+    `guide` draws a fork under its original (`nested`), within the title's width.
+    """
     now = time.time() if now is None else now
-    title = " ".join(entry.label().split())
+    title = guide + " ".join(entry.label().split())
     if len(title) > _TITLE_WIDTH:
         title = title[: _TITLE_WIDTH - 1] + "…"
     marker = "▸" if entry.id == current else " "
@@ -69,6 +78,16 @@ def host_row(
     else:
         old = " · old code" if code is not None and entry.stale(code) else ""
     return f"{marker} {state}  {title:<{_TITLE_WIDTH}}  {where} · {age(now - entry.updated)}{old}"
+
+
+def nested(entries: list[HostEntry]) -> list[tuple[HostEntry, str]]:
+    """`entries`, in order, with each fork under the session it was copied from."""
+    return nest_forks(
+        entries,
+        # A host with no session yet is nobody's original: its own ID keeps it apart.
+        key=lambda entry: entry.session_id or entry.id,
+        parent=lambda entry: entry.forked_from,
+    )
 
 
 def status_rows(entry: HostEntry, now: float | None = None, *, code: str | None = None):
@@ -100,13 +119,14 @@ def hosts_dialog(
     entries = ordered(entries)
     code = code_fingerprint()
     visible: list[HostEntry] = []
+    tree = nested(entries)
     query = TextArea(height=1, prompt="Search: ", multiline=False)
     choices = TextArea(
         read_only=True,
         wrap_lines=False,
         scrollbar=True,
         # Fit every row, not just the filtered ones, so searching does not resize the box.
-        width=fit_width([host_row(entry, current, code=code) for entry in entries]),
+        width=fit_width([host_row(entry, current, code=code, guide=g) for entry, g in tree]),
     )
     choices.window.cursorline = Always()
     status = [""]
@@ -120,13 +140,20 @@ def hosts_dialog(
     def refresh():
         previous = selected()
         term = query.text.casefold()
-        visible[:] = [
-            entry
-            for entry in entries
-            if term in f"{entry.title} {entry.last_prompt} {entry.workspace} {entry.id}".casefold()
-        ]
+        # Searching lists matches flat, as /resume does; otherwise forks nest.
+        rows = (
+            [
+                (entry, "")
+                for entry in entries
+                if term
+                in f"{entry.title} {entry.last_prompt} {entry.workspace} {entry.id}".casefold()
+            ]
+            if term
+            else tree
+        )
+        visible[:] = [entry for entry, _ in rows]
         index = next((i for i, entry in enumerate(visible) if entry is previous), 0)
-        lines = [host_row(entry, current, code=code) for entry in visible]
+        lines = [host_row(entry, current, code=code, guide=guide) for entry, guide in rows]
         position = sum(len(line) + 1 for line in lines[:index])
         choices.buffer.set_document(
             Document("\n".join(lines) or "No matching sessions.", position), bypass_readonly=True

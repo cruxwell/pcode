@@ -35,10 +35,11 @@ from pcode.config import USAGE as CONFIG_USAGE
 from pcode.controller import (
     HANDOFF_TAG,
     MODEL_COMMANDS,
-    TERMINAL_COMMANDS,
     SessionController,
+    background_prompt,
     delivered_job,
     mcp_enable,
+    runs_in_terminal,
 )
 from pcode.error_report import error_message
 from pcode.preferences import (
@@ -209,6 +210,8 @@ class PreviewApp:
         self.switch_requested: str | None = None
         # `/fork [PROMPT]`, with its prompt ("" bare).
         self.fork_requested: str | None = None
+        # `/new PROMPT`'s prompt (bare `/new` is the session's own).
+        self.new_requested: str | None = None
         self.restart_requested = False
         self.host_stopped = False
         # A command this terminal sent ended the host's session (`/worktree finish`).
@@ -228,7 +231,7 @@ class PreviewApp:
         self.moved_to_host = False
         # The editor's Enter, so what was typed during a move reaches the host.
         self._submit_typed: Callable[[str], None] | None = None
-        # The host this terminal showed before the current one, for `/switch -`;
+        # The host this terminal showed before the current one, for `/attach -`;
         # None after leaving a session that ran in this terminal.
         self.previous_host: str | None = None
         # Its conversation, to resume should that host have stopped meanwhile
@@ -388,10 +391,11 @@ class PreviewApp:
             ),
             self.controller.registry.find("/rename"),
             Command(
-                "/switch",
-                "Switch to another running session; 'new [PROMPT]' starts one in the background",
+                "/attach",
+                "Show a running session here, leaving this one running if it is in a "
+                "host: HOST | - (the previous one); bare lists them",
                 self.switch,
-                ("new",),
+                aliases=("/switch",),
                 free_arguments=True,
                 group="Session",
             ),
@@ -1447,16 +1451,25 @@ class PreviewApp:
         return getattr(self.runtime, "remote", False) is True
 
     def switch(self, argument: str) -> None:
+        """`/attach` (once `/attach`): show another running session in this terminal."""
         if not self.model:
-            raise ValueError("/switch needs a model; this is a local UI preview.")
-        if argument.strip() == "-" and self.previous_host is None and self.previous_session is None:
-            raise ValueError("No previous session in this terminal yet; /switch lists them all.")
-        start = _session_start(argument)
-        # With a prompt, `new` leaves the new session working in the
-        # background, and this terminal stays where it is.
-        if not (start and start[1]):
-            self.check_leaving("/switch")
-        self.switch_requested = argument.strip()
+            raise ValueError("/attach needs a model; this is a local UI preview.")
+        argument = argument.strip()
+        if argument.split(maxsplit=1)[:1] == ["new"]:
+            # Host IDs are hex, so this was only ever the old `/switch new`.
+            raise ValueError(
+                "Starting a session is /new PROMPT now (or Ctrl+N in the /attach list)."
+            )
+        if argument == "-" and self.previous_host is None and self.previous_session is None:
+            raise ValueError("No previous session in this terminal yet; /attach lists them all.")
+        self.check_leaving("/attach")
+        self.switch_requested = argument
+
+    def new_in_background(self, prompt: str) -> None:
+        """`/new PROMPT`: a new session works on it in a host; this terminal stays here."""
+        if not self.model:
+            raise ValueError("/new PROMPT needs a model; this is a local UI preview.")
+        self.new_requested = prompt
 
     def fork(self, argument: str) -> None:
         if not self.model:
@@ -1464,7 +1477,7 @@ class PreviewApp:
         if self.active_session_id() is None:
             raise ValueError(
                 "Nothing to fork yet: a session is saved with its first prompt. "
-                "/switch new starts an empty one."
+                "/new PROMPT starts another beside it."
             )
         prompt = argument.strip()
         # With a prompt the copy works in the background; this terminal stays.
@@ -1683,7 +1696,7 @@ class PreviewApp:
         )
 
     async def switch_session(self, output: TerminalOutput, session) -> None:
-        """`/switch`: pick a running host (or start one) and show it in this terminal."""
+        """`/attach`: pick a running host (or start one) and show it in this terminal."""
         from pcode.host_protocol import find_host, forget_stopped, list_hosts, list_stopped
 
         argument, self.switch_requested = self.switch_requested or "", None
@@ -1695,9 +1708,6 @@ class PreviewApp:
                     await self.open_saved_session(self.previous_session, self.active_session_id())
                 return
             argument = self.previous_host
-        if start := _session_start(argument):
-            await self.start_host_session(start[1])
-            return
         current = getattr(self.runtime, "id", None) if self.hosted else None
         if argument:
             try:
@@ -1714,7 +1724,7 @@ class PreviewApp:
                     await self.open_saved_session(stopped, self.active_session_id())
                     return
                 self.transcript.warning(
-                    f"The previous session ({argument}) is no longer running; /switch lists "
+                    f"The previous session ({argument}) is no longer running; /attach lists "
                     "the ones that are."
                     if previous
                     else str(error)
@@ -1728,7 +1738,7 @@ class PreviewApp:
         entries = await asyncio.to_thread(lambda: list_hosts() + list_stopped())
         if not entries:
             self.transcript.note(
-                "No sessions are running in the background. /switch new [PROMPT] starts one."
+                "No sessions are running in the background. /new PROMPT starts one."
             )
             return
         from pcode.host_ui import hosts_dialog
@@ -1753,7 +1763,7 @@ class PreviewApp:
             # Seen once chosen either way; a resumed host forgets it too.
             forget_stopped(entry.session_id)
             if action == "stop":
-                self.transcript.note(f"Removed {entry.label()[:60]} from /switch.")
+                self.transcript.note(f"Removed {entry.label()[:60]} from /attach.")
                 return
             await self.open_saved_session(entry.session_id, self.active_session_id())
         elif action == "stop":
@@ -1777,7 +1787,7 @@ class PreviewApp:
         runtime = self.runtime
         session = runtime.session_id and f" pcode --continue {runtime.session_id} resumes it."
         self.transcript.warning(
-            f"The session host {runtime.id} has exited. /switch picks another;{session}"
+            f"The session host {runtime.id} has exited. /attach picks another;{session}"
         )
         self.activity.busy = False
         self.redraw()
@@ -1882,14 +1892,14 @@ class PreviewApp:
             self.activity.end_wait(wait)
         if prompt:
             controller.submit(prompt, "queue")
-            # Just started, so the one to look in on: `/switch -` goes there.
+            # Just started, so the one to look in on: `/attach -` goes there.
             self.previous_host = identity
             self.previous_session = controller.runtime.session_id or None
             controller.close()
             what = f"Forked into session {identity}, which is" if fork else f"Session {identity} is"
             self.transcript.note(
                 f"{what} working on it in the background. "
-                "Ctrl+^ (or /switch -) shows it, /switch lists every session; "
+                "Ctrl+^ (or /attach -) shows it, /attach lists every session; "
                 "this terminal stays here."
             )
             if self._host_watch is not None:
@@ -1925,8 +1935,8 @@ class PreviewApp:
         if isinstance(previous, SessionController):
             # Handed off: the host now runs that same conversation.
             if not handed_off and (saved := getattr(previous.runtime, "session", None)):
-                note += f" · left {saved.info.id} (/switch - resumes it)"
-                # No host to come back to: `/switch -` resumes it in one.
+                note += f" · left {saved.info.id} (/attach - resumes it)"
+                # No host to come back to: `/attach -` resumes it in one.
                 self.previous_host = None
                 self.previous_session = saved.info.id
             elif not handed_off:
@@ -2524,6 +2534,12 @@ class PreviewApp:
         try:
             if tag is HANDOFF_TAG:
                 self.hand_off_now()
+            elif (prompt := background_prompt(text)) is not None:
+                # The session's own registry has /new too: that is the bare one.
+                try:
+                    self.new_in_background(prompt)
+                except ValueError as error:
+                    self.transcript.error(str(error))
             else:
                 self.handle(text)
             if self.config_requested:
@@ -2539,6 +2555,9 @@ class PreviewApp:
             if self.fork_requested is not None:
                 prompt, self.fork_requested = self.fork_requested, None
                 await self.fork_session(prompt)
+            if self.new_requested is not None:
+                prompt, self.new_requested = self.new_requested, None
+                await self.start_host_session(prompt)
             if self.restart_requested:
                 await self.restart_host()
             if self.handoff_requested:
@@ -2700,7 +2719,7 @@ class PreviewApp:
             # A host's terminal runs its own commands itself, even before the
             # host answers; in-process they keep their place in the session's queue.
             hosted = self.hosted or early is not None
-            if hosted and text.split(maxsplit=1)[0] in TERMINAL_COMMANDS:
+            if hosted and runs_in_terminal(text):
                 local.put_nowait((text, tag))
             else:
                 self.controller.command(text, tag)
@@ -2736,7 +2755,7 @@ class PreviewApp:
                 return
             if text.startswith("/"):
                 name = text.split(maxsplit=1)[0]
-                if early is not None and name not in TERMINAL_COMMANDS:
+                if early is not None and not runs_in_terminal(text):
                     early.append(("command", text, self._popup_generation))
                     if name in MODEL_COMMANDS or mcp_enable(text):
                         # As in-process: Ctrl+C now cancels it, not the draft.
@@ -2774,14 +2793,14 @@ class PreviewApp:
             on_effort=self.adjust_effort,
             on_send_mode=self.cycle_send_mode,
             on_model=lambda: submit("/model"),
-            on_previous_session=lambda: submit("/switch -"),
+            on_previous_session=lambda: submit("/attach -"),
             on_copy_response=lambda: submit("/copy"),
             on_paste_image=lambda: submit("/paste-image"),
             on_btw=self.btw_key,
             on_btw_next=self.btw_next,
             on_btw_close=self.close_btw,
             bottom_toolbar=self.toolbar,
-            # Whichever controller is on screen: /switch replaces it.
+            # Whichever controller is on screen: /attach replaces it.
             session_title=lambda: self.controller.session_title(),
             vi_mode=load_preferences().get("editing_mode", "emacs") == "vi",
         )
@@ -2815,7 +2834,7 @@ class PreviewApp:
             title_mode = load_preferences().get(
                 "terminal_title", SETTINGS["terminal_title"].default
             )
-            # Whichever controller is on screen: /switch replaces it.
+            # Whichever controller is on screen: /attach replaces it.
             self._title = TabTitle(lambda: self.controller.session_title(), terminal, title_mode)
             self._appearance = AppearanceWatch(
                 terminal, active=lambda: self.transcript.theme == "auto"
@@ -2922,7 +2941,7 @@ class PreviewApp:
             controller.close()
             return
         loops, self._loops = self._loops, []
-        # In-process, the command leaving (/switch, /detach) runs in one of
+        # In-process, the command leaving (/attach, /detach) runs in one of
         # these loops: awaiting itself would never end. adopt_controller stops it.
         loops = [task for task in loops if task is not asyncio.current_task()]
         for task in loops:
@@ -3352,14 +3371,6 @@ async def _stopping_provider_processes(main):
         await shutdown()
 
 
-def _session_start(argument: str) -> tuple[str, str] | None:
-    """`/switch new [PROMPT]` as ("new", prompt); None for a host."""
-    words = argument.split(maxsplit=1)
-    if words and words[0] == "new":
-        return words[0], words[1] if len(words) > 1 else ""
-    return None
-
-
 def forked_note(saved) -> str:
     """Say where a copied session came from, and that the two share a workspace."""
     note = f"Continuing a copy of session {saved.forked_from}"
@@ -3440,7 +3451,7 @@ def _kill_hosts(which: str, entries: list, code: str) -> None:
 def _stopped_session(selector: str, root: Path | None = None) -> str | None:
     """The saved session `--attach SELECTOR` means when no running host matches it.
 
-    A stopped host's ID still finds its session while /switch lists it; any
+    A stopped host's ID still finds its session while /attach lists it; any
     session ID prefix finds a saved session.
     """
     from pcode.host_protocol import list_hosts, list_stopped
@@ -3831,7 +3842,7 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
             app.run()
             # `is True`: tests stand a Mock in for the app, which answers every attribute.
             if app.hosted is True or app.moved_to_host is True:
-                # Moved to a host meanwhile (/detach, /switch): leave as a hosted terminal does.
+                # Moved to a host meanwhile (/detach, /attach): leave as a hosted terminal does.
                 _leave_host(app)
             else:
                 _leave_worktree_on_exit(app)

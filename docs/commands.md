@@ -116,18 +116,21 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   `/autocompact 200k` compacts once context reaches 200k tokens even if the window is
   larger (minimum 50k), and the footer shows usage against that cap; `auto` removes
   the cap. Works mid-turn, from the next model request.
-- `/new`: start a new saved conversation; clears the screen and retained scrollback,
-  keeps input history.
+- `/new [PROMPT]`: start a new saved conversation; clears the screen and retained
+  scrollback, keeps input history. With PROMPT, a new
+  [background session](sessions.md#background-sessions) works on it instead and this
+  terminal stays where it is, mid-turn or not.
 - `/resume`: browse and search saved conversations (prompts, responses, tool calls,
   name, or session ID); resume one in place.
 - `/rename [NAME | -]`: name this conversation so `/resume` lists and finds it by that
   name; `-` clears it. Bare, it asks the conversation's model to name it from
   everything so far, in the background, so a running turn carries on. Available after the
   first prompt. A name replaces the [title the model gives it](sessions.md#session-titles).
-- `/switch [HOST | - | new [PROMPT]]`: pick another running
-  [background session](sessions.md#background-sessions) and show it here, or start a new
-  one; the session you leave keeps working if it runs in a host, and ends if it runs in
-  this terminal (`/switch -` brings it back).
+- `/attach [HOST | -]` (alias `/attach`): pick another running
+  [background session](sessions.md#background-sessions) and show it here, with forks
+  nested under their original; `-` is the one this terminal showed before. The session
+  you leave keeps working if it runs in a host, and ends if it runs in this terminal
+  (`/attach -` brings it back). `/resume` is for conversations that aren't running.
 - `/fork [PROMPT]`: start a copy of this conversation in a background session, in a git
   repository in a worktree of its own. With PROMPT the copy works on it and this
   terminal stays here; bare, it switches to the copy. Once this session runs in a host
@@ -286,7 +289,7 @@ it is open. Enter, the arrows, Ctrl+J, Ctrl+C, and Ctrl+D never change.
 | Tab / arrows | Browse completion; arrows also navigate input/history |
 | Ctrl+L | Choose a model (keeps the conversation; applies from the next request). While a completion menu or a grey history suggestion is showing, Ctrl+L accepts it instead, like Tab or → |
 | Ctrl+N / Ctrl+P | Raise / lower reasoning effort from the next request |
-| Ctrl+^ | Back to the session this terminal showed before (`/switch -`) |
+| Ctrl+^ | Back to the session this terminal showed before (`/attach -`) |
 | Ctrl+O | Show/hide the [activity panel](#activity-panel): thinking, tool calls, tasks and running commands (saves the default) |
 | Ctrl+T | Choose where thinking shows: `o` off, `a` activity panel, `b` scrollback (saves the default) |
 | Ctrl+Y | Copy the current draft to the system clipboard; with an empty editor, `/copy` chooses a response |
@@ -698,7 +701,7 @@ Input sent while idle starts a normal turn in every mode.
 
 Slash commands run separately from the model, so help, inspection, theme,
 context, and effort commands work while it's busy. `/model` and `/effort` also work and
-apply from the running turn's next request. `/new`, `/resume`, `/login`, and `/logout` need
+apply from the running turn's next request. Bare `/new`, `/resume`, `/login`, and `/logout` need
 an idle conversation: cancel or wait, then retry.
 
 Cancelling:
@@ -738,7 +741,7 @@ the send mode, and nothing reaches the model until you send a message, so
 ## Popup keys
 
 Every full-screen popup (`/diffs`, `/tools`, `/links`, `/tree`, `/resume`,
-`/switch`, `/jobs`, `/agents`, `/btw`, `/status`, and the Ctrl+L model picker) scrolls with the same keys,
+`/attach`, `/jobs`, `/agents`, `/btw`, `/status`, and the Ctrl+L model picker) scrolls with the same keys,
 acting on whichever pane has focus:
 
 | Key | Action |
@@ -752,7 +755,7 @@ acting on whichever pane has focus:
 Ctrl+D never closes a popup; it always half-pages. A list with a search line
 keeps these keys working while you type, so the query stays where it is.
 
-Popups with a search line (`/tools`, `/resume`, `/switch`, `/diffs`, `/links`) open with
+Popups with a search line (`/tools`, `/resume`, `/attach`, `/diffs`, `/links`) open with
 the cursor in it, so you can type to filter straight away. Each popup's
 shortcuts follow the [shortcut prefix](#shortcut-prefix) and act from any pane,
 the search line and the `/btw` editor included, so typing never triggers one.
@@ -765,7 +768,7 @@ these actions alongside the current popup's navigation and editing keys:
 | `/tools` | `f` search · `x` failures only · `e` edits only · `t` tool filter · `y` copy command · `o` copy output |
 | `/diffs` | `f` search the focused pane · `s` / `r` next / previous match · `v` next view · `n` note · `a` mark reviewed · `e` open in editor · `g` refresh |
 | `/resume` | `f` search · `r` prompts only · `g` all workspaces · `x` delete (twice) |
-| `/switch` | `f` search · `n` new session · `x` stop (twice) |
+| `/attach` | `f` search · `n` new session · `x` stop (twice) |
 | `/jobs` | `w` watch in the preview · `k` stop |
 | `/links` | `f` search · `t` show/hide tool links |
 | `/tree` | `y` copy the selection, or pick a quote or code block from a response |

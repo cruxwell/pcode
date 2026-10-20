@@ -4388,7 +4388,7 @@ class Transcript:
             f"{key('l')} choose model · {key('n')} raise effort · {key('p')} lower effort "
             "(next request)"
         )
-        self.note(f"{previous} back to the previous session (/switch -)")
+        self.note(f"{previous} back to the previous session (/attach -)")
         self.note(f"{key('y')} copy the draft · Ctrl+C discard input · Ctrl+D exit on empty input")
         self.note(
             f"During a run: Enter sends · {key('s')} picks steering/queue/interrupt for the "

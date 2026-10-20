@@ -6,10 +6,10 @@ send prompts, and render the same `pcode.runtime` events a local turn yields.
 Closing a terminal only detaches it; the host keeps working.
 
 Messages are one JSON object per line. Every running host leaves
-`<id>.sock` and `<id>.json` in `host_dir()`; the JSON is what `/switch` lists
+`<id>.sock` and `<id>.json` in `host_dir()`; the JSON is what `/attach` lists
 without connecting to anything. A host that stopped itself for being idle with
 a turn nobody has seen leaves its entry in `stopped/<session id>.json`, so
-`/switch` still lists the session and resumes it.
+`/attach` still lists the session and resumes it.
 """
 
 import asyncio
@@ -133,6 +133,8 @@ class HostEntry:
     workspace: str
     protocol: int = PROTOCOL
     session_id: str = ""
+    # The session it was copied from (`/fork`), so /attach nests it there.
+    forked_from: str = ""
     # "starting", "idle", or "working"; "stopped" for one `list_stopped` remembers.
     state: str = "starting"
     # The first prompt names the conversation; the last one says what it is doing.

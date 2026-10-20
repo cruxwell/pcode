@@ -42,8 +42,8 @@ files like `.envrc`. See
 ### Sessions keep running when you look away
 
 `/detach` moves a session into a background host, or `pcode --host` starts it
-in one, so you can juggle several from one terminal. `/switch` moves to another
-running session (or starts a new one), and Ctrl+^ flips back to the last one.
+in one, so you can juggle several from one terminal. `/attach` moves to another
+running session, `/new PROMPT` starts one, and Ctrl+^ flips back to the last one.
 Closing the terminal doesn't stop a hosted turn; `pcode --attach` picks it back
 up, and you get a desktop notification when a background session finishes. See
 [background sessions](../sessions.md#background-sessions).

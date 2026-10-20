@@ -23,6 +23,7 @@ from pcode.popup_ui import (
     RichPane,
     bind_list_paging,
     fit_width,
+    nest_forks,
     popup_container,
     popup_mouse,
     popup_style,
@@ -96,45 +97,10 @@ def in_name(word: str, info: SessionInfo) -> bool:
 def fork_forest(records: list[SessionInfo]) -> list[tuple[SessionInfo, str]]:
     """Sessions with each fork nested under the one it was copied from, as (info, guide).
 
-    A family is placed by its most recently updated member, so a fork still
-    being worked on keeps its original near the top; siblings go the same way.
-    A session whose original is not listed (deleted, or another workspace) is
-    a root, with no guide.
+    A family is placed by its most recently updated member (see `nest_forks`).
     """
-    listed = {info.id for info in records}
-    children: dict[str | None, list[SessionInfo]] = {}
-    for info in records:
-        parent = info.forked_from if info.forked_from in listed else None
-        children.setdefault(parent, []).append(info)
-    latest: dict[str, str] = {}
-
-    def newest(info: SessionInfo, seen: frozenset[str] = frozenset()) -> str:
-        if info.id not in latest:
-            below = [
-                newest(child, seen | {info.id})
-                for child in children.get(info.id, ())
-                if child.id not in seen
-            ]
-            latest[info.id] = max([info.updated, *below])
-        return latest[info.id]
-
-    rows: list[tuple[SessionInfo, str]] = []
-    placed: set[str] = set()
-
-    def place(info: SessionInfo, guide: str, below: str) -> None:
-        placed.add(info.id)
-        rows.append((info, guide))
-        family = [child for child in children.get(info.id, ()) if child.id not in placed]
-        family.sort(key=newest, reverse=True)
-        for index, child in enumerate(family):
-            last = index == len(family) - 1
-            place(child, below + ("└─ " if last else "├─ "), below + ("   " if last else "│  "))
-
-    for root in sorted(children.get(None, ()), key=newest, reverse=True):
-        place(root, "", "")
-    # A cycle of forks (never written, but read from disk) has no root: list it flat.
-    rows += [(info, "") for info in records if info.id not in placed]
-    return rows
+    newest = sorted(records, key=lambda info: info.updated, reverse=True)
+    return nest_forks(newest, key=lambda info: info.id, parent=lambda info: info.forked_from)
 
 
 class SessionBrowser:

@@ -14,7 +14,7 @@ for it. Notes other terminals cause while it runs are written all the same.
 import asyncio
 import sys
 
-from pcode.controller import TERMINAL_COMMANDS
+from pcode.controller import runs_in_terminal
 from pcode.gateway import HeadlessView, attached, host_call, submit
 from pcode.host_protocol import HostEntry
 from pcode.remote import stop_entry
@@ -66,7 +66,7 @@ async def print_to_host(entry: HostEntry, prompt: str, *, transcript, present, s
     name = prompt.split(maxsplit=1)[0] if prompt.startswith("/") else ""
     if name == "/stop":
         return await _stop(entry, prompt, transcript)
-    if name in TERMINAL_COMMANDS:
+    if name and runs_in_terminal(prompt):
         transcript.error(f"{name} needs the interactive terminal: pcode --attach {entry.id}")
         return False
     reply = PrintedReply(

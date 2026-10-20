@@ -124,7 +124,7 @@ the main conversation unless you choose to pull it in. See
 
 A session runs inside its terminal until you want it to outlive it: `/detach`
 moves it into a background host. Then close the terminal and the turn keeps
-going; `pcode --attach` picks it back up. `/switch` moves between running
+going; `pcode --attach` picks it back up. `/attach` moves between running
 sessions and Ctrl+^ flips back to the last one. `/fork PROMPT` then sets a copy
 of the conversation on another approach in its own worktree, and Ctrl+^ flips
 between the two while both work ([parallel sessions](sessions.md#parallel-sessions)).

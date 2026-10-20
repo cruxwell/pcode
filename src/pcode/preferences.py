@@ -363,7 +363,7 @@ SETTINGS = {
         description="Run each session in a background host that outlives the terminal; "
         "off runs it inside the terminal until /detach moves it into one",
     ),
-    # 0 by default: a stopped host costs nothing, since /switch still lists one
+    # 0 by default: a stopped host costs nothing, since /attach still lists one
     # with an unseen result and resumes it.
     "session_host_idle_minutes": Setting(
         "0",

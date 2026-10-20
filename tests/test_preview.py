@@ -52,7 +52,7 @@ def make_app(width=80, workspace=None):
                 "/new",
                 "/resume",
                 "/rename",
-                "/switch",
+                "/attach",
                 "/fork",
                 "/restart",
                 "/stop",

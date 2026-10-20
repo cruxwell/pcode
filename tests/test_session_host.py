@@ -1071,12 +1071,17 @@ def test_detach_moves_a_session_running_here_into_a_host_and_stays_on_it(tmp_pat
 
 
 def spawning(tmp_path: Path, loop, hosts: list) -> callable:
-    """A `spawn_host` serving each session in a scripted host: a fork as dddd4444, else cccc3333."""
+    """A `spawn_host` serving each session in a scripted host.
+
+    A fork is dddd4444; anything else is cccc3333, then eeee5555.
+    """
+
+    others = iter(["cccc3333", "eeee5555"])
 
     def spawn_host(*, model, workspace, resume, session_dir, fork=False, worktree=False):
-        identity = "dddd4444" if fork else "cccc3333"
+        identity = "dddd4444" if fork else next(others)
         # Opens the session as the real host does: refused if the terminal still held it.
-        saved = SavedSession.open(resume, session_dir, fork=fork)
+        saved = SavedSession.open(resume, session_dir, fork=fork) if resume else None
         script = Script()
         host = asyncio.run_coroutine_threadsafe(
             start_host(identity, workspace, script, saved), loop
@@ -1141,6 +1146,53 @@ def test_a_fork_made_mid_turn_moves_this_session_into_a_host_once_idle(tmp_path,
             fork = next(host for host in hosts if host.entry.id == "dddd4444")
             # The copy works on its prompt meanwhile.
             await until(lambda: any("go" in user_texts(m) for m in fork.script.requests))
+        finally:
+            for host in hosts:
+                await stop_host(host)
+
+    asyncio.run(run())
+
+
+@pytest.mark.in_process("moves a session running in this terminal; hosted, there is none")
+def test_new_with_a_prompt_mid_turn_starts_a_session_beside_this_one(tmp_path, host_dir):
+    async def run():
+        output = StringIO()
+        script = Script()
+        app = local_app(tmp_path, script, output)
+        hosts: list[SessionHost] = []
+        spawn_host = spawning(tmp_path, asyncio.get_running_loop(), hosts)
+        try:
+            with create_pipe_input() as pipe:
+
+                def prompt(*args, **kwargs):
+                    return create_prompt(*args, input=pipe, output=DummyOutput(), **kwargs)
+
+                async def seen(text):
+                    await until(lambda: text in output.getvalue(), timeout=10)
+
+                async def drive():
+                    pipe.send_text("hello here\r")
+                    await seen("Echo: hello here")
+                    await until(lambda: not app.activity.busy)
+                    pipe.send_text("hang here\r")
+                    await until(lambda: "hang here" in script.gates)
+                    pipe.send_text("/new go\r")
+                    await seen("Session cccc3333 is working on it in the background")
+                    assert "unavailable while working" not in output.getvalue()
+                    assert not app.hosted and app.activity.busy
+                    script.release("hang here")
+                    await seen("Moved to background session eeee5555")
+                    pipe.send_text("\x1e")
+                    await seen("Switched to session cccc3333")
+                    pipe.send_text("/detach\r")
+
+                with (
+                    patch("pcode.app.create_prompt", prompt),
+                    patch("pcode.remote.spawn_host", spawn_host),
+                ):
+                    await asyncio.wait_for(asyncio.gather(app.run_async(), drive()), timeout=30)
+            fresh = next(host for host in hosts if host.entry.id == "cccc3333")
+            await until(lambda: any("go" in user_texts(m) for m in fresh.script.requests))
         finally:
             for host in hosts:
                 await stop_host(host)
@@ -1637,6 +1689,39 @@ def test_picker_puts_unseen_sessions_first_and_flags_old_code():
     stopped = HostEntry("stop0000", 1, "m", "/w/f", state="stopped", unseen=True, code="1")
     row = host_row(stopped, None, now=1, code="2")
     assert "✓ new" in row and row.endswith("· stopped")
+
+
+def test_picker_nests_forks_under_their_original():
+    from pcode.host_ui import host_row, nested, ordered
+
+    original = HostEntry("orig0000", 1, "m", "/w", session_id="s-orig", title="orig", updated=1)
+    # The fork is working, so its family leads; it keeps its place under the original.
+    fork = HostEntry(
+        "fork0000",
+        1,
+        "m",
+        "/w",
+        session_id="s-fork",
+        forked_from="s-orig",
+        title="fork",
+        state="working",
+        updated=2,
+    )
+    other = HostEntry("othr0000", 1, "m", "/w", session_id="s-othr", title="other", updated=3)
+    # Its original is not running: a root, like any other.
+    orphan = HostEntry(
+        "orph0000", 1, "m", "/w", session_id="s-orph", forked_from="gone", title="orphan"
+    )
+    fresh = HostEntry("frsh0000", 1, "m", "/w", title="no session yet", updated=0)
+    rows = nested(ordered([original, fork, other, orphan, fresh]))
+    assert [(e.id, guide) for e, guide in rows] == [
+        ("orig0000", ""),
+        ("fork0000", "└─ "),
+        ("orph0000", ""),
+        ("othr0000", ""),
+        ("frsh0000", ""),
+    ]
+    assert "└─ fork" in host_row(fork, None, now=2, guide="└─ ")
 
 
 @pytest.mark.parametrize("action", ["attach", "stop"])

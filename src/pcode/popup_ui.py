@@ -1,7 +1,7 @@
 """Shared terminal-native styling for alternate-screen popups."""
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass
 from io import StringIO
 
@@ -1001,3 +1001,51 @@ class PopupInput:
 
     def _clear_notice(self) -> None:
         self.notice = ""
+
+
+def nest_forks[T](
+    items: Sequence[T], key: Callable[[T], Hashable], parent: Callable[[T], Hashable]
+) -> list[tuple[T, str]]:
+    """`items` with each fork nested under the one it was copied from, as (item, guide).
+
+    `items` come in the order they would be listed flat. A family goes where its
+    first-listed member would, so a fork being worked on keeps its original near
+    the top; siblings go the same way. An item whose original is not listed
+    (deleted, filtered out, another workspace) is a root, with no guide.
+    """
+    position = {key(item): index for index, item in enumerate(items)}
+    children: dict[Hashable, list[T]] = {}
+    for item in items:
+        origin = parent(item)
+        listed = origin in position and origin != key(item)
+        children.setdefault(origin if listed else None, []).append(item)
+    first: dict[Hashable, int] = {}
+
+    def lead(item: T, seen: frozenset = frozenset()) -> int:
+        name = key(item)
+        if name not in first:
+            below = [
+                lead(child, seen | {name})
+                for child in children.get(name, ())
+                if key(child) not in seen
+            ]
+            first[name] = min([position[name], *below])
+        return first[name]
+
+    rows: list[tuple[T, str]] = []
+    placed: set[Hashable] = set()
+
+    def place(item: T, guide: str, below: str) -> None:
+        placed.add(key(item))
+        rows.append((item, guide))
+        family = [child for child in children.get(key(item), ()) if key(child) not in placed]
+        family.sort(key=lead)
+        for index, child in enumerate(family):
+            last = index == len(family) - 1
+            place(child, below + ("└─ " if last else "├─ "), below + ("   " if last else "│  "))
+
+    for root in sorted(children.get(None, ()), key=lead):
+        place(root, "", "")
+    # A cycle of forks (never written, but read from disk) has no root: list it flat.
+    rows += [(item, "") for item in items if key(item) not in placed]
+    return rows

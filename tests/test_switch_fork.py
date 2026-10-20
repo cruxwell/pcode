@@ -298,21 +298,46 @@ def test_fork_needs_a_saved_conversation():
 
 
 @pytest.mark.parametrize(
-    "argument,expected",
+    "text,prompt,terminal",
     [
-        ("new", ("new", "")),
-        ("new\ttry  this", ("new", "try  this")),
-        ("new go", ("new", "go")),
-        ("fork", None),
-        ("abcd1234", None),
-        ("forked", None),
-        ("", None),
+        ("/new", None, False),
+        ("/new  ", None, False),
+        ("/new go", "go", True),
+        ("/new\ttry  this", "try  this", True),
+        ("/newer go", None, False),
+        ("/attach", None, True),
+        ("/switch -", None, True),
+        ("/compact", None, False),
     ],
 )
-def test_session_start_reads_new(argument, expected):
-    from pcode.app import _session_start
+def test_new_with_a_prompt_is_the_terminals(text, prompt, terminal):
+    from pcode.controller import background_prompt, runs_in_terminal
 
-    assert _session_start(argument) == expected
+    assert background_prompt(text) == prompt
+    assert runs_in_terminal(text) is terminal
+
+
+def test_attach_points_the_old_switch_new_at_new(tmp_path):
+    app = app_with(Busy())
+    app.activity.busy = False
+    with pytest.raises(ValueError, match="/new PROMPT now"):
+        app.switch("new go")
+
+
+def test_new_with_a_prompt_starts_a_background_session(tmp_path):
+    saved = SavedSession.create("test:local", tmp_path, tmp_path / "sessions")
+    app = app_with(Busy(saved))  # Mid-turn: this terminal stays, so that is fine.
+    started = []
+
+    async def start_host_session(prompt="", *, resume=None, note=None, fork=False):
+        started.append((prompt, resume, fork))
+
+    app.start_host_session = start_host_session
+    try:
+        asyncio.run(app.run_command("/new try this", idle=False, tag=None))
+    finally:
+        saved.close()
+    assert started == [("try this", None, False)]
 
 
 def test_the_move_into_a_host_waits_for_an_idle_session(tmp_path):

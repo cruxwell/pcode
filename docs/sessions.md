@@ -37,7 +37,7 @@ attached terminal keeps a host from [stopping itself](#idle-hosts-stop). It
 stops every host that has nothing running, terminal attached or not, the
 same way the host would have stopped itself with no terminal: a worktree with
 unmerged work is kept (an untouched one is removed) and a reply you haven't
-read stays in `/switch`. A host
+read stays in `/attach`. A host
 running a turn, a command, a side question or a background command is skipped
 and listed with the reason. A terminal still showing a stopped host says so and
 prints the `pcode --continue` command that resumes it. `stale` stops hosts
@@ -45,18 +45,21 @@ still running older pcode code, and `all` stops every host.
 
 Inside a hosted session:
 
-- `/switch` opens a picker over every running host, with what each one is doing,
+- `/attach` opens a picker over every running host, with what each one is doing,
   plus [stopped sessions](#idle-hosts-stop) with a reply you haven't read.
   Enter shows that session in this terminal (resuming a stopped one); Ctrl+N
   starts a new one; Ctrl+X (or Delete in the list), pressed twice, stops one
   or drops a stopped one from the list. A turn you switch away from keeps
-  running. Both are [shortcuts](commands.md#shortcut-prefix).
-- `/switch HOST` goes straight to one by host or session ID prefix, and
-  `/switch -` (or Ctrl+^) back to the
+  running. Both are [shortcuts](commands.md#shortcut-prefix). A
+  [fork](#forking-a-session-on-purpose) is listed under the session it was
+  copied from, as in `/resume`. `/switch` still works as another name for
+  `/attach`.
+- `/attach HOST` goes straight to one by host or session ID prefix, and
+  `/attach -` (or Ctrl+^) back to the
   one this terminal showed before. Pressed again, it flips back.
-- `/switch new` starts a new session and switches to it. `/switch new PROMPT`
-  starts one working on PROMPT and leaves it in the background; this terminal
-  stays where it is, and `/switch -` goes to the new one.
+- `/new PROMPT` starts a new session working on PROMPT and leaves it in the
+  background; this terminal stays where it is, and `/attach -` goes to the new
+  one. Bare `/new` starts a fresh conversation in place instead.
 - `/fork` and `/fork PROMPT` do the same with a copy of this conversation, in a
   worktree of its own ([forking](#forking-a-session-on-purpose)).
 - `/resume` resumes a saved conversation in a host of its own, or shows it where
@@ -70,11 +73,11 @@ Inside a hosted session:
   running for `pcode --attach`, as closing the terminal window does, until it
   [goes idle](#idle-hosts-stop).
 
-From a session running in its terminal, `/switch` works too, but showing
+From a session running in its terminal, `/attach` works too, but showing
 another session ends this one (so it refuses while a turn is in progress).
-`/switch -` (Ctrl+^) brings it back, carried on in a host, and so do `/resume`
+`/attach -` (Ctrl+^) brings it back, carried on in a host, and so do `/resume`
 and `pcode --continue`. To keep it running instead, `/detach` it first, or let
-`/fork PROMPT` or `/switch new PROMPT` move it for you (see
+`/fork PROMPT` or `/new PROMPT` move it for you (see
 [parallel sessions](#parallel-sessions)).
 
 ### Parallel sessions
@@ -94,7 +97,7 @@ Both sessions have the whole conversation so far, so the copy needs no
 briefing: give it a different approach to the same problem, the tests while
 this one writes the code, or a risky refactor you'd rather not do in place. In
 a git repository the copy works in a worktree of its own, so their edits never
-collide, and it merges into the mainline like any session's. `/switch` lists
+collide, and it merges into the mainline like any session's. `/attach` lists
 both with what each is doing, and a desktop notification says when the one you
 aren't looking at finishes a turn.
 
@@ -102,8 +105,7 @@ aren't looking at finishes a turn.
 terminal (the default): a turn there lives in the terminal's process, so
 showing another session would end it. Skip it and `/fork PROMPT` still works,
 mid-turn too. This session then moves into a host by itself once it is idle,
-when its turn (and any side question) ends, as it does after `/switch new
-PROMPT`; from then on switching away leaves it running. Until then the copy
+when its turn (and any side question) ends, as it does after `/new PROMPT`; from then on switching away leaves it running. Until then the copy
 works in the background but this terminal stays here: Ctrl+^ says it is
 waiting rather than ending this session. Run `/detach` before a
 long turn, or turn on `session_host`, and you can switch at any moment.
@@ -146,7 +148,7 @@ pcode --attach 3f9c -p /stop                                     # end the host
   under a command by anything else is a failure.
 - `/stop` ends the host, which tidies its own worktree the way `worktree_exit`
   says, without asking, since nobody is there to be asked. Its notes about that
-  go to the host's log. Other terminal commands (`/tree`, `/switch`, ...) need
+  go to the host's log. Other terminal commands (`/tree`, `/attach`, ...) need
   the editor and are refused.
 - Ctrl+C only detaches (exit status 130): the message's turn keeps running, or
   stays queued, in the host. Stop it from an attached terminal, where Ctrl+C
@@ -159,7 +161,7 @@ pcode --attach 3f9c -p /stop                                     # end the host
   updates it.
 
 Other sessions stay out of this terminal: the footer says nothing about them,
-and their turns never write into this transcript. The picker (`/switch`) lists
+and their turns never write into this transcript. The picker (`/attach`) lists
 them, newest and unseen first. When one finishes a turn a desktop
 notification goes out, whether or not a terminal is showing it: pcode asks the
 terminal to raise it (OSC 9, which Ghostty shows by default), once per turn however many
@@ -174,11 +176,11 @@ running or queued, a slash command, compaction or MCP work, a running command,
 or a side question. Fifteen seconds after the last of those ends it stops
 itself, so a session you sent off in the background closes soon after its turn
 finishes. The fifteen seconds cover switching away and straight back, and
-`/switch -` to a session stopped since resumes it. A session stopped this way
+`/attach -` to a session stopped since resumes it. A session stopped this way
 keeps unmerged commits in its worktree, even under `worktree_exit merge`, ready
 to be resumed.
 
-Nothing is lost. If that last turn finished with no terminal watching, `/switch`
+Nothing is lost. If that last turn finished with no terminal watching, `/attach`
 keeps listing the session, marked `stopped`, until you open it: Enter resumes it
 in a new host on the pcode installed now. `/resume` or `pcode --continue` brings
 any conversation back.
@@ -200,8 +202,8 @@ names the wait and counts the seconds. Waits under a quarter of a second show
 nothing.
 
 With the `worktree` setting on, a new host makes its own worktree like a local
-session, and `/switch new` starts from the main checkout so the new session
-never shares yours. A host tidies its worktree when it stops, without asking:
+session, and `/new PROMPT` (or Ctrl+N in `/attach`) starts from the main
+checkout so the new session never shares yours. A host tidies its worktree when it stops, without asking:
 unmerged work is kept with a note in the host's log.
 
 Host sockets, status files, and logs live in `~/.local/state/pcode/hosts/`.
@@ -213,7 +215,7 @@ limited to about 100 bytes.
 Everything. The host runs the session's commands (`/model`, `/effort`, `/compact`,
 `/resend`, `/new`, `/tree`, `/btw`, `/mcp`, `/jobs`, `/worktree`, `/login`,
 `/reload`, skills, and extension commands), and opens their pickers in the
-terminal that typed them. The terminal runs its own (`/switch`, `/resume`,
+terminal that typed them. The terminal runs its own (`/attach`, `/resume`,
 `/status`, `/tools`, `/diffs`, `/links`, `/agents`, `/help`, `/config`, and the
 display commands).
 MCP sign-ins that need a browser open it from the host, on the same machine.
@@ -287,7 +289,7 @@ are refused.
 When a new session's first turn starts, pcode asks the session's own model for a
 short title, in the background and at low effort, so it usually arrives while
 the turn is still running. `/resume` lists it before the
-first prompt and finds the session by its words, `/switch` lists it in place of
+first prompt and finds the session by its words, `/attach` lists it in place of
 the first prompt, and the terminal [tab](terminal.md#tab-and-pane-titles) shows it.
 Between turns it also heads the editor box (`┌─ Fix the flaky login test ──┐`,
 or `┌─ Tasks 3/5 · Fix the flaky login test ──┐` above an attached task list), so coming back
@@ -350,8 +352,8 @@ on. Uncommitted changes stay behind, and pcode says so. Run mid-turn, the copy
 starts from the turn's last settled step, as any copy of a running session does.
 With a prompt, `/fork PROMPT` sets the copy working on it and this terminal
 stays where it is, even if this session runs in the terminal and is mid-turn;
-`/switch -` (Ctrl+^) then goes to the copy. Bare, the terminal switches to the
-copy, and `/switch -` comes back. Outside git, or before the first commit, the
+`/attach -` (Ctrl+^) then goes to the copy. Bare, the terminal switches to the
+copy, and `/attach -` comes back. Outside git, or before the first commit, the
 copy shares this session's directory instead.
 
 The fork's worktree merges into the mainline like any session's. Its branch

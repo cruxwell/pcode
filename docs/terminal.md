@@ -20,7 +20,7 @@ changing in [iTerm2](#iterm2) and [tmux](#tmux).
 Once a session has a name, from `/rename` or the
 [title its model gave it](sessions.md#session-titles), pcode puts it in the
 terminal's tab title, so a row of tabs reads as a list of tasks. It follows
-`/rename`, `/new` and `/switch`. A session with no name yet leaves the title to
+`/rename`, `/new` and `/attach`. A session with no name yet leaves the title to
 your shell, and on exit pcode puts back the title it found, in terminals that
 keep a title stack (xterm, iTerm2, kitty, Ghostty and VTE terminals such as
 GNOME Terminal, among others). Elsewhere the title stays until your shell's

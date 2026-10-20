@@ -52,7 +52,7 @@ from pcode.ui import Activity
 DELTA_EVENTS = (TextDelta, ThinkingDelta)
 
 # How long a host with nothing to do waits for a terminal before stopping, when
-# `session_host_idle_minutes` is 0: long enough to /switch away and back.
+# `session_host_idle_minutes` is 0: long enough to /attach away and back.
 IDLE_GRACE_SECONDS = 15.0
 SNAPSHOT_EVENTS = (CommandOutput, EditPreview)
 
@@ -412,7 +412,7 @@ class SessionHost:
         os.chmod(path, 0o600)
         self.update(state="idle")
         if self.entry.session_id:
-            # Running again, so /switch lists the host instead of the stopped one.
+            # Running again, so /attach lists the host instead of the stopped one.
             forget_stopped(self.entry.session_id, self.directory)
 
     async def boot(self) -> None:
@@ -647,9 +647,9 @@ class SessionHost:
                 client.peer.notify("session_state", state)
         session = getattr(self.controller.runtime, "session", None)
         if session is not None and session.info.id != self.entry.session_id:
-            self.update(session_id=session.info.id)
+            self.update(session_id=session.info.id, forked_from=session.info.forked_from or "")
             forget_stopped(session.info.id, self.directory)
-        # /switch lists the session by its name once it has one, not its first prompt.
+        # /attach lists the session by its name once it has one, not its first prompt.
         if (title := state.get("session_title")) and title != self.entry.title:
             self.update(title=title)
 
@@ -741,7 +741,7 @@ class SessionHost:
         Polled rather than told: jobs and side questions end without a hook,
         and reading this state every couple of seconds costs nothing. The
         journal keeps the conversation, and a result nobody saw stays listed
-        in /switch (`remember_stopped`).
+        in /attach (`remember_stopped`).
         """
         limit = minutes * 60 if minutes else grace
         while not self.stopped.is_set():
@@ -783,7 +783,7 @@ class SessionHost:
             await controller.extensions.close()
         remove_entry(self.entry.id, self.directory)
         if self.idle_stopped and self.entry.unseen:
-            # After the entry goes, so /switch never sees both. Only a saved
+            # After the entry goes, so /attach never sees both. Only a saved
             # session has an ID, so only one /resume could reopen.
             remember_stopped(self.entry, self.directory)
 
@@ -897,6 +897,7 @@ async def _serve(args: argparse.Namespace) -> None:
             saved.abandon()  # A copy made for this resume is removed, not left listed.
             raise
         entry.session_id = saved.info.id
+        entry.forked_from = saved.info.forked_from or ""
         prompt = first_prompt(saved.info, saved.directory.parent)
         first = "" if prompt.startswith("(") else prompt
         entry.title = saved.info.name or saved.info.title or first

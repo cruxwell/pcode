@@ -76,7 +76,8 @@ TERMINAL_COMMANDS = frozenset(
         "/tree",
         "/agents",
         "/resume",
-        "/switch",
+        "/attach",
+        "/switch",  # /attach's old name, kept as its alias
         "/fork",
         "/restart",
         "/stop",
@@ -94,6 +95,23 @@ TERMINAL_COMMANDS = frozenset(
         "/redraw",
     }
 )
+
+
+def background_prompt(text: str) -> str | None:
+    """The PROMPT of `/new PROMPT`, which starts a session in a host beside this one.
+
+    Bare `/new` resets this conversation, so it is the session's; with a prompt
+    it starts a host, which only the terminal can do.
+    """
+    parts = text.strip().split(maxsplit=1)
+    return parts[1] if len(parts) == 2 and parts[0] == "/new" else None
+
+
+def runs_in_terminal(text: str) -> bool:
+    """Whether the terminal handles this command line itself, never the session."""
+    name = text.strip().split(maxsplit=1)[0]
+    return name in TERMINAL_COMMANDS or background_prompt(text) is not None
+
 
 # The tag of the `/detach` a terminal queues to move its session into a host
 # once idle: the move carries typed commands to the host, never that one.
@@ -501,7 +519,7 @@ class SessionController:
         self.runtime = runtime
         # False once the owner (the terminal, or the host) is done with it.
         self.running = True
-        # The terminal moved on to another controller (/detach, /switch) and
+        # The terminal moved on to another controller (/detach, /attach) and
         # shares its activity: this one must no longer reset it.
         self.superseded = False
         # Building the runtime has not finished yet, or failed with this.
@@ -705,7 +723,12 @@ class SessionController:
         """Commands for the conversation itself and its worktree."""
         return (
             Command(
-                "/new", "Start a new conversation; clears the screen", self.new, group="Session"
+                "/new",
+                "Start a new conversation; clears the screen. With PROMPT, one working on "
+                "it in a background session, and this terminal stays here",
+                self.new,
+                free_arguments=True,
+                group="Session",
             ),
             Command(
                 "/rename",
@@ -1207,16 +1230,19 @@ class SessionController:
         """
         name = text.split(maxsplit=1)[0]
         before_queue = name in MODEL_COMMANDS and idle and not self.working()
+        # `/new PROMPT` leaves this conversation alone, so it never waits for it.
+        background = background_prompt(text) is not None
         if (
             name in IDLE_COMMANDS
             and (self.activity.busy or self.activity.queued)
             and not before_queue
+            and not background
         ):
             self.view.warning(
                 f"{name} is unavailable while working. "
                 "Cancel with Ctrl+C or wait for the run to finish, then retry."
             )
-        elif self.registry.find(name) is None:
+        elif background or self.registry.find(name) is None:
             await self.view.run_command(text, idle=idle, tag=tag)
         else:
             # The terminal needs the tag for any popup the command opens.
@@ -1248,7 +1274,7 @@ class SessionController:
             self.activity.busy = True
         if self.mcp_defaults_requested:
             self.start_mcp_defaults()
-        # Not once the terminal shows another controller (/detach, /switch):
+        # Not once the terminal shows another controller (/detach, /attach):
         # they share its activity, which this would reset under the new one.
         if not self.running and not self.superseded:
             self.cancel()
@@ -3154,6 +3180,9 @@ class SessionController:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     def new(self, argument: str) -> None:
+        if argument:
+            # The terminal takes `/new PROMPT` (runs_in_terminal); a script cannot.
+            raise ValueError("/new PROMPT starts a background session from the terminal.")
         self.cancel_naming()
         self.runtime.reset()
         # On the host too, not just this terminal's copy, so one attaching later agrees.
@@ -3224,7 +3253,7 @@ class SessionController:
             self._seen_stopped_host()
 
     def _seen_stopped_host(self) -> None:
-        """A resumed session is open here, so /switch stops listing its stopped host."""
+        """A resumed session is open here, so /attach stops listing its stopped host."""
         from pcode.host_protocol import forget_stopped
 
         session = getattr(self.runtime, "session", None)

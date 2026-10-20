@@ -232,7 +232,7 @@ class FileReferenceCompleter(Completer):
     """Replace a trailing `@fragment` with a `./` workspace-relative path.
 
     ``workspace`` may be a callable, read on every completion: a hosted session
-    learns its worktree from the host only after the prompt exists, and /switch
+    learns its worktree from the host only after the prompt exists, and /attach
     can move the terminal to a session in another checkout.
     """
 
