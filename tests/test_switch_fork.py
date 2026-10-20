@@ -1,4 +1,4 @@
-"""`/switch fork`: a copy of the conversation in a host and worktree of its own."""
+"""`/fork`: a copy of the conversation in a host and worktree of its own."""
 
 import asyncio
 import subprocess
@@ -221,14 +221,31 @@ def app_with(runtime) -> PreviewApp:
     return app
 
 
-def test_switch_fork_with_a_prompt_leaves_a_busy_session_running(tmp_path):
+def test_fork_with_a_prompt_leaves_a_busy_session_running(tmp_path):
     saved = SavedSession.create("test:local", tmp_path, tmp_path / "sessions")
     app = app_with(Busy(saved))
     try:
-        app.switch("fork try the other approach")
-        assert app.switch_requested == "fork try the other approach"
+        app.fork("try the other approach")
+        assert app.fork_requested == "try the other approach"
         with pytest.raises(ValueError, match="leaving it stops its turn"):
-            app.switch("fork")
+            app.fork("")
+        # Once it is due to move into a host, it says the wait is short.
+        app.host_when_idle = True
+        with pytest.raises(ValueError, match="then moves into a background host"):
+            app.fork("")
+    finally:
+        saved.close()
+
+
+def test_switch_no_longer_forks(tmp_path):
+    saved = SavedSession.create("test:local", tmp_path, tmp_path / "sessions")
+    app = app_with(Busy(saved))
+    app.activity.busy = False
+    try:
+        app.switch("fork")
+        # Read as a host ID prefix, like any other word.
+        assert app.switch_requested == "fork"
+        assert app.fork_requested is None
     finally:
         saved.close()
 
@@ -275,24 +292,51 @@ def test_fork_needs_a_saved_conversation():
     app = app_with(Busy())
     app.activity.busy = False
     with pytest.raises(ValueError, match="Nothing to fork yet"):
-        app.switch("fork")
+        app.fork("")
     with pytest.raises(ValueError, match="Nothing to fork yet"):
-        app.switch("fork\tgo")
+        app.fork("go")
 
 
 @pytest.mark.parametrize(
     "argument,expected",
     [
         ("new", ("new", "")),
-        ("fork", ("fork", "")),
-        ("fork\ttry  this", ("fork", "try  this")),
+        ("new\ttry  this", ("new", "try  this")),
         ("new go", ("new", "go")),
+        ("fork", None),
         ("abcd1234", None),
         ("forked", None),
         ("", None),
     ],
 )
-def test_session_start_reads_new_and_fork(argument, expected):
+def test_session_start_reads_new(argument, expected):
     from pcode.app import _session_start
 
     assert _session_start(argument) == expected
+
+
+def test_the_move_into_a_host_waits_for_an_idle_session(tmp_path):
+    saved = SavedSession.create("test:local", tmp_path, tmp_path / "sessions")
+    app = app_with(Busy(saved))
+    queued = []
+    app.controller.command = lambda text, tag=None: queued.append(text)
+    try:
+        app.hand_off_when_idle()
+        assert queued == [], "not asked for"
+        app.host_when_idle = True
+        app.hand_off_when_idle()
+        assert queued == [], "mid-turn: a turn cannot move"
+        app.activity.busy = False
+        app.hand_off_when_idle()
+        app.hand_off_when_idle()
+        assert queued == ["/detach"], "queued once"
+        # Busy again by the time it runs: it waits for the next turn's end, quietly.
+        app.activity.busy = True
+        app.detach("")
+        assert not app.handoff_requested and not app.handoff_queued
+        app.activity.busy = False
+        app.hand_off_when_idle()
+        app.detach("")
+        assert app.handoff_requested
+    finally:
+        saved.close()

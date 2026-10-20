@@ -1070,6 +1070,130 @@ def test_detach_moves_a_session_running_here_into_a_host_and_stays_on_it(tmp_pat
     asyncio.run(run())
 
 
+def spawning(tmp_path: Path, loop, hosts: list) -> callable:
+    """A `spawn_host` serving each session in a scripted host: a fork as dddd4444, else cccc3333."""
+
+    def spawn_host(*, model, workspace, resume, session_dir, fork=False, worktree=False):
+        identity = "dddd4444" if fork else "cccc3333"
+        # Opens the session as the real host does: refused if the terminal still held it.
+        saved = SavedSession.open(resume, session_dir, fork=fork)
+        script = Script()
+        host = asyncio.run_coroutine_threadsafe(
+            start_host(identity, workspace, script, saved), loop
+        ).result()
+        host.script = script
+        hosts.append(host)
+        return identity, None, tmp_path / f"{identity}.log"
+
+    return spawn_host
+
+
+@pytest.mark.in_process("moves a session running in this terminal; hosted, there is none")
+def test_a_fork_made_mid_turn_moves_this_session_into_a_host_once_idle(tmp_path, host_dir):
+    """`/fork PROMPT` mid-turn: both run, and switching between them stops neither."""
+
+    async def run():
+        output = StringIO()
+        script = Script()
+        app = local_app(tmp_path, script, output)
+        hosts: list[SessionHost] = []
+        spawn_host = spawning(tmp_path, asyncio.get_running_loop(), hosts)
+        try:
+            with create_pipe_input() as pipe:
+
+                def prompt(*args, **kwargs):
+                    return create_prompt(*args, input=pipe, output=DummyOutput(), **kwargs)
+
+                async def seen(text):
+                    await until(lambda: text in output.getvalue(), timeout=10)
+
+                async def drive():
+                    pipe.send_text("hello here\r")
+                    await seen("Echo: hello here")
+                    await until(lambda: not app.activity.busy)
+                    session_id = app.runtime.session.info.id
+                    pipe.send_text("hang here\r")
+                    await until(lambda: "hang here" in script.gates)
+                    pipe.send_text("/fork go\r")
+                    await seen("working on it in the background")
+                    await seen("This session moves into a background host")
+                    # Mid-turn it stays here: a turn cannot move.
+                    assert not app.hosted and app.activity.busy
+                    pipe.send_text("\x1e")
+                    await seen("until its turn ends")
+                    script.release("hang here")
+                    await seen("Finished.")
+                    await seen("Moved to background session cccc3333")
+                    assert app.hosted and app.runtime.session_id == session_id
+                    # Ctrl+^ goes to the copy just started, then back.
+                    pipe.send_text("\x1e")
+                    await seen("Switched to session dddd4444")
+                    pipe.send_text("\x1e")
+                    await seen("Switched to session cccc3333")
+                    assert app.previous_host == "dddd4444"
+                    pipe.send_text("/detach\r")
+
+                with (
+                    patch("pcode.app.create_prompt", prompt),
+                    patch("pcode.remote.spawn_host", spawn_host),
+                ):
+                    await asyncio.wait_for(asyncio.gather(app.run_async(), drive()), timeout=30)
+            fork = next(host for host in hosts if host.entry.id == "dddd4444")
+            # The copy works on its prompt meanwhile.
+            await until(lambda: any("go" in user_texts(m) for m in fork.script.requests))
+        finally:
+            for host in hosts:
+                await stop_host(host)
+
+    asyncio.run(run())
+
+
+@pytest.mark.in_process("leaves a session running in this terminal; hosted, there is none")
+def test_ctrl_caret_resumes_a_session_left_from_this_terminal(tmp_path, host_dir):
+    """A bare `/fork` ends the session running here; Ctrl+^ carries it on in a host."""
+
+    async def run():
+        output = StringIO()
+        app = local_app(tmp_path, Script(), output)
+        hosts: list[SessionHost] = []
+        spawn_host = spawning(tmp_path, asyncio.get_running_loop(), hosts)
+        try:
+            with create_pipe_input() as pipe:
+
+                def prompt(*args, **kwargs):
+                    return create_prompt(*args, input=pipe, output=DummyOutput(), **kwargs)
+
+                async def seen(text):
+                    await until(lambda: text in output.getvalue(), timeout=10)
+
+                async def drive():
+                    pipe.send_text("hello here\r")
+                    await seen("Echo: hello here")
+                    await until(lambda: not app.activity.busy)
+                    session_id = app.runtime.session.info.id
+                    pipe.send_text("/fork\r")
+                    await seen("Forked into session dddd4444")
+                    await seen(f"left {session_id}")
+                    assert app.previous_host is None and app.previous_session == session_id
+                    pipe.send_text("\x1e")
+                    await seen(f"Resumed {session_id} in session host cccc3333")
+                    assert app.runtime.session_id == session_id
+                    pipe.send_text("\x1e")
+                    await seen("Switched to session dddd4444")
+                    pipe.send_text("/detach\r")
+
+                with (
+                    patch("pcode.app.create_prompt", prompt),
+                    patch("pcode.remote.spawn_host", spawn_host),
+                ):
+                    await asyncio.wait_for(asyncio.gather(app.run_async(), drive()), timeout=30)
+        finally:
+            for host in hosts:
+                await stop_host(host)
+
+    asyncio.run(run())
+
+
 @pytest.mark.in_process("moves a session running in this terminal; hosted, there is none")
 def test_a_session_that_cannot_move_to_a_host_carries_on_here(tmp_path, host_dir):
     async def run():

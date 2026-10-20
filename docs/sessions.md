@@ -56,10 +56,9 @@ Inside a hosted session:
   one this terminal showed before. Pressed again, it flips back.
 - `/switch new` starts a new session and switches to it. `/switch new PROMPT`
   starts one working on PROMPT and leaves it in the background; this terminal
-  stays where it is.
-- `/switch fork` and `/switch fork PROMPT` do the same with a copy of this
-  conversation, in a worktree of its own
-  ([forking](#forking-a-session-on-purpose)).
+  stays where it is, and `/switch -` goes to the new one.
+- `/fork` and `/fork PROMPT` do the same with a copy of this conversation, in a
+  worktree of its own ([forking](#forking-a-session-on-purpose)).
 - `/resume` resumes a saved conversation in a host of its own, or shows it where
   it is already running.
 - `/restart` restarts this session's host on the pcode installed now and picks the
@@ -72,8 +71,41 @@ Inside a hosted session:
   [goes idle](#idle-hosts-stop).
 
 From a session running in its terminal, `/switch` works too, but showing
-another session ends this one (so it refuses while a turn is in progress);
-`/resume` and `pcode --continue` bring it back.
+another session ends this one (so it refuses while a turn is in progress).
+`/switch -` (Ctrl+^) brings it back, carried on in a host, and so do `/resume`
+and `pcode --continue`. To keep it running instead, `/detach` it first, or let
+`/fork PROMPT` or `/switch new PROMPT` move it for you (see
+[parallel sessions](#parallel-sessions)).
+
+### Parallel sessions
+
+Two hosted sessions run side by side, and you switch between them mid-turn
+without stopping either. The quickest way to get there is to fork the session
+you're in:
+
+```text
+/detach                         # move this session into a host; you stay on it
+/fork try the other approach    # a copy starts on that in its own worktree
+Ctrl+^                          # look at the copy; this one keeps working
+Ctrl+^                          # and back
+```
+
+Both sessions have the whole conversation so far, so the copy needs no
+briefing: give it a different approach to the same problem, the tests while
+this one writes the code, or a risky refactor you'd rather not do in place. In
+a git repository the copy works in a worktree of its own, so their edits never
+collide, and it merges into the mainline like any session's. `/switch` lists
+both with what each is doing, and a desktop notification says when the one you
+aren't looking at finishes a turn.
+
+`/detach` is the step that makes this work when the session runs in its
+terminal (the default): a turn there lives in the terminal's process, so
+showing another session would end it. Skip it and `/fork PROMPT` still works,
+mid-turn too. This session then moves into a host by itself once it is idle
+(as `/switch new PROMPT` also does), and from then on switching away leaves it
+running. Until then, during the turn that was running when you forked, the copy
+works in the background but this terminal stays here. Run `/detach` before a
+long turn, or turn on `session_host`, and you can switch at any moment.
 
 ### Scripting a running host
 
@@ -310,14 +342,15 @@ conversation exactly as it was. The copy gets its own ID and works in the same
 directory as the original, as above. To branch from an earlier point inside one
 session instead, use [`/tree`](conversation-tree.md).
 
-`/switch fork` does this from inside the session, for parallel work that should
-not share files. The copy runs in a background host and, in a git repository, in
+`/fork` does this from inside the session, for
+[parallel work](#parallel-sessions) that should not share files. The copy runs in a background host and, in a git repository, in
 a new `pcode-<id>` worktree started from the commit this session's checkout is
 on. Uncommitted changes stay behind, and pcode says so. Run mid-turn, the copy
 starts from the turn's last settled step, as any copy of a running session does.
-With a prompt, `/switch fork PROMPT` sets the copy working on it and this terminal
-stays where it is, even if this session runs in the terminal and is mid-turn; bare,
-the terminal switches to the copy. Outside git, or before the first commit, the
+With a prompt, `/fork PROMPT` sets the copy working on it and this terminal
+stays where it is, even if this session runs in the terminal and is mid-turn;
+`/switch -` (Ctrl+^) then goes to the copy. Bare, the terminal switches to the
+copy, and `/switch -` comes back. Outside git, or before the first commit, the
 copy shares this session's directory instead.
 
 The fork's worktree merges into the mainline like any session's. Its branch

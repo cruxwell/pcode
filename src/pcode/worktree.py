@@ -606,7 +606,7 @@ def leave_worktree(workspace: Path, session, *, ask, notify, merge: bool = True)
         dirty = is_dirty(linked.path)
         unmerged = unmerged_commits(linked)
         untouched = ours and is_untouched(linked)
-        # A fork (`/switch fork`) starts at its original's commit, recorded as
+        # A fork (`/fork`) starts at its original's commit, recorded as
         # its start: what lies before that is the original's to merge.
         info = getattr(session, "info", None)
         fork_base = (

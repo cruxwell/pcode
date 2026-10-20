@@ -77,6 +77,7 @@ TERMINAL_COMMANDS = frozenset(
         "/agents",
         "/resume",
         "/switch",
+        "/fork",
         "/restart",
         "/stop",
         "/detach",

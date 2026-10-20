@@ -206,6 +206,8 @@ class PreviewApp:
         self._host_watch: Callable[[], None] | None = None
         self._host_watch_task = None
         self.switch_requested: str | None = None
+        # `/fork [PROMPT]`, with its prompt ("" bare).
+        self.fork_requested: str | None = None
         self.restart_requested = False
         self.host_stopped = False
         # A command this terminal sent ended the host's session (`/worktree finish`).
@@ -214,13 +216,21 @@ class PreviewApp:
         self.detach_requested = False
         # `/detach` in a session running here: move it into a host first.
         self.handoff_requested = False
+        # A session running here started another in the background: it moves
+        # into a host once idle, so showing that one leaves this one running.
+        self.host_when_idle = False
+        # That move is queued as a `/detach`, which then stays quiet if the
+        # session got busy meanwhile; the next turn's end tries again.
+        self.handoff_queued = False
         # Set once a host owns this terminal's in-process session.
         self.moved_to_host = False
         # The editor's Enter, so what was typed during a move reaches the host.
         self._submit_typed: Callable[[str], None] | None = None
-        # The host this terminal showed before the current one, for `/switch -`.
+        # The host this terminal showed before the current one, for `/switch -`;
+        # None after leaving a session that ran in this terminal.
         self.previous_host: str | None = None
-        # Its conversation, to resume should that host have stopped meanwhile.
+        # Its conversation, to resume should that host have stopped meanwhile
+        # (or, after leaving one that ran here, always).
         self.previous_session: str | None = None
         # How this terminal came to show its host ("Switched to session …").
         self._attach_note: str | None = None
@@ -377,10 +387,17 @@ class PreviewApp:
             self.controller.registry.find("/rename"),
             Command(
                 "/switch",
-                "Switch to another running session; 'new [PROMPT]' starts one in the background, "
-                "'fork [PROMPT]' a copy of this one in its own worktree",
+                "Switch to another running session; 'new [PROMPT]' starts one in the background",
                 self.switch,
-                ("new", "fork"),
+                ("new",),
+                free_arguments=True,
+                group="Session",
+            ),
+            Command(
+                "/fork",
+                "Copy this conversation into a background session in its own worktree; "
+                "with PROMPT it works on that and this terminal stays here",
+                self.fork,
                 free_arguments=True,
                 group="Session",
             ),
@@ -688,9 +705,11 @@ class PreviewApp:
         await self.output.flush()
         if not self.running:
             self.output.app.exit()
+            return
+        self.hand_off_when_idle()
         # A turn (or a shell command) is the usual reason the branch moved, so
         # read it here rather than polling fast enough to catch one.
-        elif await asyncio.to_thread(self.refresh_branch):
+        if await asyncio.to_thread(self.refresh_branch):
             self.output.app.invalidate()
 
     async def _initialize_runtime(self) -> None:
@@ -1424,23 +1443,42 @@ class PreviewApp:
     def switch(self, argument: str) -> None:
         if not self.model:
             raise ValueError("/switch needs a model; this is a local UI preview.")
-        if argument.strip() == "-" and self.previous_host is None:
+        if argument.strip() == "-" and self.previous_host is None and self.previous_session is None:
             raise ValueError("No previous session in this terminal yet; /switch lists them all.")
         start = _session_start(argument)
-        if start is not None and start[0] == "fork" and self.active_session_id() is None:
+        # With a prompt, `new` leaves the new session working in the
+        # background, and this terminal stays where it is.
+        if not (start and start[1]):
+            self.check_leaving("/switch")
+        self.switch_requested = argument.strip()
+
+    def fork(self, argument: str) -> None:
+        if not self.model:
+            raise ValueError("/fork needs a model; this is a local UI preview.")
+        if self.active_session_id() is None:
             raise ValueError(
                 "Nothing to fork yet: a session is saved with its first prompt. "
                 "/switch new starts an empty one."
             )
-        # With a prompt, `new` and `fork` leave the new session working in the
-        # background, and this terminal stays where it is.
-        stays = start is not None and bool(start[1])
-        if not stays and not self.hosted and (self.activity.busy or self.activity.queued_prompts):
+        prompt = argument.strip()
+        # With a prompt the copy works in the background; this terminal stays.
+        if not prompt:
+            self.check_leaving("/fork")
+        self.fork_requested = prompt
+
+    def check_leaving(self, command: str) -> None:
+        """Refuse to show another session while leaving would stop this one's turn."""
+        if self.hosted or not (self.activity.busy or self.activity.queued_prompts):
+            return
+        if self.host_when_idle:
             raise ValueError(
-                "This session runs in this terminal, so leaving it stops its turn. "
-                "Wait or cancel, then /switch."
+                "This session runs in this terminal until its turn ends, then moves into a "
+                f"background host so {command} leaves it running. Wait or cancel, then retry."
             )
-        self.switch_requested = argument.strip()
+        raise ValueError(
+            "This session runs in this terminal, so leaving it stops its turn. "
+            f"Wait or cancel, then {command}."
+        )
 
     def stop_host(self, argument: str) -> None:
         if argument:
@@ -1463,22 +1501,44 @@ class PreviewApp:
         # Running here: move it into a host first, and stay on it.
         if not self.model:
             raise ValueError("/detach needs a model; this is a local UI preview.")
+        automatic, self.handoff_queued = self.handoff_queued, False
+        if why := self.handoff_blocker():
+            if automatic:
+                return  # Busy again since it was queued: the next turn's end retries.
+            raise ValueError(why)
+        self.handoff_requested = True
+
+    def handoff_blocker(self) -> str | None:
+        """Why this session, running here, cannot move into a host right now."""
         if (
             self.activity.busy
             or self.activity.queued_prompts
             or self.controller.working()
             or self.asides.running
         ):
-            raise ValueError(
+            return (
                 "This session runs in this terminal, so what it is doing can't move to a "
                 "background host. Wait or cancel, then /detach."
             )
         if getattr(self.runtime, "session", None) is None:
-            raise ValueError(
+            return (
                 "Nothing to move to a background host yet: a session is saved with its "
                 "first prompt. `pcode --host` starts one in a host."
             )
-        self.handoff_requested = True
+        return None
+
+    def hand_off_when_idle(self) -> None:
+        """Queue the move into a host `host_when_idle` asked for, if nothing holds it back."""
+        if (
+            self.host_when_idle
+            and self.running
+            and not self.hosted
+            and not self.handoff_queued
+            and self.handoff_blocker() is None
+        ):
+            self.handoff_queued = True
+            # Through the command queue, so it waits for any command running now.
+            self.controller.command("/detach")
 
     def stop_host_on_exit(self) -> None:
         """Quitting (Ctrl+D, `/quit`) ends the host as `/stop` does, unless `/detach` asked."""
@@ -1543,6 +1603,8 @@ class PreviewApp:
         from pcode.sessions import SessionError, is_open
 
         self.handoff_requested = False
+        # One try: should it fail, the session carries on here as before.
+        self.host_when_idle = False
         runtime = self.runtime
         saved = runtime.session
         jobs = getattr(runtime, "jobs", None)
@@ -1612,13 +1674,14 @@ class PreviewApp:
         argument, self.switch_requested = self.switch_requested or "", None
         previous = argument == "-"
         if previous:
-            argument = self.previous_host or ""
+            if self.previous_host is None:
+                # The session left ran in this terminal: carry it on in a host.
+                if self.previous_session:
+                    await self.open_saved_session(self.previous_session, self.active_session_id())
+                return
+            argument = self.previous_host
         if start := _session_start(argument):
-            action, prompt = start
-            if action == "fork":
-                await self.fork_session(prompt)
-            else:
-                await self.start_host_session(prompt)
+            await self.start_host_session(start[1])
             return
         current = getattr(self.runtime, "id", None) if self.hosted else None
         if argument:
@@ -1731,7 +1794,7 @@ class PreviewApp:
         await self.adopt_controller(controller, welcome, f"Switched to session {entry.id}")
 
     async def fork_session(self, prompt: str) -> None:
-        """`/switch fork`: continue a copy of this conversation in a host of its own.
+        """`/fork`: continue a copy of this conversation in a host of its own.
 
         The copy has this conversation's active branch, up to its last settled
         step when a turn is running, and in git a worktree of its own started
@@ -1804,6 +1867,9 @@ class PreviewApp:
             self.activity.end_wait(wait)
         if prompt:
             controller.submit(prompt, "queue")
+            # Just started, so the one to look in on: `/switch -` goes there.
+            self.previous_host = identity
+            self.previous_session = controller.runtime.session_id or None
             controller.close()
             what = f"Forked into session {identity}, which is" if fork else f"Session {identity} is"
             self.transcript.note(
@@ -1812,6 +1878,13 @@ class PreviewApp:
             )
             if self._host_watch is not None:
                 self._host_watch()
+            if not self.hosted and not self.host_when_idle:
+                self.host_when_idle = True
+                self.transcript.note(
+                    "This session moves into a background host once it is idle, so "
+                    "switching to the other one leaves it running."
+                )
+            self.hand_off_when_idle()
             return
         if fork:
             what = f"Forked into session {identity}"
@@ -1834,7 +1907,10 @@ class PreviewApp:
         if isinstance(previous, SessionController):
             # Handed off: the host now runs that same conversation.
             if not handed_off and (saved := getattr(previous.runtime, "session", None)):
-                note += f" · left {saved.info.id} (pcode --continue {saved.info.id[:8]} resumes it)"
+                note += f" · left {saved.info.id} (/switch - resumes it)"
+                # No host to come back to: `/switch -` resumes it in one.
+                self.previous_host = None
+                self.previous_session = saved.info.id
             await self.leave_controller(previous)
             close = getattr(previous.runtime, "close", None)
             if close is not None:
@@ -2435,6 +2511,9 @@ class PreviewApp:
                 await self.choose_session(output, session)
             if self.switch_requested is not None:
                 await self.switch_session(output, session)
+            if self.fork_requested is not None:
+                prompt, self.fork_requested = self.fork_requested, None
+                await self.fork_session(prompt)
             if self.restart_requested:
                 await self.restart_host()
             if self.handoff_requested:
@@ -3249,9 +3328,9 @@ async def _stopping_provider_processes(main):
 
 
 def _session_start(argument: str) -> tuple[str, str] | None:
-    """`/switch new [PROMPT]` or `fork [PROMPT]` as (action, prompt); None for a host."""
+    """`/switch new [PROMPT]` as ("new", prompt); None for a host."""
     words = argument.split(maxsplit=1)
-    if words and words[0] in ("new", "fork"):
+    if words and words[0] == "new":
         return words[0], words[1] if len(words) > 1 else ""
     return None
 
