@@ -1889,7 +1889,8 @@ class PreviewApp:
             what = f"Forked into session {identity}, which is" if fork else f"Session {identity} is"
             self.transcript.note(
                 f"{what} working on it in the background. "
-                "/switch shows it; this terminal stays here."
+                "Ctrl+^ (or /switch -) shows it, /switch lists every session; "
+                "this terminal stays here."
             )
             if self._host_watch is not None:
                 self._host_watch()
