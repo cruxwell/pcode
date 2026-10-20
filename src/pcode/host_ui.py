@@ -156,8 +156,13 @@ def hosts_dialog(
         lines = [host_row(entry, current, code=code, guide=guide) for entry, guide in rows]
         position = sum(len(line) + 1 for line in lines[:index])
         choices.buffer.set_document(
-            Document("\n".join(lines) or "No matching sessions.", position), bypass_readonly=True
+            Document("\n".join(lines) or empty(term), position), bypass_readonly=True
         )
+
+    def empty(term: str) -> str:
+        if term:
+            return "No matching sessions."
+        return f"No background sessions are running. {shortcuts.label('n')} starts one."
 
     query.buffer.on_text_changed += lambda _: refresh()
     steer_list_from_query(bindings, query, choices)

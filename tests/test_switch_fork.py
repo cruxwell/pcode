@@ -414,3 +414,36 @@ def test_the_handoff_is_not_carried_to_the_host_as_typed(tmp_path):
         assert commands == ["/status"]
     finally:
         saved.close()
+
+
+def test_new_with_a_prompt_is_never_refused_as_busy(tmp_path):
+    """Through the session's dispatch, as typed: bare /new waits, /new PROMPT does not."""
+    saved = SavedSession.create("test:local", tmp_path, tmp_path / "sessions")
+    output = StringIO()
+    app = PreviewApp(model="m", runtime=Busy(saved), console=Console(file=output, width=200))
+    app.activity.busy = True
+    started = []
+
+    async def start_host_session(prompt="", *, resume=None, note=None, fork=False):
+        started.append(prompt)
+
+    app.start_host_session = start_host_session
+    try:
+        asyncio.run(app.controller.dispatch("/new go", idle=False))
+        asyncio.run(app.controller.dispatch("/new", idle=False))
+    finally:
+        saved.close()
+    assert started == ["go"]
+    assert output.getvalue().count("unavailable while working") == 1
+
+
+def test_the_attach_list_says_how_to_start_one_when_empty():
+    from pcode.host_ui import hosts_dialog
+
+    dialog = hosts_dialog([], current=None, output=DummyOutput())
+    texts = [
+        window.content.buffer.text
+        for window in dialog.layout.find_all_windows()
+        if hasattr(window.content, "buffer")
+    ]
+    assert any("No background sessions are running" in text for text in texts)

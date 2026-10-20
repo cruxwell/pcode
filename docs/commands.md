@@ -126,7 +126,7 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   name; `-` clears it. Bare, it asks the conversation's model to name it from
   everything so far, in the background, so a running turn carries on. Available after the
   first prompt. A name replaces the [title the model gives it](sessions.md#session-titles).
-- `/attach [HOST | -]` (alias `/attach`): pick another running
+- `/attach [HOST | -]` (alias `/switch`): pick another running
   [background session](sessions.md#background-sessions) and show it here, with forks
   nested under their original; `-` is the one this terminal showed before. The session
   you leave keeps working if it runs in a host, and ends if it runs in this terminal

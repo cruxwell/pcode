@@ -1458,7 +1458,8 @@ class PreviewApp:
         if argument.split(maxsplit=1)[:1] == ["new"]:
             # Host IDs are hex, so this was only ever the old `/switch new`.
             raise ValueError(
-                "Starting a session is /new PROMPT now (or Ctrl+N in the /attach list)."
+                f"Starting a session is /new PROMPT now (or {self.shortcut('n')} in the "
+                "/attach list)."
             )
         if argument == "-" and self.previous_host is None and self.previous_session is None:
             raise ValueError("No previous session in this terminal yet; /attach lists them all.")
@@ -1735,12 +1736,8 @@ class PreviewApp:
                 return
             await self.attach_host(entry)
             return
+        # Opened even with none listed: its new-session key starts an empty one.
         entries = await asyncio.to_thread(lambda: list_hosts() + list_stopped())
-        if not entries:
-            self.transcript.note(
-                "No sessions are running in the background. /new PROMPT starts one."
-            )
-            return
         from pcode.host_ui import hosts_dialog
 
         async with self.popup(output, session) as modal_input:
