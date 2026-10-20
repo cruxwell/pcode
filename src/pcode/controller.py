@@ -95,6 +95,10 @@ TERMINAL_COMMANDS = frozenset(
     }
 )
 
+# The tag of the `/detach` a terminal queues to move its session into a host
+# once idle: the move carries typed commands to the host, never that one.
+HANDOFF_TAG = object()
+
 WORKTREE_ACTIONS = {
     "status": "Branch, mainline, and what is unmerged",
     "merge": "Merge the mainline into this branch, then fast-forward the mainline",
@@ -1070,8 +1074,8 @@ class SessionController:
         host makes its own."""
         commands = []
         while not self.commands.empty():
-            generation, text, _idle, _tag = self.commands.get_nowait()
-            if generation == self.prompts.generation:
+            generation, text, _idle, tag = self.commands.get_nowait()
+            if generation == self.prompts.generation and tag is not HANDOFF_TAG:
                 commands.append(text)
         self.command_idle.set()
         messages = [

@@ -1120,7 +1120,7 @@ def test_a_fork_made_mid_turn_moves_this_session_into_a_host_once_idle(tmp_path,
                     # Mid-turn it stays here: a turn cannot move.
                     assert not app.hosted and app.activity.busy
                     pipe.send_text("\x1e")
-                    await seen("until its turn ends")
+                    await seen("until it is idle")
                     script.release("hang here")
                     await seen("Finished.")
                     await seen("Moved to background session cccc3333")

@@ -130,9 +130,9 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   this terminal (`/switch -` brings it back).
 - `/fork [PROMPT]`: start a copy of this conversation in a background session, in a git
   repository in a worktree of its own. With PROMPT the copy works on it and this
-  terminal stays here; bare, it switches to the copy. After `/detach`, both run at once
-  and Ctrl+^ flips between them
-  ([parallel sessions](sessions.md#parallel-sessions)).
+  terminal stays here; bare, it switches to the copy. Once this session runs in a host
+  (`/detach`, or by itself once idle after `/fork PROMPT`), both run at once and Ctrl+^
+  flips between them ([parallel sessions](sessions.md#parallel-sessions)).
 - `/restart`: restart this background session's host on the pcode installed now, keeping
   the conversation.
 - `/stop`: end this background session's host and quit. Quitting any other way (Ctrl+D,

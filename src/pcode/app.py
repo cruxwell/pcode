@@ -33,6 +33,7 @@ from pcode.config import (
 )
 from pcode.config import USAGE as CONFIG_USAGE
 from pcode.controller import (
+    HANDOFF_TAG,
     MODEL_COMMANDS,
     TERMINAL_COMMANDS,
     SessionController,
@@ -219,9 +220,10 @@ class PreviewApp:
         # A session running here started another in the background: it moves
         # into a host once idle, so showing that one leaves this one running.
         self.host_when_idle = False
-        # That move is queued as a `/detach`, which then stays quiet if the
-        # session got busy meanwhile; the next turn's end tries again.
-        self.handoff_queued = False
+        # That move is queued as a `/detach` (HANDOFF_TAG), which then stays
+        # quiet if the session got busy meanwhile. The queue generation it was
+        # sent in: a Ctrl+C that drops it lets the next try queue another.
+        self.handoff_queued: int | None = None
         # Set once a host owns this terminal's in-process session.
         self.moved_to_host = False
         # The editor's Enter, so what was typed during a move reaches the host.
@@ -623,6 +625,8 @@ class PreviewApp:
         # The footer counts side questions, and an open viewer follows the
         # answer as it streams, so both only need to know that something moved.
         self.redraw()
+        # A question that stopped may have been all that kept this session here.
+        self.hand_off_when_idle()
 
     def aside_answered(self, aside) -> None:
         """Say a side answer is ready, opening it when that is the preference."""
@@ -639,6 +643,8 @@ class PreviewApp:
             + ("Opening it." if opening else "/btw opens it.")
         )
         self.redraw()
+        # Queued behind the viewer: it moves once that closes.
+        self.hand_off_when_idle()
 
     def redraw(self) -> None:
         if self.output is not None:
@@ -1468,13 +1474,16 @@ class PreviewApp:
 
     def check_leaving(self, command: str) -> None:
         """Refuse to show another session while leaving would stop this one's turn."""
-        if self.hosted or not (self.activity.busy or self.activity.queued_prompts):
+        if self.hosted:
             return
-        if self.host_when_idle:
+        if self.host_when_idle and self.handoff_blocker():
+            # Not just a turn: a side question would end here too.
             raise ValueError(
-                "This session runs in this terminal until its turn ends, then moves into a "
+                "This session runs in this terminal until it is idle, then moves into a "
                 f"background host so {command} leaves it running. Wait or cancel, then retry."
             )
+        if not (self.activity.busy or self.activity.queued_prompts):
+            return
         raise ValueError(
             "This session runs in this terminal, so leaving it stops its turn. "
             f"Wait or cancel, then {command}."
@@ -1501,10 +1510,7 @@ class PreviewApp:
         # Running here: move it into a host first, and stay on it.
         if not self.model:
             raise ValueError("/detach needs a model; this is a local UI preview.")
-        automatic, self.handoff_queued = self.handoff_queued, False
         if why := self.handoff_blocker():
-            if automatic:
-                return  # Busy again since it was queued: the next turn's end retries.
             raise ValueError(why)
         self.handoff_requested = True
 
@@ -1533,12 +1539,21 @@ class PreviewApp:
             self.host_when_idle
             and self.running
             and not self.hosted
-            and not self.handoff_queued
+            # One at a time; one Ctrl+C dropped with the queue no longer counts.
+            and self.handoff_queued != self.controller.prompts.generation
             and self.handoff_blocker() is None
         ):
-            self.handoff_queued = True
+            self.handoff_queued = self.controller.prompts.generation
             # Through the command queue, so it waits for any command running now.
-            self.controller.command("/detach")
+            # The tag tells it from a `/detach` typed meanwhile (see run_command).
+            self.controller.command("/detach", HANDOFF_TAG)
+
+    def hand_off_now(self) -> None:
+        """The queued move into a host: quietly not yet, if busy again since."""
+        self.handoff_queued = None
+        if self.host_when_idle and not self.hosted and self.handoff_blocker() is None:
+            self.handoff_requested = True
+        # Otherwise the next turn's end (or side answer) tries again.
 
     def stop_host_on_exit(self) -> None:
         """Quitting (Ctrl+D, `/quit`) ends the host as `/stop` does, unless `/detach` asked."""
@@ -1878,7 +1893,9 @@ class PreviewApp:
             )
             if self._host_watch is not None:
                 self._host_watch()
-            if not self.hosted and not self.host_when_idle:
+            # An unsaved session here has nothing to keep running.
+            saved = getattr(self.runtime, "session", None)
+            if not self.hosted and saved is not None and not self.host_when_idle:
                 self.host_when_idle = True
                 self.transcript.note(
                     "This session moves into a background host once it is idle, so "
@@ -1911,6 +1928,10 @@ class PreviewApp:
                 # No host to come back to: `/switch -` resumes it in one.
                 self.previous_host = None
                 self.previous_session = saved.info.id
+            elif not handed_off:
+                # Nothing saved to come back to, and the session last started
+                # in the background may be the one shown next.
+                self.previous_host = self.previous_session = None
             await self.leave_controller(previous)
             close = getattr(previous.runtime, "close", None)
             if close is not None:
@@ -2500,7 +2521,10 @@ class PreviewApp:
         output, session = self.output, self.prompt_session
         self._command_popup_generation = tag
         try:
-            self.handle(text)
+            if tag is HANDOFF_TAG:
+                self.hand_off_now()
+            else:
+                self.handle(text)
             if self.config_requested:
                 await self.browse_config(output, session)
             if self.worker_view_requested:

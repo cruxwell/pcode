@@ -316,10 +316,12 @@ def test_session_start_reads_new(argument, expected):
 
 
 def test_the_move_into_a_host_waits_for_an_idle_session(tmp_path):
+    from pcode.controller import HANDOFF_TAG
+
     saved = SavedSession.create("test:local", tmp_path, tmp_path / "sessions")
     app = app_with(Busy(saved))
     queued = []
-    app.controller.command = lambda text, tag=None: queued.append(text)
+    app.controller.command = lambda text, tag=None: queued.append((text, tag))
     try:
         app.hand_off_when_idle()
         assert queued == [], "not asked for"
@@ -329,14 +331,61 @@ def test_the_move_into_a_host_waits_for_an_idle_session(tmp_path):
         app.activity.busy = False
         app.hand_off_when_idle()
         app.hand_off_when_idle()
-        assert queued == ["/detach"], "queued once"
+        assert queued == [("/detach", HANDOFF_TAG)], "queued once"
         # Busy again by the time it runs: it waits for the next turn's end, quietly.
         app.activity.busy = True
-        app.detach("")
-        assert not app.handoff_requested and not app.handoff_queued
+        app.hand_off_now()
+        assert not app.handoff_requested and app.handoff_queued is None
         app.activity.busy = False
         app.hand_off_when_idle()
-        app.detach("")
+        app.hand_off_now()
         assert app.handoff_requested
+    finally:
+        saved.close()
+
+
+def test_a_handoff_dropped_with_the_queue_is_queued_again(tmp_path):
+    saved = SavedSession.create("test:local", tmp_path, tmp_path / "sessions")
+    app = app_with(Busy(saved))
+    app.activity.busy = False
+    app.host_when_idle = True
+    queued = []
+    app.controller.command = lambda text, tag=None: queued.append(text)
+    try:
+        app.hand_off_when_idle()
+        # Ctrl+C: the queued /detach is never dispatched.
+        app.controller.prompts.clear()
+        app.hand_off_when_idle()
+        assert queued == ["/detach", "/detach"]
+    finally:
+        saved.close()
+
+
+def test_a_pending_handoff_holds_back_leaving_while_a_side_question_runs(tmp_path):
+    from unittest.mock import PropertyMock, patch
+
+    saved = SavedSession.create("test:local", tmp_path, tmp_path / "sessions")
+    app = app_with(Busy(saved))
+    app.activity.busy = False
+    try:
+        with patch.object(type(app.asides), "running", new_callable=PropertyMock, return_value=1):
+            app.switch("-x")  # Nothing pending: an idle session may be left.
+            app.host_when_idle = True
+            with pytest.raises(ValueError, match="until it is idle"):
+                app.switch("-x")
+    finally:
+        saved.close()
+
+
+def test_the_handoff_is_not_carried_to_the_host_as_typed(tmp_path):
+    from pcode.controller import HANDOFF_TAG
+
+    saved = SavedSession.create("test:local", tmp_path, tmp_path / "sessions")
+    app = app_with(Busy(saved))
+    try:
+        app.controller.command("/detach", HANDOFF_TAG)
+        app.controller.command("/status")
+        commands, _ = app.controller.take_typed()
+        assert commands == ["/status"]
     finally:
         saved.close()

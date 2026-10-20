@@ -101,10 +101,11 @@ aren't looking at finishes a turn.
 `/detach` is the step that makes this work when the session runs in its
 terminal (the default): a turn there lives in the terminal's process, so
 showing another session would end it. Skip it and `/fork PROMPT` still works,
-mid-turn too. This session then moves into a host by itself once it is idle
-(as `/switch new PROMPT` also does), and from then on switching away leaves it
-running. Until then, during the turn that was running when you forked, the copy
-works in the background but this terminal stays here. Run `/detach` before a
+mid-turn too. This session then moves into a host by itself once it is idle,
+when its turn (and any side question) ends, as it does after `/switch new
+PROMPT`; from then on switching away leaves it running. Until then the copy
+works in the background but this terminal stays here: Ctrl+^ says it is
+waiting rather than ending this session. Run `/detach` before a
 long turn, or turn on `session_host`, and you can switch at any moment.
 
 ### Scripting a running host
