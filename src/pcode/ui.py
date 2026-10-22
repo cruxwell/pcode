@@ -3577,6 +3577,11 @@ def create_prompt(
         activity, transcript, callbacks, key_prefix, lambda: session.default_buffer
     )
 
+    def thread_commands() -> tuple[tuple[str, str], ...]:
+        from pcode.btw_view import THREAD_COMMANDS, current
+
+        return THREAD_COMMANDS if on_btw_close is not None and current(activity) else ()
+
     kwargs.setdefault("color_depth", color_depth())
     output = kwargs.pop("output", None)
     if not isinstance(output, CursorSafeOutput):
@@ -3592,7 +3597,9 @@ def create_prompt(
         input_processors=[WordWrapProcessor(prefix_width=get_cwidth(PROMPT_PREFIX))],
         multiline=True,
         erase_when_done=True,
-        completer=merge_completers([SlashCompleter(registry), FileReferenceCompleter(workspace)]),
+        completer=merge_completers(
+            [SlashCompleter(registry, thread_commands), FileReferenceCompleter(workspace)]
+        ),
         lexer=ReferenceLexer(),
         complete_while_typing=Condition(_completes_while_typing),
         reserve_space_for_menu=0,

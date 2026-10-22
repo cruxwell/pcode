@@ -26,6 +26,15 @@ from pcode.terminal_text import safe_text
 
 Entry = tuple[tuple, str, bool]
 
+# What the editor takes as the shown thread's own commands (`PreviewApp.btw_submit`),
+# offered first by the prompt's completion while a thread is shown.
+THREAD_COMMANDS = (
+    ("/merge", "Merge this thread into the conversation"),
+    ("/summarize", "Summarize this thread into the conversation: [focus]"),
+    ("/stop", "Stop running side answers"),
+    ("/close", "Back to the conversation"),
+)
+
 
 def threads(activity) -> list[list[Aside]]:
     """Each thread's questions in order, threads in the order they began."""

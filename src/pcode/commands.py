@@ -1,7 +1,7 @@
 """One registry drives dispatch, help, and slash completion."""
 
 import asyncio
-from collections.abc import AsyncGenerator, Callable, Iterable
+from collections.abc import AsyncGenerator, Callable, Iterable, Sequence
 from dataclasses import dataclass
 
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
@@ -91,8 +91,20 @@ class CommandRegistry:
 
 
 class SlashCompleter(Completer):
-    def __init__(self, registry: CommandRegistry) -> None:
+    """Complete slash commands and their arguments.
+
+    `extra` lists (name, description) pairs that complete ahead of the
+    registry's and hide its commands of the same name, e.g. the /btw thread's
+    own commands while one is shown.
+    """
+
+    def __init__(
+        self,
+        registry: CommandRegistry,
+        extra: Callable[[], Sequence[tuple[str, str]]] = tuple,
+    ) -> None:
         self.registry = registry
+        self.extra = extra
 
     async def get_completions_async(
         self, document: Document, complete_event: CompleteEvent
@@ -119,7 +131,14 @@ class SlashCompleter(Completer):
         if not text.startswith("/"):
             return
         if not any(char.isspace() for char in text):
+            extra = self.extra()
+            for name, description in extra:
+                if name.startswith(text):
+                    yield Completion(name, start_position=-len(text), display_meta=description)
+            shadowed = {name for name, _ in extra}
             for command in self.registry.commands:
+                if command.name in shadowed:
+                    continue
                 if any(name.startswith(text) for name in (command.name, *command.aliases)):
                     yield Completion(
                         command.name,

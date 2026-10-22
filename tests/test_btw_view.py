@@ -572,6 +572,41 @@ def test_merge_from_the_thread_keeps_it_and_goes_back():
     asyncio.run(run())
 
 
+def test_the_threads_own_commands_complete_only_while_it_is_shown():
+    from prompt_toolkit.completion import CompleteEvent
+    from prompt_toolkit.document import Document
+    from prompt_toolkit.input import create_pipe_input
+
+    from pcode.commands import Command, CommandRegistry
+    from pcode.ui import create_prompt
+
+    app, _ = seeded_app()
+    second = app.controller.asides.items[-1]
+    registry = CommandRegistry()
+    registry.register(Command("/stop", "Stop the running turn", lambda _: None))
+    registry.register(Command("/model", "Choose a model", lambda _: None))
+
+    def names(text):
+        found = session.completer.get_completions(Document(text), CompleteEvent())
+        return {c.text: c.display_meta_text for c in found}
+
+    with create_pipe_input() as pipe:
+        session = create_prompt(
+            registry,
+            activity=app.activity,
+            on_btw_close=lambda: None,
+            input=pipe,
+            output=DummyOutput(),
+        )
+        assert set(names("/")) == {"/stop", "/model"}
+        open_thread(app.activity, second.thread)
+        shown = names("/")
+        assert {"/merge", "/summarize", "/close", "/model"} <= set(shown)
+        # The thread's /stop stops side answers, so its own description wins.
+        assert shown["/stop"] == "Stop running side answers"
+        assert set(names("/me")) == {"/merge"}
+
+
 def test_copy_reads_the_thread_on_screen(monkeypatch):
     from pcode import clipboard
 
