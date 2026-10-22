@@ -14,7 +14,12 @@ help: ## Show available targets
 EXTRAS ?= claude
 
 install: ## Install `pcode` on PATH (editable: source edits are live)
-	uv tool install --python 3.15 --editable '.$(if $(EXTRAS),[$(EXTRAS)])' --reinstall --compile-bytecode
+	@# `uv tool install` ignores uv.lock and resolves afresh, so a new release
+	@# (anthropic 2.x once) breaks the global pcode while the tested .venv is
+	@# fine. Constraining it to the lock's versions installs what was tested.
+	@mkdir -p tmp
+	uv export --frozen --no-hashes --no-emit-project --all-extras --all-groups --quiet -o tmp/install-constraints.txt
+	uv tool install --python 3.15 --editable '.$(if $(EXTRAS),[$(EXTRAS)])' --reinstall --compile-bytecode --constraints tmp/install-constraints.txt
 
 update: install ## Rebuild the tool env after dependency changes
 
