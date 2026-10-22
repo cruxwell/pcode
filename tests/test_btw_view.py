@@ -605,6 +605,12 @@ def test_the_threads_own_commands_complete_only_while_it_is_shown():
         # The thread's /stop stops side answers, so its own description wins.
         assert shown["/stop"] == "Stop running side answers"
         assert set(names("/me")) == {"/merge"}
+        close(app.activity)
+        assert set(names("/")) == {"/stop", "/model"}
+        # Without the thread view, a thread on `Activity` takes no commands.
+        open_thread(app.activity, second.thread)
+        session = create_prompt(registry, activity=app.activity, input=pipe, output=DummyOutput())
+        assert set(names("/")) == {"/stop", "/model"}
 
 
 def test_copy_reads_the_thread_on_screen(monkeypatch):
