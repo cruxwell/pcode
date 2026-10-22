@@ -649,7 +649,8 @@ class SessionController:
                 "/btw",
                 "Ask a side question beside the running turn ($MODEL ... picks models, "
                 "+EFFORT the effort); "
-                "bare opens the answers",
+                "bare opens the answers, where /merge or /summarize brings a thread "
+                "into the conversation",
                 self.aside,
                 aliases=("/side",),
                 free_arguments=True,
