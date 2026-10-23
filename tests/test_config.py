@@ -116,7 +116,7 @@ def test_defaults_and_path_do_not_create_files():
         "key_prefix": "ctrl",
         "popup_mouse": "on",
         "btw_auto_open": "on",
-        "btw_view": "swap",
+        "btw_view": "popup",
         "job_wake": "on",
         "code_mode": "off",
         "web_search": "auto",

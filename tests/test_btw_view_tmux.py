@@ -15,7 +15,7 @@ from pcode.app import PreviewApp
 from pcode.aside import Aside, SideReply
 from pcode.preferences import save_preferences
 
-save_preferences(btw_view="swap")  # The default, pinned.
+save_preferences(btw_view="swap")  # The view under test, pinned.
 app = PreviewApp()
 asides = app.controller.asides
 for question, answer in (
@@ -123,7 +123,7 @@ from pcode.aside import Aside, SideReply
 from pcode.preferences import save_preferences
 from pcode.runtime import EditPreview, Message
 
-save_preferences(btw_view="swap")  # The default, pinned.
+save_preferences(btw_view="swap")  # The view under test, pinned.
 
 class Runtime:
     session = None

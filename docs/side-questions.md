@@ -25,7 +25,7 @@ side question is reading the answer while the turn is still running. A bare
 
 ## The popup
 
-With `pcode config set btw_view popup`, threads show in a full-screen viewer, which
+By default (`btw_view popup`), threads show in a full-screen viewer, which
 takes the terminal while it is open and has a follow-up editor of its own.
 **Ctrl+Q** opens it, as a bare `/btw` does:
 
@@ -69,7 +69,7 @@ Ctrl+/ browses the current popup's help.
 
 ## Swapping a thread in
 
-By default (`btw_view swap`) a thread shows in the conversation's place. The screen and your terminal's scrollback are rebuilt from the
+With `pcode config set btw_view swap`, a thread shows in the conversation's place. The screen and your terminal's scrollback are rebuilt from the
 thread, headed ` btw ` and its first question in a colour of its own, and
 rebuilt from the conversation again when you go back, the way a resize
 redraws it. While it is shown the thread is ordinary terminal output: scroll

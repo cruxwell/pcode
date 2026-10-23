@@ -755,7 +755,7 @@ SETTINGS = {
     ),
     # Read each time the viewer opens, so `/config set` applies without a restart.
     "btw_view": Setting(
-        "swap",
+        "popup",
         ("popup", "swap"),
         description=(
             "Show /btw threads in a full-screen popup, or swap them into the "

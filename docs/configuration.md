@@ -183,7 +183,7 @@ Every key works with `pcode config set KEY VALUE` and `/config set KEY VALUE`.
 | `key_prefix` | `ctrl` | Direct Ctrl+letter shortcuts, such as Ctrl+L for models and Ctrl+Y to copy. No global action-menu leader by default. Set `ctrl+b`, `ctrl+p`, `ctrl+space`, `f2` or `"ctrl+x ctrl+p"` to use a leader before the action letter. Ctrl+/ browses contextual help. See [shortcut prefix](commands.md#shortcut-prefix) |
 | `popup_mouse` | `on` | `on`, `off` (popups capture clicks and the wheel, and a drag selects and copies a pane's text; `off` leaves selection to the terminal, Ctrl+Q flips it inside one popup (Ctrl+G in the `/btw` viewer), see [selecting text](commands.md#selecting-and-copying-text-in-popups)) |
 | `btw_auto_open` | `on` | `on`, `off` (open the viewer when a [side answer](side-questions.md) is ready) |
-| `btw_view` | `swap` | `popup`, `swap` (show side threads in a full-screen popup, or [swap them in](side-questions.md#swapping-a-thread-in) for the conversation, scrollback and all, where the main editor replies to them) |
+| `btw_view` | `popup` | `popup`, `swap` (show side threads in a full-screen popup, or [swap them in](side-questions.md#swapping-a-thread-in) for the conversation, scrollback and all, where the main editor replies to them) |
 
 ### Scrollback and display
 

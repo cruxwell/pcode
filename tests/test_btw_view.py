@@ -29,7 +29,7 @@ from pcode.ui import Activity, CursorSafeOutput, Handoff, TerminalOutput, Transc
 
 @pytest.fixture(autouse=True)
 def swap_view():
-    """These tests exercise the swap (`btw_view swap`, the default)."""
+    """These tests exercise the swap (`btw_view swap`)."""
     save_preferences(btw_view="swap")
 
 
