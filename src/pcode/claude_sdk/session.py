@@ -85,6 +85,10 @@ class SessionConfig:
             strict_mcp_config=True,
             mcp_servers={SERVER: {"type": "sdk", "name": SERVER, "instance": server}},
             allowed_tools=[f"mcp__{SERVER}", *self.web_tools],
+            # Left unset, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC makes the CLI
+            # report "auto", which org-managed hooks may block outright. The
+            # allowed tools above never prompt, so "default" changes nothing else.
+            permission_mode="default",
             system_prompt={"type": "file", "path": prompt_file},
             include_partial_messages=True,
             model=self.model,

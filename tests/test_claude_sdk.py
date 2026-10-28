@@ -459,6 +459,8 @@ def test_process_runs_pcode_prompt_and_tools_only(world):
     options = world.clients[0].options
     assert options.tools == [] and options.setting_sources == []
     assert options.strict_mcp_config and options.allowed_tools == ["mcp__pcode"]
+    # Never "auto": managed org hooks can block every prompt in that mode.
+    assert options.permission_mode == "default"
     # Passed as a private file, removed with the process, never on argv.
     assert "Be terse." in world.clients[0].system_prompt
     assert not world.clients[0].prompt_file.exists()
