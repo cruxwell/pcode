@@ -290,7 +290,10 @@ class FakeOAuthProvider:
                     headers={"WWW-Authenticate": f'Bearer resource_metadata="{ISSUER}/resource"'},
                 )
             return httpx2.Response(200, json={"ok": True})
-        if path == "/resource":
+        if path == "/resource" or (
+            request.url.host == "resource.example"
+            and path.startswith("/.well-known/oauth-protected-resource")
+        ):
             return httpx2.Response(
                 200, json={"resource": URL, "authorization_servers": [self.advertised]}
             )
@@ -300,7 +303,8 @@ class FakeOAuthProvider:
                 json={
                     "issuer": self.issuer,
                     "authorization_endpoint": ISSUER + "/authorize",
-                    "token_endpoint": ISSUER + "/token",
+                    # Not the SDK's guessed `<origin>/token`, as on real servers.
+                    "token_endpoint": ISSUER + "/oauth/token",
                     **(
                         {"registration_endpoint": ISSUER + "/register"} if self.registration else {}
                     ),
@@ -328,7 +332,7 @@ class FakeOAuthProvider:
                     ),
                 },
             )
-        if path == "/token":
+        if str(request.url) == ISSUER + "/oauth/token":
             form = parse_qs(request.content.decode())
             authorization = request.headers.get("Authorization")
             if self.token_auth_method == "client_secret_basic":
@@ -826,7 +830,7 @@ def test_restart_reuses_the_registered_callback_port():
         original = provider.http
 
         async def http(request):
-            if request.url.path == "/token":
+            if request.url.path == "/oauth/token":
                 form = parse_qs(request.content.decode())
                 if form["grant_type"] == ["refresh_token"]:
                     return httpx2.Response(400, json={"error": "invalid_grant"})

@@ -27,7 +27,17 @@ from fastmcp.client.auth import OAuth
 from fastmcp.client.oauth_callback import OAuthCallbackResult, create_oauth_callback_server
 from filelock import FileLock
 from key_value.aio.stores.base import BaseStore
-from mcp.client.auth.utils import issuers_match, validate_metadata_issuer
+from mcp.client.auth.exceptions import OAuthFlowError
+from mcp.client.auth.utils import (
+    build_oauth_authorization_server_metadata_discovery_urls,
+    build_protected_resource_metadata_discovery_urls,
+    create_oauth_metadata_request,
+    credentials_match_issuer,
+    handle_auth_metadata_response,
+    handle_protected_resource_response,
+    issuers_match,
+    validate_metadata_issuer,
+)
 from mcp.shared.auth import AuthorizationCodeResult, OAuthMetadata
 from pydantic import AnyHttpUrl
 from starlette.requests import Request
@@ -237,6 +247,57 @@ class LoopbackOAuth(OAuth):
         if not self._preregistered:
             self._adopt_registered_port(self.context.client_info)
 
+    async def _discover_before_refresh(self):
+        """Find the real token endpoint before refreshing tokens loaded from disk.
+
+        The SDK discovers server metadata only after a 401, so a refresh right
+        after a restart posts to a guessed `<origin>/token`. Servers whose token
+        endpoint lives elsewhere answer with an HTML page (or a 404), the refresh
+        fails, and an otherwise valid sign-in turns into a browser round trip.
+        Mirrors the SDK's discovery without a challenge; any doubt leaves the
+        metadata unset so the SDK's own fallback and 401 handling still apply.
+        """
+        if not self._initialized:
+            await self._initialize()
+        context = self.context
+        if (
+            context.oauth_metadata is not None
+            or context.is_token_valid()
+            or not context.can_refresh_token()
+        ):
+            return
+        try:
+            for url in build_protected_resource_metadata_discovery_urls(None, context.server_url):
+                response = yield create_oauth_metadata_request(url)
+                if prm := await handle_protected_resource_response(response):
+                    await self._validate_resource_match(prm)
+                    context.protected_resource_metadata = prm
+                    context.auth_server_url = self._select_authorization_server(
+                        [str(server) for server in prm.authorization_servers]
+                    )
+                    break
+            expected = self._expected_issuer()
+            if context.client_info is not None and not credentials_match_issuer(
+                context.client_info, expected, context.client_metadata_url
+            ):
+                # Another server's registration: the SDK re-registers on the 401.
+                return
+            for url in build_oauth_authorization_server_metadata_discovery_urls(
+                context.auth_server_url, context.server_url
+            ):
+                response = yield create_oauth_metadata_request(url)
+                ok, asm = await handle_auth_metadata_response(response)
+                if not ok:
+                    return
+                if asm is not None:
+                    if context.auth_server_url is None and issuers_match(str(asm.issuer), expected):
+                        expected = str(asm.issuer)
+                    _validate_metadata_issuer(asm, expected)
+                    context.oauth_metadata = asm
+                    return
+        except OAuthFlowError:
+            return
+
     async def _reserve_callback(self) -> socket.socket:
         if self._callback_socket is not None:
             return self._callback_socket
@@ -285,15 +346,16 @@ class LoopbackOAuth(OAuth):
             try:
                 if await self.token_storage_adapter.get_tokens() is None:
                     await self._reserve_callback()
-                async with aclosing(super().async_auth_flow(request)) as flow:
-                    try:
-                        outgoing = await anext(flow)
-                        while True:
-                            response = yield outgoing
-                            outgoing = await flow.asend(response)
-                    except StopAsyncIteration:
-                        self.failure = None
-                        return
+                for flow in (self._discover_before_refresh(), super().async_auth_flow(request)):
+                    async with aclosing(flow):
+                        try:
+                            outgoing = await anext(flow)
+                            while True:
+                                response = yield outgoing
+                                outgoing = await flow.asend(response)
+                        except StopAsyncIteration:
+                            pass
+                self.failure = None
             except Exception as error:
                 self.failure = error
                 raise
