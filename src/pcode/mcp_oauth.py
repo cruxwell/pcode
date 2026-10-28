@@ -12,6 +12,7 @@ after upgrades, and other tools sharing the item have wiped MCP sign-ins.
 
 import asyncio
 import json
+import logging
 import os
 import secrets
 import socket
@@ -47,6 +48,7 @@ from uvicorn import Server
 from pcode.preferences import preferences_path
 
 _HOST = "127.0.0.1"
+logger = logging.getLogger(__name__)
 
 
 class SignInRequired(RuntimeError):
@@ -247,6 +249,19 @@ class LoopbackOAuth(OAuth):
         if not self._preregistered:
             self._adopt_registered_port(self.context.client_info)
 
+    async def _auth_flow(self, request):
+        # The SDK's redirect-following wrapper drives this, so discovery requests
+        # follow same-origin redirects exactly as the SDK's own discovery does.
+        for flow in (self._discover_before_refresh(), super()._auth_flow(request)):
+            async with aclosing(flow):
+                try:
+                    outgoing = await anext(flow)
+                    while True:
+                        response = yield outgoing
+                        outgoing = await flow.asend(response)
+                except StopAsyncIteration:
+                    pass
+
     async def _discover_before_refresh(self):
         """Find the real token endpoint before refreshing tokens loaded from disk.
 
@@ -254,8 +269,8 @@ class LoopbackOAuth(OAuth):
         after a restart posts to a guessed `<origin>/token`. Servers whose token
         endpoint lives elsewhere answer with an HTML page (or a 404), the refresh
         fails, and an otherwise valid sign-in turns into a browser round trip.
-        Mirrors the SDK's discovery without a challenge; any doubt leaves the
-        metadata unset so the SDK's own fallback and 401 handling still apply.
+        Mirrors the SDK's discovery without a challenge. Any doubt changes no
+        state, so the SDK's own fallback and 401 handling still apply.
         """
         if not self._initialized:
             await self._initialize()
@@ -266,37 +281,43 @@ class LoopbackOAuth(OAuth):
             or not context.can_refresh_token()
         ):
             return
+        prm = auth_server_url = None
         try:
             for url in build_protected_resource_metadata_discovery_urls(None, context.server_url):
                 response = yield create_oauth_metadata_request(url)
+                if response.status_code >= 500 or response.status_code == 429:
+                    raise OAuthFlowError(f"resource metadata: HTTP {response.status_code}")
                 if prm := await handle_protected_resource_response(response):
                     await self._validate_resource_match(prm)
-                    context.protected_resource_metadata = prm
-                    context.auth_server_url = self._select_authorization_server(
+                    auth_server_url = self._select_authorization_server(
                         [str(server) for server in prm.authorization_servers]
                     )
                     break
-            expected = self._expected_issuer()
+            expected = auth_server_url or self._expected_issuer()
             if context.client_info is not None and not credentials_match_issuer(
                 context.client_info, expected, context.client_metadata_url
             ):
-                # Another server's registration: the SDK re-registers on the 401.
-                return
+                raise OAuthFlowError("stored registration belongs to another server")
             for url in build_oauth_authorization_server_metadata_discovery_urls(
-                context.auth_server_url, context.server_url
+                auth_server_url, context.server_url
             ):
                 response = yield create_oauth_metadata_request(url)
                 ok, asm = await handle_auth_metadata_response(response)
                 if not ok:
-                    return
+                    raise OAuthFlowError(f"server metadata: HTTP {response.status_code}")
                 if asm is not None:
-                    if context.auth_server_url is None and issuers_match(str(asm.issuer), expected):
+                    if auth_server_url is None and issuers_match(str(asm.issuer), expected):
                         expected = str(asm.issuer)
                     _validate_metadata_issuer(asm, expected)
-                    context.oauth_metadata = asm
-                    return
-        except OAuthFlowError:
+                    break
+            else:
+                raise OAuthFlowError("server metadata not found")
+        except OAuthFlowError as error:
+            logger.debug("Token endpoint discovery before refresh gave up: %s", error)
             return
+        context.protected_resource_metadata = prm
+        context.auth_server_url = auth_server_url
+        context.oauth_metadata = asm
 
     async def _reserve_callback(self) -> socket.socket:
         if self._callback_socket is not None:
@@ -346,16 +367,15 @@ class LoopbackOAuth(OAuth):
             try:
                 if await self.token_storage_adapter.get_tokens() is None:
                     await self._reserve_callback()
-                for flow in (self._discover_before_refresh(), super().async_auth_flow(request)):
-                    async with aclosing(flow):
-                        try:
-                            outgoing = await anext(flow)
-                            while True:
-                                response = yield outgoing
-                                outgoing = await flow.asend(response)
-                        except StopAsyncIteration:
-                            pass
-                self.failure = None
+                async with aclosing(super().async_auth_flow(request)) as flow:
+                    try:
+                        outgoing = await anext(flow)
+                        while True:
+                            response = yield outgoing
+                            outgoing = await flow.asend(response)
+                    except StopAsyncIteration:
+                        self.failure = None
+                        return
             except Exception as error:
                 self.failure = error
                 raise

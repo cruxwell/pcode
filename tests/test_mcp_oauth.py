@@ -848,6 +848,95 @@ def test_restart_reuses_the_registered_callback_port():
     asyncio.run(run())
 
 
+async def _signed_in_then_restarted(provider, *, expire=True):
+    """Sign in once, then return a fresh OAuth object as the next process builds it."""
+    auth = mcp_transport(build_toolset("remote", {"url": URL, "auth": "oauth"})).auth
+    async with httpx2.AsyncClient(auth=auth, transport=provider.install(auth)) as client:
+        assert (await client.get(URL)).status_code == 200
+    if expire:
+        await expire_stored_access_token()
+    restarted = mcp_transport(build_toolset("remote", {"url": URL, "auth": "oauth"})).auth
+    provider.install(restarted)
+    return restarted
+
+
+def test_restart_refresh_follows_a_redirected_metadata_url():
+    """Discovery before a refresh follows same-origin redirects, as the SDK's own does."""
+
+    async def run():
+        provider = FakeOAuthProvider()
+        restarted = await _signed_in_then_restarted(provider)
+        original = provider.http
+
+        async def http(request):
+            if request.url.host == "resource.example" and request.url.path.startswith(
+                "/.well-known/oauth-protected-resource"
+            ):
+                return httpx2.Response(307, headers={"Location": "/prm"})
+            if request.url.path == "/prm":
+                return await original(httpx2.Request("GET", URL.replace("/mcp", "/resource")))
+            return await original(request)
+
+        async with httpx2.AsyncClient(
+            auth=restarted, transport=httpx2.MockTransport(http)
+        ) as client:
+            assert (await client.get(URL)).status_code == 200
+        assert provider.grants == ["authorization_code", "refresh_token"]
+        assert provider.browser_visits == 1
+
+    asyncio.run(run())
+
+
+def test_restart_refresh_falls_back_when_discovery_fails():
+    """A failed pre-refresh discovery changes nothing: the SDK's old path still recovers."""
+
+    async def run():
+        provider = FakeOAuthProvider()
+        restarted = await _signed_in_then_restarted(provider)
+        original = provider.http
+        guessed = []
+
+        async def http(request):
+            if request.url.host == "resource.example" and request.url.path.startswith(
+                "/.well-known/"
+            ):
+                return httpx2.Response(503)
+            if str(request.url) == "https://resource.example/token":
+                guessed.append(request)
+                return httpx2.Response(404, text="<!doctype html>")
+            return await original(request)
+
+        async with httpx2.AsyncClient(
+            auth=restarted, transport=httpx2.MockTransport(http)
+        ) as client:
+            assert (await client.get(URL)).status_code == 200
+        assert len(guessed) == 1
+        assert restarted.failure is None
+        assert provider.browser_visits == 2
+
+    asyncio.run(run())
+
+
+def test_valid_stored_token_needs_no_discovery():
+    async def run():
+        provider = FakeOAuthProvider()
+        restarted = await _signed_in_then_restarted(provider, expire=False)
+        original = provider.http
+        paths = []
+
+        async def http(request):
+            paths.append(request.url.path)
+            return await original(request)
+
+        async with httpx2.AsyncClient(
+            auth=restarted, transport=httpx2.MockTransport(http)
+        ) as client:
+            assert (await client.get(URL)).status_code == 200
+        assert paths == ["/mcp"]
+
+    asyncio.run(run())
+
+
 async def _exercise_callback_startup_failure():
     """Run in a child process: a regressed SystemExit must not kill pytest itself."""
     from unittest.mock import patch
