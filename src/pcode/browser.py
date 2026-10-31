@@ -159,19 +159,27 @@ def _free_port() -> int:
 # back whenever the site changes its title. Per page, never on the context,
 # which in attach mode holds the user's own tabs. Top frame only; idempotent,
 # since it is both injected for future documents and run on the current one.
-# Verified by hand in Chrome; the tests run on fakes, with no browser.
+#
+# It only rewrites a <title> that exists. Setting `document.title` before the
+# parser reaches the site's own <title> (a script ahead of it in <head> gives
+# the observer that moment) would create a second one ahead of it and hide the
+# real title. A page without a title stays unmarked: Chrome shows its URL. The
+# rewrite budget stops a tug of war with a site that enforces its own title.
 TAB_MARK = "\N{ROBOT FACE} "
 _MARK_TAB = """(mark) => {
   if (window.top !== window || window.__pcodeTabMark) return;
   window.__pcodeTabMark = true;
-  // Reading `document.title` trims it, so an empty page's mark reads back bare.
+  let budget = 50, since = Date.now();
+  const observer = new MutationObserver(() => fix());
   const fix = () => {
+    const element = document.getElementsByTagNameNS('http://www.w3.org/1999/xhtml', 'title')[0];
     const title = document.title;
-    if (title !== mark.trim() && !title.startsWith(mark)) document.title = mark + title;
+    if (!element || !title || title.startsWith(mark)) return;
+    if (Date.now() - since > 1000) { budget = 50; since = Date.now(); }
+    if (--budget < 0) { observer.disconnect(); return; }
+    element.textContent = mark + title;
   };
-  new MutationObserver(fix).observe(document, {
-    childList: true, subtree: true, characterData: true,
-  });
+  observer.observe(document, {childList: true, subtree: true, characterData: true});
   fix();
 }"""
 
@@ -218,6 +226,7 @@ def _session_class():
             self._wire_page(page)
             self.pages.append(page)
             self.page = page
+            await self._mark(page)
             # Show the new tab once, so in the user's own Chrome they watch the
             # agent's tab rather than whichever they had open. Never again
             # per action: switching away afterwards is the user's choice.
@@ -226,17 +235,25 @@ def _session_class():
             except Exception:  # noqa: BLE001 - cosmetic; the page works without it.
                 pass
 
-        def _wire_page(self, page) -> None:
-            """Harness's wiring, plus the title mark; every tab of ours passes here."""
-            super()._wire_page(page)
-            self._spawn(self._mark(page))
+        async def open_tab(self):
+            page = await super().open_tab()
+            await self._mark(page)
+            return page
+
+        def _on_popup(self, popup) -> None:
+            super()._on_popup(popup)
+            if popup in self.pages:  # Kept, not closed over the tab limit.
+                self._spawn(self._mark(popup))
 
         async def _mark(self, page) -> None:
-            # Injected for later navigations, then run on the document already
-            # loaded (a popup arrives mid-load). Cosmetic: errors are dropped.
+            """Prefix the tab's title, before the next navigation can outrun it.
+
+            Injected for later documents, then run on the one already loaded
+            (a popup arrives mid-load). Cosmetic, so errors are dropped.
+            """
             try:
-                await page.add_init_script(f"({_MARK_TAB})({json.dumps(TAB_MARK)})")
-                await page.evaluate(_MARK_TAB, TAB_MARK)
+                await self._bounded(page.add_init_script(f"({_MARK_TAB})({json.dumps(TAB_MARK)})"))
+                await self._bounded(page.evaluate(_MARK_TAB, TAB_MARK))
             except Exception:  # noqa: BLE001 - the page may be gone or a fake.
                 pass
 

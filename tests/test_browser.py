@@ -677,6 +677,37 @@ def test_session_shares_the_browsers_default_context(fresh_state):
     assert calls[-3:] == ["page.close", "browser.close", "driver.exit"]
 
 
+def test_new_tabs_and_popups_are_marked_and_failures_dropped(fresh_state):
+    """Every tab of ours gets the title mark; a page that refuses it still works."""
+    fresh_state.open()
+    session = fresh_state.session
+    marked = []
+
+    def page(fails=False):
+        async def add_init_script(script):
+            if fails:
+                raise RuntimeError("page gone")
+            marked.append(found)
+
+        found = SimpleNamespace(
+            url="about:blank", on=lambda *a: None, add_init_script=add_init_script
+        )
+        found.evaluate = AsyncMock()
+        return found
+
+    async def scenario():
+        tab = page()
+        session._context = SimpleNamespace(new_page=AsyncMock(return_value=tab))
+        assert await session.open_tab() is tab and marked == [tab]
+        popup, broken = page(), page(fails=True)
+        session._on_popup(popup)
+        session._on_popup(broken)
+        await asyncio.gather(*session._event_tasks)
+        assert marked == [tab, popup] and broken in session.pages
+
+    asyncio.run(scenario())
+
+
 def test_chrome_that_never_answers_is_reported(fresh_state, monkeypatch, tmp_path):
     """A binary that exits at once yields a clear error rather than a hang."""
     fake = tmp_path / "chrome"
