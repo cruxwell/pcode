@@ -25,7 +25,7 @@ import asyncio
 from pathlib import Path
 
 from pcode import sandbox
-from pcode.browser import REMOTE_DEBUGGING_PAGE, STATE, show_remote_debugging_toggle
+from pcode.browser import REMOTE_DEBUGGING_PAGE, STATE, TAB_MARK, show_remote_debugging_toggle
 
 DELEGATE_INSTRUCTIONS = (
     "A `browser` sub-agent shares the same browser window and login. Delegate to it "
@@ -51,6 +51,12 @@ SIGN_IN_INSTRUCTIONS = (
     "`browser_open` so the window is in front, then end your turn asking the user to "
     "log in there and tell you when they are done; continue from the same page when "
     "they do."
+)
+
+TAB_MARK_INSTRUCTIONS = (
+    f"pcode prefixes the title of every tab you drive with {TAB_MARK!r} so the user can "
+    "spot it; that prefix is not part of the page. Leave it out when you report or "
+    "check a page's title."
 )
 
 FILE_INSTRUCTIONS = (
@@ -278,6 +284,7 @@ def _capability(pcode, toolset):
                 FILE_INSTRUCTIONS,
                 LOGIN_INSTRUCTIONS["attach" if STATE.attach else "own"],
                 SIGN_IN_INSTRUCTIONS,
+                TAB_MARK_INSTRUCTIONS,
             )
         ),
     )

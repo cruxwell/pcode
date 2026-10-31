@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import json
 import os
 import shutil
 import socket
@@ -154,6 +155,27 @@ def _free_port() -> int:
         return probe.getsockname()[1]
 
 
+# Marks the agent's tabs in the user's tab strip: the title gets a prefix, put
+# back whenever the site changes its title. Per page, never on the context,
+# which in attach mode holds the user's own tabs. Top frame only; idempotent,
+# since it is both injected for future documents and run on the current one.
+# Verified by hand in Chrome; the tests run on fakes, with no browser.
+TAB_MARK = "\N{ROBOT FACE} "
+_MARK_TAB = """(mark) => {
+  if (window.top !== window || window.__pcodeTabMark) return;
+  window.__pcodeTabMark = true;
+  // Reading `document.title` trims it, so an empty page's mark reads back bare.
+  const fix = () => {
+    const title = document.title;
+    if (title !== mark.trim() && !title.startsWith(mark)) document.title = mark + title;
+  };
+  new MutationObserver(fix).observe(document, {
+    childList: true, subtree: true, characterData: true,
+  });
+  fix();
+}"""
+
+
 def _session_class():
     from pydantic_ai_harness.playwright import PlaywrightBrowserSession
 
@@ -202,6 +224,20 @@ def _session_class():
             try:
                 await self._bounded(page.bring_to_front())
             except Exception:  # noqa: BLE001 - cosmetic; the page works without it.
+                pass
+
+        def _wire_page(self, page) -> None:
+            """Harness's wiring, plus the title mark; every tab of ours passes here."""
+            super()._wire_page(page)
+            self._spawn(self._mark(page))
+
+        async def _mark(self, page) -> None:
+            # Injected for later navigations, then run on the document already
+            # loaded (a popup arrives mid-load). Cosmetic: errors are dropped.
+            try:
+                await page.add_init_script(f"({_MARK_TAB})({json.dumps(TAB_MARK)})")
+                await page.evaluate(_MARK_TAB, TAB_MARK)
+            except Exception:  # noqa: BLE001 - the page may be gone or a fake.
                 pass
 
         async def list_tabs(self) -> list[tuple[str, str]]:

@@ -14,7 +14,7 @@ from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
 import pcode.browser as browser_state
 from pcode.agent import create_agent
-from pcode.browser import BrowserState
+from pcode.browser import TAB_MARK, BrowserState
 from pcode.ext import ExtensionUI, load_extensions
 
 
@@ -620,6 +620,12 @@ def test_session_shares_the_browsers_default_context(fresh_state):
         async def bring_to_front(self):
             calls.append("page.front")
 
+        async def add_init_script(self, script):
+            calls.append(("init", "__pcodeTabMark" in script))
+
+        async def evaluate(self, script, arg):
+            calls.append(("mark", arg))
+
         async def close(self):
             calls.append("page.close")
 
@@ -650,6 +656,7 @@ def test_session_shares_the_browsers_default_context(fresh_state):
         session._driver_entered = True
         session._connect = _connect
         await session._launch()
+        await asyncio.gather(*session._event_tasks)
         assert session._context is Browser.contexts[0]
         assert session.page is not None and session.pages == [session.page]
         await session.__aexit__(None, None, None)
@@ -665,6 +672,8 @@ def test_session_shares_the_browsers_default_context(fresh_state):
     # Harness listens to are still wired, and the tab is closed before disconnecting.
     assert ("on", "dialog") in calls
     assert calls.count("page.front") == 1  # shown once, on creation
+    # The tab's title is marked for later documents and the current one.
+    assert ("init", True) in calls and ("mark", TAB_MARK) in calls
     assert calls[-3:] == ["page.close", "browser.close", "driver.exit"]
 
 
