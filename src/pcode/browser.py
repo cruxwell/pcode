@@ -196,6 +196,13 @@ def _session_class():
             self._wire_page(page)
             self.pages.append(page)
             self.page = page
+            # Show the new tab once, so in the user's own Chrome they watch the
+            # agent's tab rather than whichever they had open. Never again
+            # per action: switching away afterwards is the user's choice.
+            try:
+                await self._bounded(page.bring_to_front())
+            except Exception:  # noqa: BLE001 - cosmetic; the page works without it.
+                pass
 
         async def list_tabs(self) -> list[tuple[str, str]]:
             """Read browser targets over CDP, without evaluating possibly hung pages.

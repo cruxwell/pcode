@@ -617,6 +617,9 @@ def test_session_shares_the_browsers_default_context(fresh_state):
         def on(self, *args):
             calls.append(("on", args[0]))
 
+        async def bring_to_front(self):
+            calls.append("page.front")
+
         async def close(self):
             calls.append("page.close")
 
@@ -661,6 +664,7 @@ def test_session_shares_the_browsers_default_context(fresh_state):
     # Open egress plus reachable localhost means no route guard; the page events
     # Harness listens to are still wired, and the tab is closed before disconnecting.
     assert ("on", "dialog") in calls
+    assert calls.count("page.front") == 1  # shown once, on creation
     assert calls[-3:] == ["page.close", "browser.close", "driver.exit"]
 
 
