@@ -769,7 +769,7 @@ class SessionHost:
         for client in clients:
             client.peer.notify("host_closed")
             client.peer.close()
-        controller.cancel()
+        controller.cancel_all()
         for task in self.tasks:
             task.cancel()
         await asyncio.gather(*self.tasks, *controller.tasks(), return_exceptions=True)

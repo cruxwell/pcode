@@ -174,7 +174,8 @@ QUERIES = frozenset(
 
 # Commands that change the conversation itself, refused while a turn runs or
 # prompts wait (bar /compact and /resend sent while idle, which go first).
-IDLE_COMMANDS = frozenset({"/resend", "/new", "/resume", "/login", "/logout", "/compact"})
+# /login is not among them: sent while working, it waits beside the turn.
+IDLE_COMMANDS = frozenset({"/resend", "/new", "/resume", "/logout", "/compact"})
 
 # Commands that make a model request or change the toolset. Each holds the
 # session busy from Enter until its handler starts, so a Ctrl+C in the same
@@ -1128,6 +1129,10 @@ class SessionController:
         self.interrupt_pending = False
         self.clear_queue()
         active = [task for task in self.tasks() if not task.done()]
+        # A sign-in waiting beside a turn is not what Ctrl+C aims at: it
+        # carries on, and goes with the next Ctrl+C once nothing else runs.
+        if any(task is not self.login_task for task in active):
+            active = [task for task in active if task is not self.login_task]
         # Ctrl+C means "stop working", so a command the turn is waiting on is
         # stopped with it. A typed follow-up takes the other branch and only
         # abandons the wait. Either way a job the model explicitly backgrounded
@@ -1146,6 +1151,12 @@ class SessionController:
             # A command that ended the session cancels nothing the user ran.
             if self.running:
                 self.view.cancelled()
+
+    def cancel_all(self) -> None:
+        """The session is ending: stop what Ctrl+C would, and a sign-in it spares."""
+        self.cancel()
+        if self.login_task is not None:
+            self.login_task.cancel()
 
     def cancel_asides(self) -> int:
         """Stop the running side questions alone; a running turn carries on."""
@@ -1239,10 +1250,18 @@ class SessionController:
             and not before_queue
             and not background
         ):
-            self.view.warning(
-                f"{name} is unavailable while working. "
-                "Cancel with Ctrl+C or wait for the run to finish, then retry."
-            )
+            others = [t for t in self.tasks() if t is not self.login_task and not t.done()]
+            if self.login_task is not None and not (others or self.activity.queued):
+                # What holds the session is a sign-in left waiting after its turn.
+                self.view.warning(
+                    f"{name} is unavailable while a sign-in waits in the browser. "
+                    "Finish it, or cancel it with Ctrl+C, then retry."
+                )
+            else:
+                self.view.warning(
+                    f"{name} is unavailable while working. "
+                    "Cancel with Ctrl+C or wait for the run to finish, then retry."
+                )
         elif background or self.registry.find(name) is None:
             await self.view.run_command(text, idle=idle, tag=tag)
         else:
@@ -1278,7 +1297,7 @@ class SessionController:
         # Not once the terminal shows another controller (/detach, /attach):
         # they share its activity, which this would reset under the new one.
         if not self.running and not self.superseded:
-            self.cancel()
+            self.cancel_all()
             if active := self.tasks():
                 await asyncio.gather(*active, return_exceptions=True)
         if self.reload_requested:
@@ -1297,13 +1316,31 @@ class SessionController:
         Waiting on a browser holds the session busy, which is what routes
         Ctrl+C to `cancel` rather than to the draft. A cancelled sign-in ends
         here; only the command loop's own cancellation propagates.
+
+        Sent while a turn or other work runs, the sign-in waits beside it
+        instead, so switching accounts never stops a long turn: the command
+        loop carries on, and the turn's next request uses the new login (see
+        `Logins`). Ctrl+C stops that work first and the sign-in once it is all
+        that is left (`cancel`).
         """
         # Taken here, not in the task: a Ctrl+C landing before the task's first
         # step must still consume the request, or the next command would rerun it.
         source, self.login_requested = self.login_requested, None
-        task = asyncio.create_task(self.logins.perform_login(source))
+        if self.login_task is not None:
+            # Both flows wait on a browser, and Codex's on a fixed local port.
+            self.view.warning(
+                "A sign-in is already waiting in the browser. "
+                "Finish it, or press Ctrl+C once nothing else runs."
+            )
+            return
+        # Queued prompts count: the next turn would otherwise wait on the browser.
+        beside = self.working() or bool(self.activity.queued_prompts)
+        task = asyncio.create_task(self.logins.perform_login(source, beside=beside))
         self.login_task = task
         self.activity.busy = True
+        if beside:
+            task.add_done_callback(self._login_finished)
+            return
         try:
             await asyncio.wait({task})
         except asyncio.CancelledError:
@@ -1314,6 +1351,14 @@ class SessionController:
             self.refresh_busy()
         if not task.cancelled():
             task.result()
+
+    def _login_finished(self, task: asyncio.Task) -> None:
+        """A sign-in that ran beside other work ended: nothing awaits it to settle it."""
+        if self.login_task is task:
+            self.login_task = None
+        self.refresh_busy()
+        if not task.cancelled() and (error := task.exception()) is not None:
+            self.command_failed("/login", error)
 
     async def run_command(self, text: str, *, before_queue: bool = False) -> None:
         """Run one of the session's own commands; a handler may be sync or async."""

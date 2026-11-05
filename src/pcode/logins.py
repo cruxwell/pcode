@@ -47,13 +47,22 @@ class Logins:
             return
         self.controller.logout_requested = source
 
-    async def perform_login(self, source: str | None) -> None:
-        if source == "openai-codex":
-            await self.login_codex()
-        else:
-            await self.login_claude()
+    async def perform_login(self, source: str | None, *, beside: bool = False) -> None:
+        """Sign in; `beside` says a turn or queued prompt carries on meanwhile.
 
-    async def login_claude(self) -> None:
+        Either way the conversation's next model request uses the new login,
+        mid-turn included: a `claude:` model's CLI rereads its keychain item
+        at least every 30 seconds (checked against Claude Code 2.1.300), and
+        the Codex model is rebuilt here, which `FollowAgent` reads per request.
+        """
+        # Ctrl+C stops the work in front first; see `SessionController.cancel`.
+        cancel = "Ctrl+C cancels once nothing else runs" if beside else "Ctrl+C cancels"
+        if source == "openai-codex":
+            await self.login_codex(cancel)
+        else:
+            await self.login_claude(cancel)
+
+    async def login_claude(self, cancel: str = "Ctrl+C cancels") -> None:
         """Run Claude Code's own sign-in for `claude:` models, with the CLI they run."""
         from pcode.auth import LoginError
         from pcode.claude_sdk import LOGIN_ENV, MISSING_SDK, cli_path
@@ -66,7 +75,7 @@ class Logins:
         try:
             self.view.note(
                 "Signing in to Claude Code with `claude auth login`. "
-                "Finish in the browser (Ctrl+C cancels)."
+                f"Finish in the browser ({cancel})."
             )
             # Scrubbed as the requests are, so an API key cannot pass for the login.
             status = await claude_login(self.view.note, cli_path(), extra_env=LOGIN_ENV)
@@ -74,7 +83,8 @@ class Logins:
             self.view.note(
                 "Signed in to Claude Code"
                 + (f" ({plan} plan)" if plan else "")
-                + ". claude: models use it from their next request; pcode stores nothing."
+                + ". claude: models switch to it within about 30 seconds, mid-turn included; "
+                "pcode stores nothing."
             )
         except asyncio.CancelledError:
             self.view.note("Claude sign-in cancelled.")
@@ -84,7 +94,7 @@ class Logins:
         except Exception:
             self.view.error("Claude sign-in failed. No credential details were logged.")
 
-    async def login_codex(self) -> None:
+    async def login_codex(self, cancel: str = "Ctrl+C cancels") -> None:
         from pcode.agent import codex_model
         from pcode.auth import LoginError
         from pcode.codex_login import credentials_path, login
@@ -92,12 +102,14 @@ class Logins:
         controller = self.controller
         self.view.note(
             "Sign in with your ChatGPT account in the browser. "
-            "If no browser opens, visit this URL (Ctrl+C cancels):"
+            f"If no browser opens, visit this URL ({cancel}):"
         )
         try:
             await login(notify=self.view.note)
             # Codex credentials are read when the model is built, so a Codex
-            # conversation must rebuild its model to adopt the new sign-in.
+            # conversation must rebuild its model to adopt the new sign-in. A
+            # running turn's next request goes to it (`FollowAgent`), unless
+            # the turn borrowed another model.
             codex = (controller.model or "").startswith("openai-codex:")
             if codex and hasattr(controller.runtime, "agent"):
                 controller.runtime.agent.model = await asyncio.to_thread(

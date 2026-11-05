@@ -23,7 +23,10 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   `openai-codex` uses Pydantic AI's OAuth flow (no CLI required). `anthropic:` models use
   `ANTHROPIC_API_KEY` and have no sign-in.
   `/logout [openai-codex]` removes pcode's stored Codex login, leaving CLI credentials
-  untouched. Both require an idle conversation.
+  untouched; it needs an idle conversation. `/login` also works mid-turn, to switch
+  accounts without stopping a long run: the turn carries on, and its requests use
+  the new login once you finish in the browser. Ctrl+C (or Ctrl+D) stops the turn first,
+  and the waiting sign-in only when nothing else is running.
 - `/model`: searchable model picker for configured providers. Keeps the conversation;
   chosen mid-run, the running turn's next request already uses it. To switch for one prompt only, start
   it with `$PROVIDER:MODEL` (optionally `+EFFORT`, as in `$openai:gpt-5+high fix this`)
@@ -701,8 +704,10 @@ Input sent while idle starts a normal turn in every mode.
 
 Slash commands run separately from the model, so help, inspection, theme,
 context, and effort commands work while it's busy. `/model` and `/effort` also work and
-apply from the running turn's next request. Bare `/new`, `/resume`, `/login`, and `/logout` need
-an idle conversation: cancel or wait, then retry.
+apply from the running turn's next request. So does an account switched with `/login`:
+Codex from the next request, `claude:` models within about 30 seconds. A turn sent to
+another model with `$provider:model` keeps the login it started with.
+Bare `/new`, `/resume`, and `/logout` need an idle conversation: cancel or wait, then retry.
 
 Cancelling:
 

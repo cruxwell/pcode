@@ -112,6 +112,158 @@ def test_ctrl_c_before_the_login_starts_does_not_rerun_it_later(monkeypatch):
     assert controller.login_requested is None
 
 
+def browser_wait(monkeypatch):
+    """A Codex sign-in that waits on the browser until `finish` is set."""
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    async def wait_for_browser(**kwargs):
+        started.set()
+        await finish.wait()
+
+    monkeypatch.setattr(codex_login, "login", wait_for_browser)
+    monkeypatch.setattr("pcode.agent.codex_model", lambda model: f"rebuilt {model}")
+    return started, finish
+
+
+def test_login_during_a_turn_waits_beside_it_and_switches_the_model(monkeypatch):
+    app, runtime, buffer = make_app("openai-codex:test-model")
+    started, finish = browser_wait(monkeypatch)
+    controller = app.controller
+
+    async def scenario():
+        turn = controller.live_task = asyncio.create_task(asyncio.Event().wait())
+        controller.activity.busy = True
+        # Through dispatch, as typed: no longer refused while working, and
+        # back to the command loop while the browser still waits.
+        await asyncio.wait_for(controller.dispatch("/login openai-codex", idle=False), 1)
+        await started.wait()
+        assert controller.login_task is not None and not turn.done()
+        assert "unavailable while working" not in buffer.getvalue()
+        login = controller.login_task
+        finish.set()
+        await asyncio.wait_for(login, 1)
+        await asyncio.sleep(0)  # Its done callback settles it.
+        assert controller.login_task is None and not turn.done()
+        turn.cancel()
+        await asyncio.gather(turn, return_exceptions=True)
+
+    asyncio.run(scenario())
+    assert runtime.agent.model == "rebuilt openai-codex:test-model"
+    assert "Ctrl+C cancels once nothing else runs" in buffer.getvalue()
+    assert "Signed in to OpenAI Codex" in buffer.getvalue()
+
+
+def test_ctrl_c_stops_the_turn_before_a_login_waiting_beside_it(monkeypatch):
+    app, runtime, buffer = make_app("openai-codex:test-model")
+    started, _ = browser_wait(monkeypatch)
+    controller = app.controller
+
+    async def scenario():
+        turn = controller.live_task = asyncio.create_task(asyncio.Event().wait())
+        app.handle("/login openai-codex")
+        await controller.perform_login()
+        await started.wait()
+        login = controller.login_task
+        controller.cancel()
+        await asyncio.gather(turn, return_exceptions=True)
+        assert turn.cancelled() and not login.done()
+        controller.live_task = None
+        controller.refresh_busy()
+        # The sign-in still holds the session busy, so the next Ctrl+C reaches it.
+        assert controller.activity.busy
+        controller.cancel()
+        await asyncio.gather(login, return_exceptions=True)
+        await asyncio.sleep(0)
+
+    asyncio.run(scenario())
+    assert controller.login_task is None
+    assert not controller.activity.busy
+    assert runtime.agent.model == "original"
+    assert "OpenAI Codex sign-in cancelled." in buffer.getvalue()
+
+
+def test_queued_prompts_do_not_wait_on_the_browser(monkeypatch):
+    app, _, _ = make_app("openai-codex:test-model")
+    started, finish = browser_wait(monkeypatch)
+    controller = app.controller
+
+    async def scenario():
+        controller.prompts.put("next", "queue")
+        assert controller.activity.queued_prompts and not controller.working()
+        app.handle("/login openai-codex")
+        await asyncio.wait_for(controller.perform_login(), 1)
+        await started.wait()
+        login = controller.login_task
+        finish.set()
+        await asyncio.wait_for(login, 1)
+
+    asyncio.run(scenario())
+
+
+def test_ending_the_session_stops_a_login_waiting_beside_a_turn(monkeypatch):
+    app, _, _ = make_app("openai-codex:test-model")
+    started, _ = browser_wait(monkeypatch)
+    controller = app.controller
+
+    async def scenario():
+        turn = controller.live_task = asyncio.create_task(asyncio.Event().wait())
+        app.handle("/login openai-codex")
+        await controller.perform_login()
+        await started.wait()
+        login = controller.login_task
+        controller.cancel_all()
+        await asyncio.wait_for(asyncio.gather(turn, login, return_exceptions=True), 1)
+        assert turn.cancelled() and login.done()
+
+    asyncio.run(scenario())
+
+
+def test_a_login_left_waiting_after_its_turn_names_itself_in_refusals(monkeypatch):
+    app, _, buffer = make_app("openai-codex:test-model")
+    started, finish = browser_wait(monkeypatch)
+    controller = app.controller
+
+    async def scenario():
+        turn = controller.live_task = asyncio.create_task(asyncio.Event().wait())
+        app.handle("/login openai-codex")
+        await controller.perform_login()
+        await started.wait()
+        turn.cancel()
+        await asyncio.gather(turn, return_exceptions=True)
+        controller.live_task = None
+        controller.turn_ended(False)
+        assert controller.activity.busy
+        await controller.dispatch("/logout", idle=False)
+        login = controller.login_task
+        finish.set()
+        await asyncio.wait_for(login, 1)
+
+    asyncio.run(scenario())
+    assert "/logout is unavailable while a sign-in waits in the browser" in buffer.getvalue()
+
+
+def test_a_second_login_is_refused_while_one_waits(monkeypatch):
+    app, _, buffer = make_app("openai-codex:test-model")
+    started, finish = browser_wait(monkeypatch)
+    controller = app.controller
+
+    async def scenario():
+        turn = controller.live_task = asyncio.create_task(asyncio.Event().wait())
+        app.handle("/login openai-codex")
+        await controller.perform_login()
+        await started.wait()
+        app.handle("/login openai-codex")
+        await controller.perform_login()
+        assert controller.login_requested is None
+        login = controller.login_task
+        finish.set()
+        turn.cancel()
+        await asyncio.wait_for(asyncio.gather(turn, login, return_exceptions=True), 1)
+
+    asyncio.run(scenario())
+    assert "A sign-in is already waiting in the browser." in buffer.getvalue()
+
+
 def test_unknown_login_source_shows_usage():
     app, _, buffer = make_app("openai-codex:test-model")
     app.handle("/login gemini")

@@ -180,6 +180,11 @@ usual login (`CLAUDE_CONFIG_DIR` is honored), so an existing Claude Code sign-in
 already works. pcode never reads or stores the credential. A request that fails
 because the login is missing or expired tells you to run `/login claude`.
 
+To switch accounts, run `/login claude` again, even mid-turn, or run
+`claude auth login` in another terminal (with the same `CLAUDE_CONFIG_DIR`, if you set one).
+Claude Code rereads its login about every 30 seconds, so requests move to the new
+account within half a minute, including the rest of a turn already running.
+
 `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, and Claude
 Code's cloud routes (`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, and the
 like) are cleared for `claude:` requests and `/login claude`. The key you use for
