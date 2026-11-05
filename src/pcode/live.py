@@ -24,6 +24,7 @@ from pydantic_ai import (
     ToolReturn,
 )
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -89,7 +90,7 @@ from pcode.runtime import (
 from pcode.sessions import SavedSession, SessionError
 from pcode.shell_mode import ShellRun, reduce_result, shell_exchange
 from pcode.shell_tools import JobShell
-from pcode.steering import Steering
+from pcode.steering import STEERING_REMINDER, Steering
 from pcode.stream_events import EventTranslator
 from pcode.token_accounting import TokenAccounting, TokenTotals
 from pcode.tool_display import label, target
@@ -456,7 +457,7 @@ class AgentRuntime:
         `framing` turns `question` into the message sent, in place of the side
         question or follow-up framing; a thread's summary is asked that way.
         """
-        from pcode.aside import ASIDE_REQUEST_LIMIT, framed, framed_follow_up
+        from pcode.aside import framed, framed_follow_up
         from pcode.aside_guard import AsideGuard
 
         agent = self.agent
@@ -505,7 +506,8 @@ class AgentRuntime:
                     toolsets=[self.mcp.live()],
                     conversation_id=conversation_id,
                     capabilities=capabilities,
-                    usage_limits=UsageLimits(request_limit=ASIDE_REQUEST_LIMIT),
+                    # Explicit: left out, the library's 50-request default applies.
+                    usage_limits=UsageLimits(request_limit=None),
                     **other,
                 ) as events,
             ):
@@ -713,7 +715,7 @@ class AgentRuntime:
         if self.history and not isinstance(self.history[-1], ModelResponse):
             # Two requests in a row is what providers reject as non-alternating.
             raise SessionError(
-                "The conversation stopped mid-turn; send a message or /resend first."
+                "The conversation stopped mid-turn; send a message or /continue first."
             )
         summary = await self.aside(instructions, report=report, after=reply, framing=framed_summary)
         history = [
@@ -879,12 +881,12 @@ class AgentRuntime:
             # Regenerating it here would answer a side question, or a summary
             # of a thread this history does not hold, as a conversation turn.
             raise SessionError(
-                "The last exchange came from a side thread; send a message instead of /resend."
+                "The last exchange came from a side thread; send a message instead of /continue."
             )
         if active and active.resend_blocked:
             raise SessionError(
                 "The interrupted turn may have changed files or run commands. "
-                "Inspect its tools and send an explicit next step instead of /resend."
+                "Inspect its tools and send an explicit next step instead of /continue."
             )
         for identity in reversed(self.tree.path(self.tree.active)):
             node = self.tree.nodes[identity]
@@ -1231,6 +1233,7 @@ class AgentRuntime:
                     lambda: self.has_steering(),
                     # A message naming images brings them, as a prompt does.
                     prepare=lambda text: self._with_images(text, self.agent.model),
+                    reminder=STEERING_REMINDER,
                 ),
                 # Finished jobs reach the model here rather than by
                 # being polled for; see `pcode.job_notices`. Ahead of the
@@ -1333,7 +1336,7 @@ def mark_unanswered(history: list[ModelMessage], node) -> list[ModelMessage]:
     reads the abandoned prompt and the new one as a single message ("is" then
     "ci is failing" arrives as "isci is failing"). The marker goes on the
     trailing request itself, so its `interrupted` state, which tells Pydantic
-    AI to close out dangling tool calls, is kept. `/resend` sends no new prompt,
+    AI to close out dangling tool calls, is kept. `/continue` sends no new prompt,
     so it still repeats the request exactly as it was.
     """
     if node is None or node.status == "completed" or not history:
@@ -1474,6 +1477,12 @@ def error_message(error: Exception, *, unexpected: str | None = None) -> str:
             "Check it with `/mcp list`, or turn it off with `/mcp disable NAME`. "
             "See the saved session diagnostics."
         )
+    if isinstance(error, UsageLimitExceeded):
+        # A budget the run was given, not the provider failing; the generic
+        # closing guess below sent people checking credentials. The library's message
+        # is fixed text plus the limit, followed by a docs pointer we drop.
+        reason = str(error).split(". ", 1)[0].rstrip(".")
+        return f"Stopped at a usage limit, not a provider error: {reason}."
     from pcode.claude_sdk import failure_hint
 
     if (hint := failure_hint(error)) is not None:

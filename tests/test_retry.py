@@ -209,25 +209,26 @@ def preview(history):
     )
 
 
-def test_resend_routes_to_a_live_run():
+@pytest.mark.parametrize("name", ["/continue", "/retry"])
+def test_continue_routes_to_a_live_run(name):
     app = preview(["earlier turn"])
-    assert app.handle("/resend") is False
+    assert app.handle(name) is False
     assert app.activity.queued_prompts == ["earlier prompt"]
-    assert app.activity.queued_modes == ["resend"]
+    assert app.activity.queued_modes == ["continue"]
 
 
-def test_resend_is_refused_without_history_or_with_arguments():
+def test_continue_is_refused_without_history_or_with_arguments():
     output = StringIO()
     app = PreviewApp(
         model="test:local", runtime=StubRuntime([]), console=Console(file=output, width=160)
     )
-    assert app.handle("/resend") is False
+    assert app.handle("/continue") is False
     assert not app.activity.queued_prompts
     app.runtime.history = ["earlier turn"]
-    assert app.handle("/resend now") is False
+    assert app.handle("/continue now") is False
     assert not app.activity.queued_prompts
     assert "no earlier prompt" in output.getvalue()
-    assert "Usage: /resend" in output.getvalue()
+    assert "Usage: /continue" in output.getvalue()
 
 
 @pytest.mark.parametrize("saved", [False, True])
@@ -281,7 +282,7 @@ def test_retry_preserves_tools_and_exact_request_after_partial_stream(tmp_path, 
         runtime.close()
 
 
-def test_resend_after_restart_preserves_first_failed_prompt(tmp_path):
+def test_continue_after_restart_preserves_first_failed_prompt(tmp_path):
     from pcode.sessions import SavedSession
 
     save_preferences(retry_attempts="0")
@@ -305,7 +306,7 @@ def test_resend_after_restart_preserves_first_failed_prompt(tmp_path):
 
 
 @pytest.mark.parametrize("following", [False, True])
-def test_resend_uses_send_pipeline_and_original_prompt_spinner(following):
+def test_continue_uses_send_pipeline_and_original_prompt_spinner(following):
     from unittest.mock import patch
 
     from prompt_toolkit.input import create_pipe_input
@@ -358,7 +359,7 @@ def test_resend_uses_send_pipeline_and_original_prompt_spinner(following):
                         lambda: app.activity.prompt_state == "failed" and not app.activity.busy
                     )
                     assert app.activity.turn_outcome == "failed"
-                    pipe.send_text("/resend\r" + ("next message\r" if following else ""))
+                    pipe.send_text("/continue\r" + ("next message\r" if following else ""))
                     await asyncio.wait_for(started.wait(), 5)
                     queued = ["next message"] if following else []
                     await wait(
@@ -377,7 +378,7 @@ def test_resend_uses_send_pipeline_and_original_prompt_spinner(following):
                     assert "make the requested change" not in "".join(t for _, t in fragments)
                     assert app.activity.queued_prompts == (["next message"] if following else [])
                     # A second resend while busy must not queue or steer anything.
-                    pipe.send_text("/resend\rdraft")
+                    pipe.send_text("/continue\rdraft")
                     await wait(lambda: session.default_buffer.text == "draft")
                     release.set()
                     await wait(lambda: not app.activity.busy)
@@ -403,7 +404,7 @@ def test_resend_uses_send_pipeline_and_original_prompt_spinner(following):
 
 
 @pytest.mark.parametrize("saved", [False, True])
-def test_resend_refuses_interrupted_tool_effects(tmp_path, saved):
+def test_continue_refuses_interrupted_tool_effects(tmp_path, saved):
     from pydantic_ai.models.function import DeltaToolCall
 
     from pcode.sessions import SavedSession

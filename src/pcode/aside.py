@@ -20,10 +20,10 @@ from uuid import uuid4
 from pcode.error_report import error_message
 from pcode.preferences import EFFORTS
 
-# One side question is a question, not a second conversation: it gets a small
-# request budget and a hard deadline so a confused run cannot spend a session's
-# worth of tokens in the background where nobody is watching it.
-ASIDE_REQUEST_LIMIT = 12
+# The deadline is a side question's only bound, so a confused run cannot spend a
+# session's worth of tokens in the background. A request cap was dropped, as the
+# worker's was: its activity shows in the popup, it can be cancelled, and a cap
+# discarded the whole answer of a run that was still making progress.
 ASIDE_TIMEOUT_SECONDS = 300
 # Side questions accumulate over a long session; keep the recent threads
 # readable rather than growing the viewer without bound.
@@ -47,7 +47,10 @@ ASIDE_FRAMING = (
     "over fresh investigation. Your answer appears in a popup beside the conversation "
     "and is not added to it, so do not address the main agent, continue its task, "
     "or promise work. Tools work normally, but the plan and delegation tools are "
-    "unavailable here."
+    "unavailable here. "
+    # A side agent once quoted the main agent's thinking as a reply the user
+    # had been given, and wrote a bug report on that premise.
+    "The user may not see thinking, so don't assume they did."
 )
 
 

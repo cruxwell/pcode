@@ -548,7 +548,7 @@ Traps found while building it:
   the name, says it sees.
 
 Prompt images (`pcode.prompt_images`) keep the prompt a string end to end: the
-queue, steering, `/resend`, the conversation tree, history recall and the host
+queue, steering, `/continue`, the conversation tree, history recall and the host
 protocol all carry text, and `AgentRuntime._stream` and `_consume_steering`
 turn a prompt into `[text, label, image, …]` as it is sent. Steering that
 reaches `RunContext.enqueue` (background delegation) is flattened, since

@@ -271,7 +271,7 @@ def test_a_per_model_conversation_id_maps_back_to_its_session():
     assert base_conversation(None) is None
 
 
-def test_resend_after_a_turn_on_another_model_asks_the_conversations(tmp_path):
+def test_continue_after_a_turn_on_another_model_asks_the_conversations(tmp_path):
     seen = []
 
     async def main_model(messages, info):

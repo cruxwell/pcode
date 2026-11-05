@@ -173,14 +173,14 @@ QUERIES = frozenset(
 )
 
 # Commands that change the conversation itself, refused while a turn runs or
-# prompts wait (bar /compact and /resend sent while idle, which go first).
+# prompts wait (bar /compact and /continue sent while idle, which go first).
 # /login is not among them: sent while working, it waits beside the turn.
-IDLE_COMMANDS = frozenset({"/resend", "/new", "/resume", "/logout", "/compact"})
+IDLE_COMMANDS = frozenset({"/continue", "/retry", "/new", "/resume", "/logout", "/compact"})
 
 # Commands that make a model request or change the toolset. Each holds the
 # session busy from Enter until its handler starts, so a Ctrl+C in the same
 # input batch cancels it instead of clearing the draft.
-MODEL_COMMANDS = frozenset({"/compact", "/resend"})
+MODEL_COMMANDS = frozenset({"/compact", "/continue", "/retry"})
 
 # Commands that only change the display. They run even before the runtime is
 # ready and are never dropped by a Ctrl+C clearing the queue.
@@ -230,7 +230,7 @@ class MessageOwner(Protocol):
 
 
 # One queued message: the queue generation it was sent in, its text, how it is
-# sent ("steering", "queue", "interrupt", "shell", "resend", "wake"), and its
+# sent ("steering", "queue", "interrupt", "shell", "continue", "wake"), and its
 # owner, if anyone waits on it, and when it was sent (ISO 8601, UTC).
 Item = tuple[int, str, str, MessageOwner | None, str]
 
@@ -506,7 +506,7 @@ class SessionController:
     - Background work: MCP enabling and sign-out, compaction, history rewrites.
     - Shell jobs: the footer's active count, a watched tail, and job wake-ups.
     - MCP servers: `/mcp` and saving default servers.
-    - History: `/compact`, `/autocompact`, `/resend`.
+    - History: `/compact`, `/autocompact`, `/continue`.
     - The session: skills, extensions and sub-agents, building the runtime,
       switching models, effort, worktrees, startup, and resuming.
     - Side questions (`/btw`) and conversation branches (`/tree`).
@@ -765,9 +765,10 @@ class SessionController:
                 group="Session",
             ),
             Command(
-                "/resend",
-                "Ask the model again from the last checkpoint, without a new message",
-                self.resend,
+                "/continue",
+                "Pick the last turn up from its checkpoint, keeping finished tool calls",
+                self.continue_turn,
+                aliases=("/retry",),
                 group="Session",
             ),
         )
@@ -1095,7 +1096,7 @@ class SessionController:
 
     def take_typed(self) -> tuple[list[str], list[tuple[str, str]]]:
         """Commands and messages (with their modes) the user left waiting, for the
-        host this session moves into. Job wake-ups and resends stay behind: the
+        host this session moves into. Job wake-ups and continues stay behind: the
         host makes its own."""
         commands = []
         while not self.commands.empty():
@@ -1104,7 +1105,9 @@ class SessionController:
                 commands.append(text)
         self.command_idle.set()
         messages = [
-            (text, mode) for text, mode in self.prompts.take_all() if mode not in ("wake", "resend")
+            (text, mode)
+            for text, mode in self.prompts.take_all()
+            if mode not in ("wake", "continue")
         ]
         return commands, messages
 
@@ -1238,7 +1241,7 @@ class SessionController:
         """Run one slash command: the session's own here, anything else in the terminal.
 
         `idle` says whether the session was idle when it was sent: /compact or
-        /resend sent then runs ahead of prompts queued behind it since.
+        /continue sent then runs ahead of prompts queued behind it since.
         """
         name = text.split(maxsplit=1)[0]
         before_queue = name in MODEL_COMMANDS and idle and not self.working()
@@ -1410,7 +1413,7 @@ class SessionController:
                 owner.started()
             success = True
             try:
-                resend = mode == "resend"
+                continuing = mode == "continue"
                 if mode == "shell":
                     self.live_task = asyncio.create_task(self.run_shell(text))
                     try:
@@ -1419,7 +1422,7 @@ class SessionController:
                         if self.closing():
                             return
                         success = False
-                elif not (resend or self.model):
+                elif not (continuing or self.model):
                     self.view.preview_reply(text)
                 else:
                     wake = mode == "wake"
@@ -1433,7 +1436,7 @@ class SessionController:
                     self.live_task = asyncio.create_task(
                         self.run_turn(
                             text,
-                            resend=resend,
+                            continuing=continuing,
                             wake=wake,
                         )
                     )
@@ -1489,10 +1492,10 @@ class SessionController:
         self,
         text: str,
         *,
-        resend: bool = False,
+        continuing: bool = False,
         wake: bool = False,
     ) -> bool:
-        """Run a turn: `resend` asks again from the last checkpoint, and `wake` is one
+        """Run a turn: `continuing` asks again from the last checkpoint, and `wake` is one
         a finished job started, shown as a badge rather than as typed text."""
         runtime = self.runtime
         self.view.turn_started(text, echo=not wake)
@@ -1527,13 +1530,13 @@ class SessionController:
             runtime.notice = self.view.note
         failure = None
         cancelled = False
-        chosen, prompt = (None, text) if resend or wake else prompt_target(text)
+        chosen, prompt = (None, text) if continuing or wake else prompt_target(text)
         # A `/model` during this turn says which model the rest of it is on.
         self.borrowed_turn = chosen
         source = (
             self.stream_on(chosen, prompt)
             if chosen is not None
-            else runtime.stream(None if resend else text)
+            else runtime.stream(None if continuing else text)
         )
         # A turn creates the session's journal on first use. Attached terminals
         # read it from disk (/tools, /diffs), so they need its path mid-turn,
@@ -1545,7 +1548,7 @@ class SessionController:
         # left the session untitled for minutes. A session that existed already
         # (resumed, or after a first turn that failed) is named from its first
         # prompt on disk.
-        first_prompt = prompt if session is None and not (resend or wake) else None
+        first_prompt = prompt if session is None and not (continuing or wake) else None
         if journaled:
             self.start_naming(first_prompt)
         try:
@@ -2242,7 +2245,7 @@ class SessionController:
         except OSError, ValueError:
             self.view.warning("Could not update defaults; this change applies only here.")
 
-    # --- History: compaction and resending ---
+    # --- History: compaction and continuing ---
 
     def compact(self, argument: str, *, before_queue: bool = False) -> None:
         if not self.model or not hasattr(self.runtime, "compact"):
@@ -2300,17 +2303,17 @@ class SessionController:
         cap = self.compact_cap()
         return f"on at {compact_tokens(cap)}" if cap else "on (auto threshold)"
 
-    def resend(self, argument: str, *, before_queue: bool = False) -> None:
+    def continue_turn(self, argument: str, *, before_queue: bool = False) -> None:
         """Ask again from the settled checkpoint instead of typing "continue"."""
         if argument:
-            raise ValueError("/resend takes no arguments.")
+            raise ValueError("/continue takes no arguments.")
         if not self.model or not hasattr(self.runtime, "resend_prompt"):
-            raise ValueError("/resend requires a live model session.")
+            raise ValueError("/continue requires a live model session.")
         if not before_queue and (self.activity.busy or self.activity.queued_prompts):
-            raise ValueError("/resend is unavailable while working. Cancel or wait, then retry.")
+            raise ValueError("/continue is unavailable while working. Cancel or wait, then retry.")
         previous = self.runtime.resend_prompt()
         # Sent idle, before any prompts now queued behind it: keep that order.
-        self.prompts.put(previous, "resend", first=True)
+        self.prompts.put(previous, "continue", first=True)
         self.activity.start_prompt(previous)
         self.activity.busy = True
 

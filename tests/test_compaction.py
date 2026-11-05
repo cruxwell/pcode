@@ -363,7 +363,7 @@ def test_manual_checkpoint_preserves_plan_branches_restart_and_failed_next_turn(
         with pytest.raises(RuntimeError, match="provider down"):
             async for _ in runtime.stream("Continue"):
                 pass
-        # Keep the new request for /resend, but never the failed response.
+        # Keep the new request for /continue, but never the failed response.
         assert runtime.history == failed_inputs[0]
         assert runtime.history[-1].parts[0].content == "Continue"
         await runtime.navigate(parent)

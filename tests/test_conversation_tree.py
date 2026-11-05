@@ -572,7 +572,7 @@ def test_prompt_after_an_unanswered_turn_is_not_merged_into_it(tmp_path, save, o
 
         async def model(messages, info):
             sent.append(deepcopy(messages))
-            if len(sent) <= 2:  # the interrupted turn, then its /resend
+            if len(sent) <= 2:  # the interrupted turn, then its /continue
                 if outcome == "cancel":
                     raise asyncio.CancelledError
                 raise ValueError("bad request")
@@ -585,7 +585,7 @@ def test_prompt_after_an_unanswered_turn_is_not_merged_into_it(tmp_path, save, o
             for prompt in ("is", None):
                 with pytest.raises(error):
                     await turn(runtime, prompt)
-            # /resend repeats the abandoned request exactly; no marker yet.
+            # /continue repeats the abandoned request exactly; no marker yet.
             assert prompts(sent[1]) == ["is"]
             await turn(runtime, "ci is failing")
             marker = CANCELLED_MARKER if outcome == "cancel" else UNANSWERED_MARKER

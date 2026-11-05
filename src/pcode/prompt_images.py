@@ -5,7 +5,7 @@ a file dropped on the terminal (which types its path, shell-escaped or quoted),
 `/paste-image` (which saves the clipboard's image to a file first), or the
 user. When the turn starts, each path that names a PNG, JPEG, GIF or WebP file
 is read and sent after the text, labelled with the path as typed so the model
-can tell several apart. Queues, `/resend`, history recall
+can tell several apart. Queues, `/continue`, history recall
 and the session host all carry the text alone, and attach again from it.
 
 Whether the model can see the picture is `ImageGate`'s call, per request, as

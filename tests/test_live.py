@@ -253,6 +253,34 @@ def test_stream_has_no_model_request_limit():
     asyncio.run(run())
 
 
+def test_side_question_has_no_model_request_limit():
+    """The deadline bounds a side question; a request cap discarded its answer."""
+    requests = 0
+
+    async def model(messages, info):
+        nonlocal requests
+        requests += 1
+        if requests <= 55:
+            yield {0: DeltaToolCall(name="noop", json_args="{}")}
+        else:
+            yield "Answered after a long look."
+
+    agent = Agent(FunctionModel(stream_function=model))
+
+    @agent.tool_plain
+    def noop() -> str:
+        return "ok"
+
+    runtime = AgentRuntime(agent)
+
+    async def run():
+        reply = await runtime.aside("What happened?")
+        assert reply.answer == "Answered after a long look."
+        assert requests == 56
+
+    asyncio.run(run())
+
+
 def test_failed_stream_keeps_request_but_not_partial_response():
     async def broken(messages, info):
         yield "Partial"

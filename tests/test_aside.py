@@ -1208,3 +1208,18 @@ def test_keys_typed_ahead_of_a_pickers_first_frame_reach_the_picker(monkeypatch)
             assert await asyncio.wait_for(task, 5) is None
 
     asyncio.run(run())
+
+
+def test_a_usage_limit_is_not_reported_as_a_provider_failure():
+    from pydantic_ai.exceptions import UsageLimitExceeded
+
+    from pcode.live import error_message
+
+    error = UsageLimitExceeded(
+        "The next request would exceed the request_limit of 12. Consider raising the limit,"
+        " or see the docs on usage limits: https://example.invalid/"
+    )
+    assert error_message(error) == (
+        "Stopped at a usage limit, not a provider error: "
+        "The next request would exceed the request_limit of 12."
+    )

@@ -34,11 +34,11 @@ asyncio.run(app.run_async())
 
 
 @pytest.mark.parametrize("pane", [SCRIPT], indirect=True)
-def test_resend_shows_previous_prompt_above_tasks_with_spinner(pane):
+def test_continue_shows_previous_prompt_above_tasks_with_spinner(pane):
     capture(pane, "❯")
     pane("send-keys", "-t", "preview:0.0", "original requested work", "Enter")
     capture(pane, "Agent failed")
-    pane("send-keys", "-t", "preview:0.0", "/resend", "Enter")
+    pane("send-keys", "-t", "preview:0.0", "/continue", "Enter")
     screen = capture(pane, "Check checkpoint", running=True)
     lines = screen.splitlines()
     task = next(i for i, line in enumerate(lines) if "Check checkpoint" in line)

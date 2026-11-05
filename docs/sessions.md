@@ -143,7 +143,7 @@ pcode --attach 3f9c -p /stop                                     # end the host
   reported an error or a warning, such as `/compact` refused while a turn runs.
   Anything else the host reports meanwhile counts too. A command that opens a
   picker (a bare `/model`) fails, since nobody is there to pick. Commands that
-  queue a turn of their own (a skill, `/resend`) exit without waiting for it. A
+  queue a turn of their own (a skill, `/continue`) exit without waiting for it. A
   command that ends the session (`/worktree finish`) succeeds; a host stopped
   under a command by anything else is a failure.
 - `/stop` ends the host, which tidies its own worktree the way `worktree_exit`
@@ -213,7 +213,7 @@ limited to about 100 bytes.
 ### What works in a hosted session
 
 Everything. The host runs the session's commands (`/model`, `/effort`, `/compact`,
-`/resend`, `/new`, `/tree`, `/btw`, `/mcp`, `/jobs`, `/worktree`, `/login`,
+`/continue`, `/new`, `/tree`, `/btw`, `/mcp`, `/jobs`, `/worktree`, `/login`,
 `/reload`, skills, and extension commands), and opens their pickers in the
 terminal that typed them. The terminal runs its own (`/attach`, `/resume`,
 `/status`, `/tools`, `/diffs`, `/links`, `/agents`, `/help`, `/config`, and the
@@ -324,7 +324,7 @@ running undisturbed.
 
 A turn still running in the original is copied the way a crash would leave it:
 the copy picks up from that turn's last settled step (or from the turn before,
-if it has not settled one yet). `/resend` carries the turn on from there, a new
+if it has not settled one yet). `/continue` carries the turn on from there, a new
 message starts from the same point, and `/tree` can go back to the last
 finished turn instead.
 
@@ -511,7 +511,7 @@ the planner.
 Rewinding to an earlier step *within* a turn is not offered; `/tree` moves
 between turns.
 
-## Retries and `/resend`
+## Retries and `/continue`
 
 Dropped provider connections, transport timeouts, and recognized overload errors
 inside a provider response stream get three automatic retries by default (four
@@ -560,9 +560,10 @@ pcode config set strict_tools off   # Leave edit_file arguments unconstrained
 
 [strict]: https://platform.claude.com/docs/en/build-with-claude/structured-outputs
 
-`/resend` retries manually while idle, without adding another message. The
-original prompt appears above the task bar with the running spinner. Completed
-tool results stay in context; if the last answer completed, only that answer is
-regenerated. An empty conversation cannot be resent. If cancellation left tool
-effects unsettled, `/resend` refuses to replay them; check `/tools` and send an
+`/continue` (or its alias `/retry`) retries manually while idle, without adding
+another message. The original prompt appears above the task bar with the running
+spinner as a label only; it is not sent again. Completed tool results stay in
+context and are not re-run; if the last answer completed, only that answer is
+regenerated. An empty conversation cannot be continued. If cancellation left tool
+effects unsettled, `/continue` refuses to replay them; check `/tools` and send an
 explicit next step instead.

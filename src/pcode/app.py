@@ -429,7 +429,7 @@ class PreviewApp:
             self.controller.registry.find("/compact"),
             self.controller.registry.find("/autocompact"),
             self.controller.registry.find("/jobs"),
-            self.controller.registry.find("/resend"),
+            self.controller.registry.find("/continue"),
             self.controller.registry.find("/worktree"),
             Command(
                 "/show-activity",
@@ -2513,12 +2513,12 @@ class PreviewApp:
         output: TerminalOutput,
         text: str,
         *,
-        resend: bool = False,
+        continuing: bool = False,
         wake: bool = False,
     ) -> bool:
         """Run one turn shown through `output`: the controller's turn, this terminal its view."""
         self.output = output
-        return await self.controller.run_turn(text, resend=resend, wake=wake)
+        return await self.controller.run_turn(text, continuing=continuing, wake=wake)
 
     async def run_command(self, text: str, *, idle: bool, tag) -> None:
         """Run a slash command the controller handed back to this terminal.
@@ -3374,7 +3374,7 @@ def forked_note(saved) -> str:
     note += "." if saved.fork_requested else ", which is open in another process."
     active = saved.tree.nodes.get(saved.tree.active) if saved.tree.active else None
     if active is not None and active.status == "interrupted":
-        note += " Its running turn was copied up to its last safe step; /resend carries it on."
+        note += " Its running turn was copied up to its last safe step; /continue carries it on."
     return note + f" Both sessions work in {saved.info.workspace}."
 
 

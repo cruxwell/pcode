@@ -271,7 +271,7 @@ def session_turns(info: SessionInfo, root: Path | None = None) -> list[Turn] | N
                 prompt = record.get("prompt")
                 if not isinstance(prompt, str):
                     continue
-                # A /resend retry reuses the prompt; its outcome belongs to the same turn.
+                # A /continue retry reuses the prompt; its outcome belongs to the same turn.
                 if record.get("continuation") and current is not None and current.prompt == prompt:
                     current.status = "running"
                     if isinstance(run_id, str):
@@ -917,7 +917,7 @@ class SavedSession(SessionJournal):
 
         A turn still running in the source is copied the way a crash leaves
         one: recovery continues from its last settled step, or from the turn
-        before it when it has settled none, and `/resend` carries it on.
+        before it when it has settled none, and `/continue` carries it on.
         """
         for name in ("session.json", "transcript.jsonl", "steps.sqlite3"):
             if (source / name).is_symlink() or not (source / name).is_file():
