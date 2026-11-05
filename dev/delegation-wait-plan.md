@@ -183,7 +183,7 @@ Until then, pin the private behavior with tests so a Harness upgrade fails loudl
   fails. Harness's delegation already turns child failures into steering text or
   `ModelRetry` (which upstream keeps), so this should rarely bite; confirm with a
   crashing child.
-- **Resume.** A pcode crash or `/resend` mid-delegation loses the child, as today,
+- **Resume.** A pcode crash or `/continue` mid-delegation loses the child, as today,
   but the history now holds a "result will arrive automatically" message that never
   gets one. A resumed session may need a note saying background work from the
   previous run was lost.

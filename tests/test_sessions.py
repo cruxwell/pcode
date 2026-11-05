@@ -938,7 +938,7 @@ def test_opening_a_busy_session_continues_a_copy_from_its_last_safe_step(tmp_pat
             resumed = AgentRuntime(agent, copy)
             await resumed.restore()
             start = len(calls)
-            events = [event async for event in resumed.stream(None)]  # /resend
+            events = [event async for event in resumed.stream(None)]  # /continue
             assert any(
                 isinstance(event, Message) and event.markdown == "Answer to Second question."
                 for event in events

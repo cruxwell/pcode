@@ -18,12 +18,12 @@ def test_queue_keeps_the_panel_in_step():
         prompts = PromptQueue(activity)
         prompts.put("one", "queue")
         prompts.put("two", "steering")
-        prompts.put("again", "resend", first=True)
+        prompts.put("again", "continue", first=True)
         assert activity.queued_prompts == ["again", "one", "two"]
-        assert activity.queued_modes == ["resend", "queue", "steering"]
+        assert activity.queued_modes == ["continue", "queue", "steering"]
         assert activity.queued == len(prompts) == 3
         item = await prompts.get()
-        assert item[:4] == (0, "again", "resend", None) and prompts.current(item)
+        assert item[:4] == (0, "again", "continue", None) and prompts.current(item)
         prompts.taken()
         assert activity.queued_prompts == ["one", "two"] and activity.queued == 2
 
@@ -46,7 +46,7 @@ def test_a_queued_messages_owner_hears_when_it_is_dropped_and_keeps_its_place():
         mine, other = Owner(), Owner()
         prompts.put("mine", "queue", owner=mine)
         prompts.put("steer me", "steering")
-        prompts.put("first", "resend", first=True, owner=other)
+        prompts.put("first", "continue", first=True, owner=other)
         # Reordering keeps each item's owner with it.
         assert prompts.take_steering() == ["steer me"]
         for owner in (other, mine):

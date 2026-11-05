@@ -713,7 +713,7 @@ class AgentRuntime:
         if self.history and not isinstance(self.history[-1], ModelResponse):
             # Two requests in a row is what providers reject as non-alternating.
             raise SessionError(
-                "The conversation stopped mid-turn; send a message or /resend first."
+                "The conversation stopped mid-turn; send a message or /continue first."
             )
         summary = await self.aside(instructions, report=report, after=reply, framing=framed_summary)
         history = [
@@ -879,12 +879,12 @@ class AgentRuntime:
             # Regenerating it here would answer a side question, or a summary
             # of a thread this history does not hold, as a conversation turn.
             raise SessionError(
-                "The last exchange came from a side thread; send a message instead of /resend."
+                "The last exchange came from a side thread; send a message instead of /continue."
             )
         if active and active.resend_blocked:
             raise SessionError(
                 "The interrupted turn may have changed files or run commands. "
-                "Inspect its tools and send an explicit next step instead of /resend."
+                "Inspect its tools and send an explicit next step instead of /continue."
             )
         for identity in reversed(self.tree.path(self.tree.active)):
             node = self.tree.nodes[identity]
@@ -1333,7 +1333,7 @@ def mark_unanswered(history: list[ModelMessage], node) -> list[ModelMessage]:
     reads the abandoned prompt and the new one as a single message ("is" then
     "ci is failing" arrives as "isci is failing"). The marker goes on the
     trailing request itself, so its `interrupted` state, which tells Pydantic
-    AI to close out dangling tool calls, is kept. `/resend` sends no new prompt,
+    AI to close out dangling tool calls, is kept. `/continue` sends no new prompt,
     so it still repeats the request exactly as it was.
     """
     if node is None or node.status == "completed" or not history:

@@ -33,7 +33,7 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   text. Another model starts without the conversation's prompt cache, and automatic
   compaction is skipped for its turn, since that model's window and summarizer would
   decide what the conversation keeps. Such a prompt never steers a running turn; it
-  queues as its own. `/resend` of it asks the conversation's model.
+  queues as its own. `/continue` of it asks the conversation's model.
 - `/effort [low|medium|high|xhigh|default]`: set reasoning effort; bare shows the current
   level ([details](providers.md#reasoning-effort)).
 - `/mcp [list | enable NAME [--save] | enable-all | disable NAME [--save] | logout NAME]`:
@@ -104,8 +104,8 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   from what went wrong in this session (or, with a flag, across this project's or every
   project's saved sessions), apply it if you approve, and log the lesson. See
   [Learning from a session](workspace.md#learning-from-a-session-reflect).
-- `/resend`: retry from the last checkpoint without a new message; shows the previous
-  prompt and spinner.
+- `/continue` (alias `/retry`): pick a failed or cancelled turn back up from its last
+  checkpoint without a new message. Finished tool calls are kept, not run again.
 - `/jobs [stop ID|stop all|watch ID|unwatch]`: bare `/jobs` opens a popup listing this
   session's shell jobs, running first, beside the selected job's command and live output.
   **Ctrl+W** pins or unpins its output tail in the command preview, **Ctrl+K** stops it,
@@ -258,7 +258,7 @@ agent works bring their images the same way; side questions (`/btw`) send the
 path only. File names inside a fenced code block, such as pasted `ls` output,
 are not attached.
 
-The prompt itself stays text, so the path is what history, `/resend` and the
+The prompt itself stays text, so the path is what history, `/continue` and the
 session journal keep, and the file is read again each time the prompt is sent.
 Pasted images are kept for 30 days. Reading the clipboard over ssh would read the
 remote machine's, so `/paste-image` refuses there: copy the file across and name

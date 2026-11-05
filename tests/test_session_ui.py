@@ -490,7 +490,7 @@ def test_session_turns_pairs_prompts_with_final_responses(tmp_path):
         saved.append("turn_completed", run_id="a")
         saved.append("turn_started", prompt="Second", run_id="b")
         saved.append("turn_failed", run_id="b", error="boom")
-        # A /resend retry keeps the turn and replaces its outcome.
+        # A /continue retry keeps the turn and replaces its outcome.
         saved.append("turn_started", prompt="Second", run_id="c", continuation=True)
         saved.event(Message("Retry worked"))
         saved.append("turn_completed", run_id="c")

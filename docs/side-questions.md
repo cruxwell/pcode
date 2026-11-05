@@ -247,7 +247,7 @@ happened since:
   would drop whatever the conversation did after the question was asked.
 
 Merged history is the thread's exactly, framing included, so the model can
-tell those exchanges were side questions. `/resend` refuses on a merged
+tell those exchanges were side questions. `/continue` refuses on a merged
 question or a summary, since resending would answer it again as a real turn;
 send a message instead. A thread asked before `/new` or `/resume` belongs to
 that other conversation and cannot be kept here. The viewer's list marks a kept

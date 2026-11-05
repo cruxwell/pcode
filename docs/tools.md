@@ -274,7 +274,7 @@ search, and [recalling earlier sessions](sessions.md#recalling-earlier-sessions)
 `list_files` and `grep` use a bundled ripgrep and respect ignore files. An edit can be one replacement or a
 list of them, all checked before the file is written once. When the model sends
 a malformed list, pcode lets it correct itself: see
-[retries](sessions.md#retries-and-resend).
+[retries](sessions.md#retries-and-continue).
 
 ### Images
 
@@ -376,7 +376,7 @@ backend available:
 Native tools are billed by the provider per search. The Exa key is never passed
 to the model. Anthropic ties each native result to the account that ran the
 search, so a session resumed under a different login cannot replay them; see
-[Retries](sessions.md#retries-and-resend) for how pcode handles that. Search
+[Retries](sessions.md#retries-and-continue) for how pcode handles that. Search
 returns up to five results, and `get_page` up to 100,000 characters of a page
 (10,000 through Exa). By default a long page is
 [saved to disk](context.md#tool-output-limits) and read back in pieces rather
