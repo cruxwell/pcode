@@ -15,7 +15,9 @@ model reads why and carries on answering.
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ToolFailed
+from pydantic_ai.messages import UserPromptPart
 
+from pcode.steering import run_request
 from pcode.tool_display import PLAN_TOOLS
 
 # Reading the plan is how a side question learns what the turn is doing.
@@ -37,3 +39,28 @@ class AsideGuard(AbstractCapability):
                 "delegated tasks belong to the main conversation. Answer without it."
             )
         return await handler(args)
+
+
+class AsideBudget(AbstractCapability):
+    """Warn a side question two requests before its request limit stops it.
+
+    Hitting the limit throws away everything the run found. The warning is
+    appended to the request the history keeps, as steering is, rather than
+    added and later stripped the way Harness's `WarnNearLimits` does: a rewritten
+    tail would break the cache and the Claude SDK's warm-session match.
+    """
+
+    def __init__(self, limit: int):
+        self.limit = limit
+
+    async def before_model_request(self, ctx, request_context):
+        # `requests` counts the ones already sent, so this one and one more remain.
+        if self.limit - ctx.usage.requests == 2:
+            run_request(ctx, request_context).parts.append(
+                UserPromptPart(
+                    "[Side question] For this question, only this request and one more "
+                    "remain before the limit ends it with no answer. Answer now with what "
+                    "you have, and say what you could not check."
+                )
+            )
+        return request_context

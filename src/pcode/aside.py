@@ -47,7 +47,12 @@ ASIDE_FRAMING = (
     "over fresh investigation. Your answer appears in a popup beside the conversation "
     "and is not added to it, so do not address the main agent, continue its task, "
     "or promise work. Tools work normally, but the plan and delegation tools are "
-    "unavailable here."
+    "unavailable here. "
+    # A side agent once quoted the main agent's thinking as a reply the user
+    # had been given, and wrote a bug report on that premise.
+    "The user saw only assistant text and tool calls, never thinking, so do not say "
+    "they were told something that appears only in thinking. "
+    f"You have at most {ASIDE_REQUEST_LIMIT} model requests; answer before running out."
 )
 
 
@@ -55,7 +60,9 @@ ASIDE_FRAMING = (
 # so this only has to say the same rules still hold.
 FOLLOW_UP_FRAMING = (
     "[Side question follow-up] The user is following up on their side question above. "
-    "The same rules apply: answer only this, briefly; it is not added to the conversation."
+    "The same rules apply: answer only this, briefly; it is not added to the conversation. "
+    f"This follow-up has a fresh budget of {ASIDE_REQUEST_LIMIT} model requests; "
+    "an earlier warning about running out is about the earlier question."
 )
 
 
@@ -552,7 +559,17 @@ class Asides:
             aside.settle("cancelled")
             raise
         except Exception as error:
-            aside.settle("failed", error=error_message(error))
+            from pydantic_ai.exceptions import UsageLimitExceeded
+
+            from pcode.mcp import find_cause
+
+            message = error_message(error)
+            if find_cause(error, UsageLimitExceeded) is not None:
+                message += (
+                    " Ask something narrower, or send work that needs digging"
+                    " to the main conversation."
+                )
+            aside.settle("failed", error=message)
             self._failed(aside, error)
         else:
             aside.settle("answered")

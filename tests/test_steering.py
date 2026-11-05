@@ -10,6 +10,7 @@ from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pcode.agent import create_coder
 from pcode.live import AgentRuntime
 from pcode.runtime import Message
+from pcode.steering import STEERING_REMINDER, Steering
 
 STEER = "FYI, also mention the changelog."
 
@@ -45,9 +46,11 @@ def test_pending_steering_lets_the_whole_batch_run_then_arrives_once(tmp_path):
                 ToolReturnPart,
                 ToolReturnPart,
                 UserPromptPart,
+                UserPromptPart,
             ]
             assert all(part.content.startswith("Wrote ") for part in parts[:2])
-            assert parts[-1].content == STEER
+            # The reminder follows the delivery, so a question gets a visible answer.
+            assert [part.content for part in parts[2:]] == [STEER, STEERING_REMINDER]
             yield "Done, with the changelog noted"
 
         runtime = AgentRuntime(
@@ -105,3 +108,13 @@ def test_steering_beside_a_limit_warning_reaches_history(tmp_path):
         assert STEER in str(runtime.history)
 
     asyncio.run(asyncio.wait_for(run(), timeout=10))
+
+
+def test_reminder_follows_a_delivery_and_never_comes_alone():
+    async def run():
+        pending = ["What changed?"]
+        steering = Steering(lambda: [pending.pop()] if pending else [], reminder=STEERING_REMINDER)
+        assert await steering.take() == ["What changed?", STEERING_REMINDER]
+        assert await steering.take() == []
+
+    asyncio.run(run())

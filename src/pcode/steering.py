@@ -3,6 +3,15 @@
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 
+# A question sent mid-turn was once answered only in thinking, with the reply
+# deferred to a final message that then left it out; the user saw a promise and
+# nothing else.
+STEERING_REMINDER = (
+    "[pcode] The user sent the message(s) above while you were working. If one asks "
+    "something, answer it in visible text now, before resuming the task: thinking "
+    "is not shown to the user, and an answer deferred to the end tends to get lost."
+)
+
 
 def run_request(ctx, request_context) -> ModelRequest:
     """The step's request as the run's history holds it, for parts that must persist.
@@ -17,20 +26,24 @@ def run_request(ctx, request_context) -> ModelRequest:
 
 
 class Steering(AbstractCapability):
-    def __init__(self, take_messages, has_messages=lambda: False, prepare=None):
+    def __init__(self, take_messages, has_messages=lambda: False, prepare=None, reminder=None):
         self.take_messages = take_messages
         # A peek that consumes nothing, for waits that should hand back early.
         self.has_messages = has_messages
         # Turns a message's text into what the model is sent (the text and the
         # images it names); awaited, since that reads files.
         self.prepare = prepare
+        # Sent after a delivery's messages, never on its own and never journaled.
+        self.reminder = reminder
 
     async def take(self) -> list:
         """The pending messages, consumed, each as the model is to be sent it."""
         messages = self.take_messages()
-        if self.prepare is None:
-            return messages
-        return [await self.prepare(message) for message in messages]
+        if self.prepare is not None:
+            messages = [await self.prepare(message) for message in messages]
+        if messages and self.reminder:
+            messages = [*messages, self.reminder]
+        return messages
 
     async def before_model_request(self, ctx, request_context):
         # Append to the framework's request so tool results remain ahead of the
