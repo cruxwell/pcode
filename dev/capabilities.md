@@ -60,7 +60,6 @@ Every class in `src/pcode` that derives from
 | `ContextTracking` | `compaction.py` | `AbstractCapability` | `get_ordering`, `before_model_request`, `after_model_request` | Per-run | Publish what each request carries for the footer, `/status`, and `/compact`. |
 | `AutoCompaction` | `compaction.py` | `AbstractCapability` | `get_ordering`, `before_model_request` | Per-run, when autocompact is on and the turn uses the conversation's model | Compact history before a request that would overflow the window, including mid-turn. |
 | `AsideGuard` | `aside_guard.py` | `AbstractCapability` | `wrap_tool_execute` | Per-run, side questions only | A side question shares the conversation's capabilities, so refuse the tools that would change its plan or start workers. |
-| `AsideBudget` | `aside_guard.py` | `AbstractCapability` | `before_model_request` | Per-run, side questions only | Hitting the request limit discards the whole answer, so warn the model two requests early, appended to the kept request rather than stripped and re-added. |
 | `Browser` | `extensions/browser.py` | `Capability` | `before_tool_execute` | Extension (defined inside `_capability`) | Launch Chrome lazily on the first browser tool call, for the parent and the browser sub-agent alike. |
 
 Harness capabilities pcode uses unchanged (`LocalWorkspace`, `StepPersistence`,

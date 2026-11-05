@@ -364,8 +364,9 @@ A side question sees what the running turn is working with right now, not the
 state before the turn started, up to the last completed step. A tool call that
 has not returned yet is left out, and so is the text streaming beside it.
 
-Side questions are bounded: 12 model requests and 300 seconds each. They are not
-retried, and they do not survive exiting pcode.
+Side questions are bounded by time: 300 seconds each, with no cap on model
+requests, so one that needs to dig can finish. They are not retried, and they do
+not survive exiting pcode.
 
 When one fails or times out, the viewer shows the error and the traceback is
 appended to the session's `errors.log`, the same file failed turns write to,

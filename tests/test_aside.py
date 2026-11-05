@@ -1210,25 +1210,6 @@ def test_keys_typed_ahead_of_a_pickers_first_frame_reach_the_picker(monkeypatch)
     asyncio.run(run())
 
 
-def test_aside_budget_warns_once_two_requests_before_the_limit():
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-
-    from pcode.aside_guard import AsideBudget
-
-    async def run():
-        budget = AsideBudget(12)
-        warned = []
-        for sent in range(12):
-            request = ModelRequest(parts=[UserPromptPart("q")])
-            ctx = SimpleNamespace(messages=[request], usage=SimpleNamespace(requests=sent))
-            await budget.before_model_request(ctx, SimpleNamespace(messages=[request]))
-            warned.append(len(request.parts) > 1)
-        # The 11th request, leaving it and the 12th.
-        assert warned == [False] * 10 + [True, False]
-
-    asyncio.run(run())
-
-
 def test_a_usage_limit_is_not_reported_as_a_provider_failure():
     from pydantic_ai.exceptions import UsageLimitExceeded
 

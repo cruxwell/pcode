@@ -457,8 +457,8 @@ class AgentRuntime:
         `framing` turns `question` into the message sent, in place of the side
         question or follow-up framing; a thread's summary is asked that way.
         """
-        from pcode.aside import ASIDE_REQUEST_LIMIT, framed, framed_follow_up
-        from pcode.aside_guard import AsideBudget, AsideGuard
+        from pcode.aside import framed, framed_follow_up
+        from pcode.aside_guard import AsideGuard
 
         agent = self.agent
         inherit = after is not None and not fresh and model is None and settings is None
@@ -478,11 +478,7 @@ class AgentRuntime:
         joined = bool(messages) and isinstance(messages[-1], ModelRequest)
         frame = framing or (framed_follow_up if after is not None else framed)
         pending = [frame(question)]
-        capabilities = [
-            AsideGuard(),
-            AsideBudget(ASIDE_REQUEST_LIMIT),
-            TokenAccounting(record=self.totals.add),
-        ]
+        capabilities = [AsideGuard(), TokenAccounting(record=self.totals.add)]
         if joined:
             capabilities.append(Steering(lambda: [pending.pop()] if pending else []))
         conversation_id = self._model_conversation(model, "btw")
@@ -510,7 +506,8 @@ class AgentRuntime:
                     toolsets=[self.mcp.live()],
                     conversation_id=conversation_id,
                     capabilities=capabilities,
-                    usage_limits=UsageLimits(request_limit=ASIDE_REQUEST_LIMIT),
+                    # Explicit: left out, the library's 50-request default applies.
+                    usage_limits=UsageLimits(request_limit=None),
                     **other,
                 ) as events,
             ):

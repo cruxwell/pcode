@@ -26,8 +26,8 @@ wrote the first version of this note on that false premise.
   lost. It rides only requests that carry steering, after the history, so it
   costs nothing otherwise and leaves the cached prefix alone. The journal keeps
   only the user's own text.
-- **Side-question framing** (`pcode.aside.ASIDE_FRAMING`): says the user saw
-  assistant text and tool calls, never thinking, and names the request budget.
+- **Side-question framing** (`pcode.aside.ASIDE_FRAMING`): says the user may
+  not see thinking, so don't assume they did.
 
 ## Side questions that "failed with a model API error"
 
@@ -38,13 +38,13 @@ connectivity.` Neither was a provider error. Both asked for investigation
 12-request cap for side questions (`ASIDE_REQUEST_LIMIT`), which throws away
 everything the run found.
 
-- `error_message` now names a usage limit as one, not a provider failure, and a
-  side question adds what to do instead.
-- `AsideBudget` (in `pcode.aside_guard`) warns the side agent two requests
-  before the cap so it answers with what it has. It appends to the request the
-  history keeps, the way steering does, rather than using Harness's
-  `WarnNearLimits`, which strips and re-adds its warning each request and so
-  rewrites the tail the cache and the Claude SDK's warm-session match depend on.
+- `error_message` now names a usage limit as one, not a provider failure.
+- The side-question request cap is gone; the 300-second deadline is the only
+  bound. That matches the worker, whose cap was dropped for the same reason
+  (commit 18c1579): the run is visible and cancellable, and a cap discarded the
+  answer of a run that was still making progress. An early version of this fix
+  warned the agent two requests before the cap instead; removing the cap made
+  that unnecessary.
 
 ## Not done
 
