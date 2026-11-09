@@ -75,7 +75,11 @@ def test_worker_inherits_tools_instructions_guards_and_reports_edits(tmp_path):
             "integrate_task",
             "discard_task",
             "list_task_worktrees",
-        }
+            "answer_worker",
+            "message_worker",
+            "stop_worker",
+            "list_workers",
+        } | {"ask_parent"}
         assert {"write_file", "edit_file", "shell", "write_plan", "extension_tool"} <= names
         assert "EXTENSION_GUIDANCE" in info.instructions
         assert "REPOSITORY_GUIDANCE" in info.instructions

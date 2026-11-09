@@ -3,6 +3,7 @@
 import asyncio
 import fcntl
 import json
+import re
 import os
 import signal
 import subprocess
@@ -64,12 +65,16 @@ def results(messages):
 
 
 def content(part):
+    """A delegate result without the worker id it is labelled with (tested in test_worker_channel)."""
     value = part.content
     if isinstance(value, str):
+        value = re.sub(r"^\[worker w\d+\]\n", "", value)
         try:
-            return json.loads(value)
+            value = json.loads(value)
         except ValueError:
-            pass
+            return value
+    if isinstance(value, dict):
+        value = {k: v for k, v in value.items() if k != "worker_id"}
     return value
 
 

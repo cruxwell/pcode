@@ -64,6 +64,7 @@ from pcode.runtime import (
     ThinkingDelta,
     ToolStarted,
     ToolSummary,
+    WorkerStatus,
 )
 from pcode.shell import ShellPreview
 from pcode.tool_display import (
@@ -84,6 +85,7 @@ from pcode.tool_display import (
     target,
 )
 from pcode.turn import TurnContext
+from pcode.worker_channel import WorkerUpdate
 
 if TYPE_CHECKING:
     from pcode.live import AgentRuntime
@@ -167,6 +169,8 @@ class EventTranslator:
                 return self.on_child_output(event)
             case ChildActivity():
                 return self.on_child_activity(event)
+            case WorkerUpdate():
+                return iter((self.on_worker_update(event),))
             case CommandStartedEvent() | CommandOutputEvent() | CommandFinishedEvent():
                 return self.on_shell(event)
             case PartStartEvent():
@@ -305,6 +309,18 @@ class EventTranslator:
                 else:
                     self.child_tools.pop(event.child.call_id, None)
                 yield event.child
+
+    def on_worker_update(self, event: WorkerUpdate) -> WorkerStatus:
+        return WorkerStatus(
+            call_id=event.call_id,
+            worker_id=event.worker_id,
+            question=event.question,
+            fallback=event.fallback,
+            answered=event.answered,
+            tokens=event.tokens,
+            review=event.review,
+            status=event.status,
+        )
 
     def on_shell(
         self, event: CommandStartedEvent | CommandOutputEvent | CommandFinishedEvent

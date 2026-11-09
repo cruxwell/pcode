@@ -69,6 +69,7 @@ from pcode.runtime import (
     ThinkingDelta,
     ToolStarted,
     ToolSummary,
+    WorkerStatus,
 )
 from pcode.sessions import SavedSession, is_open
 from pcode.ui import Activity, create_prompt
@@ -87,6 +88,7 @@ SAMPLES = [
     PlanPreview(None),
     ChildPlan("c2", [{"content": "Child step", "status": "pending"}]),
     ChildText("c2", "child prose", thinking=True, start=True),
+    WorkerStatus("c2", "w1", question="Which path?", fallback="both", tokens=1200),
     CommandOutput("c3", "make test", "line 1\nline 2"),
     EditCompleted("c4", "a.py", "edit", "@@ -1 +1 @@\n-a\n+b", 1, 1),
     # Its own `kind` field once overwrote the event name on the wire.

@@ -86,6 +86,7 @@ from pcode.runtime import (
     PlanPreview,
     ToolStarted,
     ToolSummary,
+    WorkerStatus,
 )
 from pcode.sessions import SavedSession, SessionError
 from pcode.shell_mode import ShellRun, reduce_result, shell_exchange
@@ -1047,7 +1048,15 @@ class AgentRuntime:
                     if isinstance(event, ToolStarted):
                         tools_started = True
                     if isinstance(
-                        event, (PlanPreview, ChildPlan, ChildText, CommandOutput, EditPreview)
+                        event,
+                        (
+                            PlanPreview,
+                            ChildPlan,
+                            ChildText,
+                            WorkerStatus,
+                            CommandOutput,
+                            EditPreview,
+                        ),
                     ):
                         # Unexecuted arguments and a sub-agent's transient plan
                         # and prose must never enter replay/tree history.

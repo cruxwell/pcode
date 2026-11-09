@@ -36,6 +36,7 @@ from pcode.runtime import (
     ThinkingDelta,
     ToolStarted,
     ToolSummary,
+    WorkerStatus,
 )
 
 # Bumped on any incompatible message change. An editable install lets a host
@@ -65,6 +66,7 @@ EVENT_TYPES = {
         PlanPreview,
         ChildPlan,
         ChildText,
+        WorkerStatus,
         CommandOutput,
         EditCompleted,
         EditPreview,

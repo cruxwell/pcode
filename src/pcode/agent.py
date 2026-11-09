@@ -52,6 +52,7 @@ from pcode.repo_context import create_repo_context
 from pcode.shell_tools import JobShell
 from pcode.strict_tools import create_strict_tools
 from pcode.tool_output_limits import create_tool_output_limits
+from pcode.worker_channel import ChildChannel
 from pcode.workspace import WorkspaceGuard
 
 if TYPE_CHECKING:
@@ -342,6 +343,8 @@ def _delegation(
             replace(output_limits),
             # A remote host's turn budget counts its sub-agents' work too.
             *turn_limits(),
+            # ask_parent, parent messages and the report format, for every delegate.
+            ChildChannel(),
         ],
     )
 

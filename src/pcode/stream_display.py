@@ -19,6 +19,7 @@ from pcode.runtime import (
     ThinkingDelta,
     ToolStarted,
     ToolSummary,
+    WorkerStatus,
 )
 from pcode.terminal_notify import TabProgress, terminal_fd
 from pcode.terminal_text import safe_text
@@ -60,7 +61,15 @@ class PrintedReply:
     """
 
     # Live-panel state, with no live panel to show it.
-    SKIPPED = (ThinkingDelta, RunStatus, PlanPreview, PlanUpdated, ChildPlan, ChildText)
+    SKIPPED = (
+        ThinkingDelta,
+        RunStatus,
+        PlanPreview,
+        PlanUpdated,
+        ChildPlan,
+        ChildText,
+        WorkerStatus,
+    )
 
     def __init__(self, stdout, *, transcript, present) -> None:
         self.stdout = stdout
@@ -168,8 +177,8 @@ def present_stream_event(event, *, output, transcript, activity, present) -> Non
     elif isinstance(event, ChildPlan):
         activity.tools.record_plan(event.call_id, event.items)
         activity.workers.record(event)
-    elif isinstance(event, ChildText):
-        # A worker's own prose feeds `/agents`; the transcript never shows it.
+    elif isinstance(event, ChildText | WorkerStatus):
+        # A worker's own prose and status feed `/agents`; the transcript never shows them.
         activity.workers.record(event)
         return
     elif isinstance(event, (ToolStarted, ToolSummary)):

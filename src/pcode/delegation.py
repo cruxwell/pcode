@@ -51,6 +51,7 @@ from pcode.tool_display import (
     subject,
     target,
 )
+from pcode.worker_channel import current_worker, notify
 
 _parent: ContextVar[RunContext | None] = ContextVar("delegation_parent", default=None)
 logger = logging.getLogger(__name__)
@@ -110,15 +111,22 @@ class ResumableAgent(WrapperAgent):
     async def run(self, user_prompt=None, *, message_history=None, capabilities=None, **kwargs):
         attempts = int(load_preferences().get("retry_attempts", SETTINGS["retry_attempts"].default))
         attempt = 0
+        handle = current_worker()
+        if message_history is None and handle is not None and handle.resume_from:
+            # `continue_worker`: the follow-up joins the worker's own history.
+            message_history = handle.resume_from
         while True:
             checkpoint = RequestCheckpoint()
             try:
-                return await self.wrapped.run(
+                result = await self.wrapped.run(
                     user_prompt,
                     message_history=message_history,
                     capabilities=[*(capabilities or ()), checkpoint],
                     **kwargs,
                 )
+                if handle is not None:
+                    handle.messages = result.all_messages()
+                return result
             except Exception as error:
                 if attempt >= attempts or checkpoint.messages is None or not transient(error):
                     raise
@@ -142,6 +150,12 @@ async def stream_child_activity(_ctx, events):
     parent = _parent.get()
     plan_items: list[dict] = []
     tools = {}
+    worker = current_worker()
+    # The child's usage can be the parent's counter; count only what it adds.
+    usage = getattr(_ctx, "usage", None)
+    baseline = usage.total_tokens if usage is not None else 0
+    # A resumed worker's count continues from its earlier runs.
+    earlier = reported = worker.tokens if worker is not None else 0
     # The child's calls by id, so its `read_tool_result` rows name what spilled.
     called: dict[str, str] = {}
     phase = ""
@@ -230,3 +244,8 @@ async def stream_child_activity(_ctx, events):
         if child is not None or activity != phase:
             await parent.emit(ChildActivity(activity=activity, child=child))
             phase = activity
+            if worker is not None and usage is not None:
+                tokens = earlier + max(0, usage.total_tokens - baseline)
+                if tokens != reported:
+                    reported = worker.tokens = tokens
+                    await notify(worker, parent, tokens=tokens)

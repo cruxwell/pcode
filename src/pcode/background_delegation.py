@@ -43,6 +43,7 @@ from pydantic_ai_harness.background_tools._capability import (
 )
 
 from pcode.steering import run_request, steering_pending, take_steering
+from pcode.worker_channel import hub_for
 
 DELEGATE = "delegate_task"
 # How often a waiting delegation checks for steering; `shell` polls as often.
@@ -68,13 +69,44 @@ class DelegatesPending(CapabilityEvent, namespace="pcode_delegation", name="pend
     count: int
 
 
-def detached_message(task_id: str) -> str:
+WAIT_ADVICE = (
+    "Do not repeat or poll it: its result will arrive automatically as a later message. "
+    "A shared-mode sub-agent is still editing the live files, so leave the files it is "
+    "working on alone until it reports."
+)
+
+
+def _named(task_id: str, worker_id: str) -> str:
+    return f"worker {worker_id}, task {task_id}" if worker_id else f"task {task_id}"
+
+
+def detached_message(task_id: str, worker_id: str = "") -> str:
     return (
-        f"The user sent a follow-up, so this delegation (task {task_id}) moved to the "
-        "background; the sub-agent is still working. Do not repeat or poll it: its result "
-        "will arrive automatically as a later message. Answer the user, continue independent "
-        "work, or end your response to wait for it. A shared-mode sub-agent is still "
-        "editing the live files, so leave the files it is working on alone until it reports."
+        f"The user sent a follow-up, so this delegation ({_named(task_id, worker_id)}) moved "
+        f"to the background; the sub-agent is still working. {WAIT_ADVICE} Answer the user, "
+        "continue independent work, or end your response to wait for it."
+    )
+
+
+def question_detached_message(task_id: str, worker_id: str = "") -> str:
+    return (
+        f"A worker asked you a question, so this delegation ({_named(task_id, worker_id)}) "
+        f"moved to the background; it is still working. {WAIT_ADVICE} The question follows; "
+        "answer it with answer_worker."
+    )
+
+
+def background_message(task_id: str, worker_id: str = "") -> str:
+    return (
+        f"Started in the background ({_named(task_id, worker_id)}). {WAIT_ADVICE} "
+        "Dispatch other independent work, talk to the user, or end your response to wait."
+    )
+
+
+def stopped_message(task_id: str, worker_id: str = "") -> str:
+    return (
+        f"The background delegation ({_named(task_id, worker_id)}) was stopped as requested "
+        "before it reported. It may have left partial changes."
     )
 
 
@@ -174,6 +206,13 @@ class BackgroundDelegation(BackgroundTools):
         task_id = call.tool_call_id
         child = _Child()
         scope = anyio.CancelScope()
+        hub = hub_for(ctx)
+        # Claimed before the child starts, so a receipt can name the worker.
+        handle = hub.claim(task_id, args) if hub is not None else None
+        worker_id = handle.id if handle is not None else ""
+
+        def stop_requested() -> bool:
+            return handle is not None and handle.stop_requested
 
         async def run() -> None:
             try:
@@ -187,12 +226,19 @@ class BackgroundDelegation(BackgroundTools):
                     child.cancelled = False
             finally:
                 child.done.set()
-                if child.detached and child.cancelled:
+                if handle is not None:
+                    handle.cancel = None
+                if child.detached and child.cancelled and not stop_requested():
                     self._live -= 1
                     _abandoned(ctx, task_id)
-            if not child.detached or child.cancelled:
+            if not child.detached:
                 return
-            if child.error is not None:
+            if child.cancelled:
+                if not stop_requested():
+                    return
+                # Stopped by `stop_worker`, not by the run ending: say so.
+                outcome = (stopped_message(task_id, worker_id),)
+            elif child.error is not None:
                 outcome = _failure(task_id, child.error)
             else:
                 outcome = _format_background_result(DELEGATE, task_id, child.result)
@@ -207,15 +253,25 @@ class BackgroundDelegation(BackgroundTools):
         # Steering already pending still starts the child (steering never skips
         # a requested tool); the first check below detaches it at once.
         self._task_group.start_soon(run, name=f"delegation ({task_id})")
+        background = bool(args.get("run_in_background"))
         try:
             while not child.done.is_set():
                 # No await between this check and `detached`: the child either
                 # finished first and is returned below, or sees the flag.
-                if steering_pending(ctx):
+                # A worker's question needs a parent model request, which a
+                # waiting call would block, so it detaches like steering.
+                question = hub is not None and hub.has_undelivered()
+                if background or question or steering_pending(ctx):
                     child.detached = True
                     self._live += 1
+                    if handle is not None:
+                        handle.cancel = scope.cancel
                     await ctx.emit(DelegationDetached())
-                    return detached_message(task_id)
+                    if background:
+                        return background_message(task_id, worker_id)
+                    if question:
+                        return question_detached_message(task_id, worker_id)
+                    return detached_message(task_id, worker_id)
                 with anyio.move_on_after(POLL_SECONDS):
                     await child.done.wait()
         except BaseException:
@@ -262,6 +318,9 @@ class BackgroundDelegation(BackgroundTools):
         """
         with anyio.move_on_after(POLL_SECONDS):
             _deliver(ctx, await self._outcomes.receive())
+            return True
+        if (hub := hub_for(ctx)) is not None and (questions := hub.take_questions()):
+            ctx.enqueue(*questions)
             return True
         if steering_pending(ctx) and (messages := await take_steering(ctx)):
             ctx.enqueue(*messages)

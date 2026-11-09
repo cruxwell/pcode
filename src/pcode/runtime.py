@@ -167,6 +167,23 @@ class ChildText:
     start: bool = False
 
 
+@dataclass(frozen=True)
+class WorkerStatus:
+    """Display-only change to a delegated worker's dashboard row, keyed by its delegate call.
+
+    Never journaled, like `ChildPlan`. Fields left at None did not change.
+    """
+
+    call_id: str
+    worker_id: str
+    question: str | None = None
+    fallback: str | None = None
+    answered: bool | None = None
+    tokens: int | None = None
+    review: str | None = None
+    status: str | None = None
+
+
 Event = (
     Message
     | ToolStarted
@@ -180,6 +197,7 @@ Event = (
     | PlanPreview
     | ChildPlan
     | ChildText
+    | WorkerStatus
     | CommandOutput
     | EditCompleted
     | EditPreview
