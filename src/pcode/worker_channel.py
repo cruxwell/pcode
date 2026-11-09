@@ -58,28 +58,18 @@ REPORT_HEADINGS = (
 )
 
 CHILD_INSTRUCTIONS = (
-    "You are a delegated worker. Your parent agent reads only your final message, so end "
-    "it with a report under these Markdown headings, writing 'None' where one is empty: "
-    + ", ".join(f"`## {heading}`" for heading in REPORT_HEADINGS)
-    + ". Under Verified list only what you actually ran or checked; anything you believe "
-    "but did not check goes under Not verified. Under Decisions list choices other workers "
-    "must stay consistent with. If the brief is ambiguous in a way that changes the result, "
-    "call `ask_parent` instead of guessing, and give the fallback you will use if no answer "
-    "comes. Messages from the parent can arrive while you work; follow them."
+    "The parent reads only your final message; end it with a report under these headings "
+    "('None' if empty): "
+    + ", ".join(REPORT_HEADINGS)
+    + ". Verified: only what you ran or checked. Decisions: choices other workers must "
+    "follow. If ambiguity would change the "
+    "result, call `ask_parent` rather than guess."
 )
 
 PARENT_INSTRUCTIONS = (
-    "\nEach delegation gets a worker id (w1, w2, ...) named in its result. Write a brief "
-    "the worker can act on alone: put the goal in `task`, and use `context` (files, earlier "
-    "decisions), `boundaries` (what not to touch) and `done_when` (how it knows it is "
-    "finished) when they apply. `include_reports` hands earlier workers' reports to a "
-    "dependent step; `plan_step` links the worker to one of your plan step ids; "
-    "`run_in_background` returns at once so you can dispatch independent workers and keep "
-    "talking to the user; `continue_worker` resumes a finished shared-mode worker with its "
-    "own context for a follow-up. A worker may ask you a question: answer it with "
-    "`answer_worker`, asking the user first when only they can decide. Steer a running "
-    "worker with `message_worker` and stop one with `stop_worker`. When the user writes "
-    "'Answer for w3: ...' or 'Message for w3: ...', relay it with the matching tool."
+    "\nResults name a worker id (w1, ...). Answer a worker's question with `answer_worker`, "
+    "asking the user if only they can decide. Relay the user's 'Answer for w3: ...' or "
+    "'Message for w3: ...' with `answer_worker` or `message_worker`."
 )
 
 
@@ -385,16 +375,12 @@ def labelled(handle: WorkerHandle, result: Any) -> Any:
 async def ask_parent(
     question: str, fallback: str = "", wait_seconds: int = ASK_WAIT_SECONDS
 ) -> str:
-    """Ask the parent agent a question and wait for its answer.
-
-    Use it when the brief is ambiguous in a way that changes the result, rather
-    than guessing. The parent may need to ask the user, so keep working on
-    anything that does not depend on the answer before asking.
+    """Ask the parent a question and wait for the answer; do independent work first.
 
     Args:
-        question: The question, with the options you see and what each implies.
-        fallback: What you will do if no answer arrives in time.
-        wait_seconds: How long to wait for an answer (30 to 3600).
+        question: The question and the options you see.
+        fallback: What you will do if no answer comes in time.
+        wait_seconds: How long to wait (30 to 3600).
     """
     handle = current_worker()
     if handle is None:

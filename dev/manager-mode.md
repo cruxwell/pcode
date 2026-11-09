@@ -88,15 +88,17 @@ workspace mode, with a pending-question panel. Keys: enter transcript,
 
 ## /manager (bundled extension `extensions/manager.py`)
 
+- Opt-in (`DEFAULT_ENABLED = False`): its tools and instructions would sit in
+  every session's prompt otherwise.
 - `/manager [on|off|status]`; tools `enter_manager_mode(reason)` and
   `exit_manager_mode()` are always registered (stable tool list), so the model
   can switch the mode on itself for large, separable work and tell the user.
 - State in `.pcode/manager/.active`, survives `/reload` and restarts.
 - Reminder once per run (like plan mode, but not repeated on the run's later
   requests: background results and questions arrive as prompts too).
-  Guardrail: `edit_file`/`write_file` outside `.pcode/` raise `ModelRetry`.
-  `shell` is not policed; the reminder asks for read-only commands.
-- Requires `context`/`done_when` on `delegate_task`.
+  No edit guardrail and no required brief fields: what to delegate and what
+  to edit itself is the model's call (an earlier version blocked edits and
+  forced `context`/`done_when`; that cost prompt and judgement for little gain).
 - Review gate: a plan step linked to a worker cannot be completed until
   `review_worker(worker_id, verdict, note)` accepted it.
 - Preset: `manager_worker_model` default for `delegate_task.model`, worker

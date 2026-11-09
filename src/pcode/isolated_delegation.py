@@ -311,15 +311,13 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
             purpose: What the sub-agent is doing, at most 8 words, present tense
                 (e.g. "fixing the /btw cache prefix"). It labels the delegation
                 in the user's task list; the sub-agent never sees it.
-            context: Background the worker needs: relevant files, earlier decisions.
-            boundaries: What the worker must not touch or change.
-            done_when: How the worker knows it is finished, e.g. which test passes.
-            include_reports: Worker ids whose final reports are added to the brief.
-            plan_step: The id of the plan step this worker carries out, if any.
-            run_in_background: Return at once with the worker id; the result arrives
-                as a later message. Use it to run independent workers in parallel.
-            continue_worker: Resume this finished shared-mode worker with its own
-                history; `task` is the follow-up instruction.
+            context: Relevant files and earlier decisions.
+            boundaries: What not to touch.
+            done_when: How the worker knows it is finished.
+            include_reports: Worker ids whose reports to add to the brief.
+            plan_step: Your plan step id this worker carries out.
+            run_in_background: Return at once so independent workers run in parallel.
+            continue_worker: Resume this finished shared-mode worker; `task` is the follow-up.
         """
         # `purpose` is display-only: the event layer reads it from the call's arguments.
         # `run_in_background` is acted on by `BackgroundDelegation`, around this call.
@@ -532,7 +530,7 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
             raise ModelRetry(str(error)) from error
 
     async def answer_worker(self, ctx: RunContext, worker_id: str, answer: str) -> str:
-        """Answer the question a running worker asked with ask_parent; it resumes at once."""
+        """Answer a worker's ask_parent question."""
         handle = self.hub.require(worker_id)
         question = handle.question
         if question is None:
@@ -547,7 +545,7 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
         return f"Answered worker {handle.id}."
 
     async def message_worker(self, ctx: RunContext, worker_id: str, message: str) -> str:
-        """Send a running worker a message; it sees it before its next model request."""
+        """Send a running worker a message, read before its next step."""
         handle = self.hub.require(worker_id)
         if not handle.running:
             raise ModelRetry(
@@ -558,7 +556,7 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
         return f"Queued for worker {handle.id}; it reads it before its next step."
 
     async def stop_worker(self, ctx: RunContext, worker_id: str) -> str:
-        """Stop a worker running in the background. Its partial changes stay where they are."""
+        """Stop a background worker; its partial changes stay."""
         handle = self.hub.require(worker_id)
         if not handle.running:
             return f"Worker {handle.id} is already {handle.status}."
@@ -572,7 +570,7 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
         return f"Stopping worker {handle.id}; a notice arrives when it has stopped."
 
     async def list_workers(self, ctx: RunContext) -> list[dict]:
-        """List this session's workers: id, purpose, status, plan step, tokens and review."""
+        """List this session's workers and their status."""
         return [handle.summary() for handle in self.hub.handles()]
 
     async def list_task_worktrees(self) -> list[dict]:

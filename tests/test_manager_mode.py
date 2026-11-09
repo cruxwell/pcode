@@ -171,36 +171,14 @@ def test_only_the_main_agent_switches_the_mode(api):
     assert call(api, "enter_manager_mode", {"reason": "x"}) == {"reason": "x"}
 
 
-def test_edits_are_blocked_except_under_dot_pcode(api, tmp_path):
-    args = {"path": "src/app.py", "content": "x"}
-    assert call(api, "write_file", args) == args  # off: nothing is blocked
+def test_edits_and_bare_briefs_are_left_to_the_models_judgement(api):
     api.commands["/manager"]("on")
-    with pytest.raises(ModelRetry, match="delegate"):
-        call(api, "edit_file", {"path": "src/app.py"})
-    with pytest.raises(ModelRetry):
-        call(api, "write_file", {"path": str(tmp_path / "README.md")})
-    with pytest.raises(ModelRetry):
-        call(api, "write_file", {"path": ".pcode/../src/app.py"})
-    for path in (".pcode/manager/decisions.md", str(tmp_path / ".pcode/plans/p.md")):
-        assert call(api, "write_file", {"path": path}) == {"path": path}
-    # Reads and workers are untouched.
-    assert call(api, "read_file", {"path": "src/app.py"}) == {"path": "src/app.py"}
-    worker = context(agent="worker")
-    assert call(api, "edit_file", {"path": "src/app.py"}, worker) == {"path": "src/app.py"}
-
-
-def test_delegations_need_a_brief(api):
-    bare = {"agent_name": "worker", "task": "Add export"}
-    assert call(api, "delegate_task", bare) == bare
-    api.commands["/manager"]("on")
-    with pytest.raises(ModelRetry, match="done_when"):
-        call(api, "delegate_task", bare)
-    with pytest.raises(ModelRetry):
-        call(api, "delegate_task", {**bare, "context": "  "})
-    assert call(api, "delegate_task", {**bare, "context": "see src/x.py"})["context"]
-    assert call(api, "delegate_task", BRIEF) == BRIEF
-    follow_up = {**bare, "continue_worker": "w1"}
-    assert call(api, "delegate_task", follow_up) == follow_up
+    for name, args in (
+        ("edit_file", {"path": "src/app.py"}),
+        ("write_file", {"path": "README.md", "content": "x"}),
+        ("delegate_task", {"agent_name": "worker", "task": "Add export"}),
+    ):
+        assert call(api, name, args) == args
 
 
 def test_worker_model_is_injected_when_none_was_given(api):

@@ -195,8 +195,9 @@ ask in the conversation: "stop w2" (for a worker running in the background),
 mode the agent marks a worker's result accepted or rejected after checking it,
 which the dashboard shows as `Done · reviewed` or `Done · rejected`.
 
-[Manager mode](manager.md) builds on all of this for large tasks: the agent
-only coordinates, and every result is checked before it counts.
+[Manager mode](manager.md) (opt-in, `/extensions on manager`) builds on all of
+this for large tasks: the agent coordinates workers and checks every result
+before it counts.
 
 ### Sub-agents on other models
 

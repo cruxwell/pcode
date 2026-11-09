@@ -111,4 +111,4 @@ See [sub-agents](../tools.md#sub-agents-on-other-models) and
 For a task big enough to need several workers, `/manager` turns the main agent
 into a coordinator: it splits the work, briefs each worker, checks every result
 before ticking off its step, and keeps a log of decisions the workers must
-share. See [manager mode](../manager.md).
+share. It's opt-in (`/extensions on manager`). See [manager mode](../manager.md).

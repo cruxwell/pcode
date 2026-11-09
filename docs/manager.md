@@ -13,6 +13,9 @@ checks what comes back, and keeps the overall picture. The workers do the
 reading and editing in their own fresh contexts, so the main conversation only
 holds plans, decisions and results.
 
+Manager mode is opt-in. Turn it on once with `/extensions on manager`; that
+adds `/manager` and lets the agent switch the mode on by itself.
+
 ```text
 ❯ /manager on migrate the billing, auth and search services to the new config loader
 ```
@@ -28,20 +31,15 @@ It pays off when the work splits into pieces that don't touch each other much:
 
 It isn't worth it for a small fix, or for tightly coupled changes where every
 piece depends on the others; one agent working straight through does those
-better. The agent knows this too: in any session it can switch manager mode on
-by itself when a task looks large and separable, and it tells you when it does
+better. The agent knows this too: once the extension is on, it can switch
+manager mode on by itself when a task looks large and separable, and it tells you when it does
 and why. Saying "don't use manager mode for this" works as well as `/manager off`.
 
 ## What changes while it's on
 
-- **The agent delegates instead of editing.** It can still read, search and run
-  commands to plan and to verify, but its file-editing tools refuse anything
-  outside its own notes under `.pcode/`, so changes go through workers. Shell
-  commands aren't policed; the agent is told to keep them read-only.
-- **Every brief has to say enough.** A worker starts with none of the
-  conversation, so each delegation carries context (files, earlier decisions)
-  or a "done when" condition, usually both, plus boundaries for what not to
-  touch.
+- **The agent coordinates.** It hands substantial work to workers so its own
+  context stays on planning and checking. Nothing stops it from editing: a
+  one-line fix or a small follow-up it makes itself, at its own judgement.
 - **Results get checked.** The agent reads each worker's diff, runs a focused
   test or asks a reviewer worker, then marks the worker accepted or rejected.
   A plan step linked to a worker can't be ticked off until that worker is
@@ -106,5 +104,5 @@ Manager mode is saved in `.pcode/manager/`, so it stays on across `/reload` and
 restarts until it's switched off. The worker list and the token count behind
 the budget live in memory, so they start over after a `/reload` or restart. It works alongside [`/plan`](commands.md):
 plan first, then let the manager carry the plan out. Side questions and the
-workers themselves are never affected. To remove it entirely, including the
-agent's ability to switch it on, run `/extensions off manager`.
+workers themselves are never affected. `/extensions off manager` removes it
+again, including the agent's ability to switch it on.

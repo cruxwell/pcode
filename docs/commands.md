@@ -105,8 +105,8 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   [Planning in Obsidian](obsidian.md) for where vault plans go and feedback from Obsidian.
 - `/manager [on [request]|off|status]`: make the agent a coordinator that hands the
   implementation to workers, checks each result, and keeps a decisions log, for large
-  tasks that split into loosely coupled pieces. The agent can also switch it on itself
-  and tells you when it does. `/manager status` lists the workers, their reviews and
+  tasks that split into loosely coupled pieces. Opt-in: `/extensions on manager` adds
+  it, after which the agent can also switch it on itself and tells you when it does. `/manager status` lists the workers, their reviews and
   tokens, and the budget used. See [Manager mode](manager.md).
 - `/reflect [--project|--all] [focus]`: propose an instruction, skill or extension change
   from what went wrong in this session (or, with a flag, across this project's or every
