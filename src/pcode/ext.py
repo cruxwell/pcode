@@ -586,8 +586,13 @@ def load_extensions(
     workspace: Path, ui: ExtensionUI | None = None, *, session_dir: Path | None = None
 ) -> LoadedExtensions:
     """Discover and load every extension; failures are recorded, not raised."""
+    from pcode import isolated_delegation
+
     workspace = workspace.resolve()
     ui = ui or ExtensionUI()
+    # A mode that forces worker isolation (`/manager`) sets it again in its own
+    # setup, so turning that extension off and reloading cannot leave it forced.
+    isolated_delegation.force_isolation = False
     off, on = name_list("extensions_off"), name_list("extensions_on")
     remote = remote_profile.active() is not None
     if remote:

@@ -259,3 +259,16 @@ def test_report_key_jumps_to_the_last_prose():
         browser.select(force=True)
         browser.show_report()
         assert "Final report" in str(browser.detail.renderables[browser.detail._anchor].markup)
+
+
+def test_a_continued_worker_counts_its_tokens_once():
+    workers = Workers()
+    workers.record(started("d1"))
+    workers.record(WorkerStatus("d1", "w1", tokens=1000, status="done"))
+    # Continued under a new call: its count already includes the first run.
+    workers.record(started("d2"))
+    workers.record(WorkerStatus("d2", "w1", tokens=1500, status="running"))
+    workers.record(started("d3"))
+    workers.record(WorkerStatus("d3", "w2", tokens=200))
+    assert workers.tokens() == 1700
+    assert workers.get("d1").state() == "Done" and workers.get("d2").running

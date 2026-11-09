@@ -1,12 +1,14 @@
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from pydantic_ai import ModelRetry
 from pydantic_ai.messages import ModelRequest, ToolReturnPart, UserPromptPart
 
 import pcode.isolated_delegation as iso
+from pcode import worker_channel
 from pcode.commands import CommandRegistry
 from pcode.ext import ExtensionAPI
 from pcode.extensions import manager
@@ -59,7 +61,7 @@ def api(tmp_path):
     return api
 
 
-def context(hub=None, agent="pcode", messages=()):
+def context(hub=None, agent="pcode", messages=(), run_id=None):
     events = []
 
     async def emit(event):
@@ -72,6 +74,7 @@ def context(hub=None, agent="pcode", messages=()):
         messages=list(messages),
         emit=emit,
         events=events,
+        run_id=run_id or uuid4().hex,
     )
 
 
@@ -80,10 +83,10 @@ def call(api, name, args, ctx=None):
     return asyncio.run(api.guard(ctx, call=None, tool_def=SimpleNamespace(name=name), args=args))
 
 
-def remind(api, parts=None, agent="pcode"):
+def remind(api, parts=None, agent="pcode", run_id=None):
     parts = parts or [UserPromptPart("hi")]
     request = ModelRequest(parts=list(parts))
-    ctx = context(agent=agent, messages=[request])
+    ctx = context(agent=agent, messages=[request], run_id=run_id)
     asyncio.run(api.hook(ctx, SimpleNamespace(messages=[request])))
     return [p.content for p in request.parts[len(parts) :]]
 
@@ -211,7 +214,7 @@ def test_worker_model_is_injected_when_none_was_given(api):
     assert "model" not in call(api, "delegate_task", reviewer)
 
 
-def test_budget_refuses_new_delegations(api):
+def test_budget_refuses_new_delegations(api, monkeypatch):
     hub = WorkerHub()
     finished_worker(hub, "c1", tokens=150_000)
     ctx = context(hub)
@@ -226,7 +229,9 @@ def test_budget_refuses_new_delegations(api):
     assert "Worker tokens: 210,000 of 200,000" in api.notes[-1]
     assert "w1 done" in api.notes[-1] and "w2 done" in api.notes[-1]
     # A worker the hub has trimmed from its history still counts.
-    del hub._handles["w1"]
+    monkeypatch.setattr(worker_channel, "HISTORY", 1)
+    hub._trim()
+    assert hub.get("w1") is None
     with pytest.raises(ModelRetry, match="210,000 used"):
         call(api, "delegate_task", BRIEF, ctx)
     # Status sees the workers with the mode off too.
@@ -274,6 +279,27 @@ def test_review_worker_gates_linked_plan_steps(api):
     assert call(api, "write_plan", plan, ctx) == plan
 
 
+def test_the_gate_follows_the_newest_attempt_and_any_running_one(api):
+    hub = WorkerHub()
+    ctx = context(hub)
+    api.commands["/manager"]("on")
+    complete = {"task_id": "step-a", "status": "completed"}
+    first = finished_worker(hub, "c1", plan_step="step-a")
+    first.review = "rejected"
+    second = finished_worker(hub, "c2", plan_step="step-a")
+    second.review = "accepted"
+    # An accepted retry clears the earlier rejection.
+    assert call(api, "update_task_status", complete, ctx) == complete
+    # Continuing the rejected one for rework makes it the newest, and running.
+    first.messages = ["history"]
+    hub.claim("c3", {"task": "rework", "continue_worker": "w1", "plan_step": "step-a"})
+    with pytest.raises(ModelRetry, match="w1"):
+        call(api, "update_task_status", complete, ctx)
+    first.status = "done"
+    with pytest.raises(ModelRetry, match="review pending"):
+        call(api, "update_task_status", complete, ctx)
+
+
 def test_reminder_carries_decisions_and_lessons_once_per_turn(api, tmp_path):
     api.commands["/manager"]("on")
     [note] = remind(api)
@@ -292,6 +318,8 @@ def test_reminder_carries_decisions_and_lessons_once_per_turn(api, tmp_path):
     assert remind(api, [ToolReturnPart("t", "ok", "id")]) == []
     assert remind(api, [UserPromptPart("hi"), UserPromptPart(note)]) == []
     assert remind(api, agent="worker") == []
+    # Later requests in the same run (background results, questions) get nothing.
+    assert remind(api, run_id="turn-1") and remind(api, run_id="turn-1") == []
     api.commands["/manager"]("status")
     assert "Worker isolation: on." in api.notes[-1]
 

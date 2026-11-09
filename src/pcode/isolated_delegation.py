@@ -14,6 +14,7 @@ from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 import anyio
 from pydantic_ai import ModelRetry, RunContext
@@ -28,9 +29,11 @@ from pcode.preferences import SETTINGS, load_preferences
 from pcode.steering import run_request
 from pcode.task_worktrees import TaskWorktrees
 from pcode.worker_channel import (
+    NOTIFY_SECONDS,
     PARENT_INSTRUCTIONS,
     WorkerHub,
     bind_worker,
+    current_worker,
     labelled,
     notify,
     render_brief,
@@ -327,8 +330,11 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
             "plan_step": plan_step,
             "model": model,
             "continue_worker": continue_worker,
+            "include_reports": include_reports,
+            "workspace_mode": workspace_mode,
         }
-        handle = self.hub.claim(ctx.tool_call_id or "", arguments)
+        # Validates everything that can refuse the call before changing any state.
+        handle = self.hub.claim(ctx.tool_call_id or uuid4().hex, arguments)
         reports = [self.hub.require(worker_id) for worker_id in include_reports or ()]
         brief = render_brief(
             task, context=context, boundaries=boundaries, done_when=done_when, reports=reports
@@ -336,8 +342,11 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
         token = bind_worker(handle)
         outcome = _outcome.set(None)
         handle.status = "running"
-        await notify(handle, ctx, status="running")
+        handle.started = True
+        handle.previous = None
+        unread = 0
         try:
+            await notify(handle, ctx, status="running")
             if agent_name == "worker" and self.worker_slots is not None:
                 async with self.worker_slots:
                     result = await self._delegate(ctx, agent_name, brief, workspace_mode, model)
@@ -357,18 +366,25 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
             unbind_worker(token)
             handle.resume_from = None
             handle.question = None
+            unread = len(handle.inbox)
             handle.inbox.clear()
             if handle.status != "running":
-                with anyio.CancelScope(shield=True):
-                    await notify(handle, ctx, status=handle.status)
-        return labelled(handle, result)
+                with anyio.move_on_after(NOTIFY_SECONDS, shield=True):
+                    await notify(handle, ctx, status=handle.status, tokens=handle.tokens)
+        result = labelled(handle, result)
+        if unread and isinstance(result, str):
+            result += (
+                f"\n\n[pcode] {unread} message(s) sent with message_worker arrived after the "
+                "worker's last step and were not read."
+            )
+        return result
 
     async def _delegate(self, ctx, agent_name, task, workspace_mode, model):
         await self._add_model(agent_name, model)
         isolated = workspace_mode == "isolated" or (
             workspace_mode == "auto" and agent_name == "worker" and isolation_enabled()
         )
-        handle = self.hub.for_call(ctx.tool_call_id or "")
+        handle = current_worker()
         if handle is not None and handle.resume_from is not None:
             # A resumed worker carries on in the workspace it worked in: shared.
             isolated = False

@@ -181,18 +181,19 @@ which is cheaper than briefing a new one from scratch. Resuming works for
 workers that shared the session's checkout, not isolated ones.
 
 **Workers ask instead of guessing.** When a brief is ambiguous in a way that
-changes the result, a worker can ask the agent a question and keep going on
-what doesn't depend on the answer. The agent answers it, or asks you first if
-only you can decide. If nobody answers in time, the worker uses the fallback it
+changes the result, a worker can ask the agent a question. It does whatever
+doesn't depend on the answer first, then waits. The agent answers it, or asks
+you first if only you can decide. If nobody answers in time, the worker uses the fallback it
 named and notes the assumption in its report.
 
 **You can step in.** In `/agents`, a worker waiting on a question is marked
 `? asks parent`. Press `a` to answer it or `m` to send any worker a message:
 both put `Answer for w3: ` or `Message for w3: ` in your prompt, and the agent
 relays what you type. `r` shows a finished worker's report. You can also just
-ask in the conversation: "stop w2", "tell w1 to skip the migration", "what
-are the workers doing?". The agent can mark a worker's result accepted or
-rejected after checking it, which the dashboard shows as `done · reviewed`.
+ask in the conversation: "stop w2" (for a worker running in the background),
+"tell w1 to skip the migration", "what are the workers doing?". In manager
+mode the agent marks a worker's result accepted or rejected after checking it,
+which the dashboard shows as `Done · reviewed` or `Done · rejected`.
 
 [Manager mode](manager.md) builds on all of this for large tasks: the agent
 only coordinates, and every result is checked before it counts.

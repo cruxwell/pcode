@@ -92,13 +92,20 @@ workspace mode, with a pending-question panel. Keys: enter transcript,
   `exit_manager_mode()` are always registered (stable tool list), so the model
   can switch the mode on itself for large, separable work and tell the user.
 - State in `.pcode/manager/.active`, survives `/reload` and restarts.
-- Per-turn reminder (like plan mode). Guardrail: `edit_file`/`write_file`
-  raise `ModelRetry("delegate this")`; reads, search and read-only shell stay.
+- Reminder once per run (like plan mode, but not repeated on the run's later
+  requests: background results and questions arrive as prompts too).
+  Guardrail: `edit_file`/`write_file` outside `.pcode/` raise `ModelRetry`.
+  `shell` is not policed; the reminder asks for read-only commands.
 - Requires `context`/`done_when` on `delegate_task`.
 - Review gate: a plan step linked to a worker cannot be completed until
   `review_worker(worker_id, verdict, note)` accepted it.
 - Preset: `manager_worker_model` default for `delegate_task.model`, worker
   isolation forced on for the session when `worktree` is on, a token budget
   (`manager_token_budget`) that refuses new delegations once spent.
-- Plan, decisions and lessons live in `.pcode/manager/`; lessons are loaded
-  into the reminder, decisions into every brief.
+- Decisions live in the workspace's `.pcode/manager/` (per task); lessons in
+  the main checkout's (`repo_scope`), so they outlive a session worktree. Both
+  are loaded into the reminder.
+- `force_isolation` is reset by `load_extensions` and set again by the
+  extension's setup, so `/extensions off manager` + reload clears it.
+- Review gate: any running worker linked to the step blocks it; otherwise the
+  newest attempt (by `WorkerHandle.claimed`) must be accepted.

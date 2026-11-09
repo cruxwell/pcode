@@ -5,7 +5,7 @@ import json
 
 import pytest
 from pydantic_ai import Agent, ModelRetry
-from pydantic_ai.messages import ModelRequest, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import ModelRequest, RetryPromptPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
 from pcode.agent import create_coder
@@ -23,7 +23,7 @@ def request_text(messages) -> str:
     return "\n".join(
         str(part.content)
         for part in request.parts
-        if isinstance(part, UserPromptPart | ToolReturnPart)
+        if isinstance(part, UserPromptPart | ToolReturnPart | RetryPromptPart)
     )
 
 
@@ -259,3 +259,68 @@ def test_a_brief_keeps_only_the_sections_it_was_given():
     assert render_brief("Do it") == "Do it"
     brief = render_brief("Do it", boundaries="not tests/", done_when="")
     assert brief == "Do it\n\n## Boundaries\nnot tests/"
+
+
+def test_a_refused_follow_up_leaves_the_worker_as_it_was(tmp_path):
+    seen: list[str] = []
+
+    async def parent(messages, info):
+        text = request_text(messages)
+        seen.append(text)
+        if '"worker_id": "w1"' in text or "'worker_id': 'w1'" in text:
+            yield "Final"
+        elif "Unknown worker 'w9'" in text:
+            yield call("list_workers", "list")
+        elif "REPORT ONE" in text:
+            yield call(
+                "delegate_task",
+                "second",
+                agent_name="worker",
+                task="Follow up",
+                continue_worker="w1",
+                include_reports=["w9"],
+            )
+        else:
+            yield call("delegate_task", "first", agent_name="worker", task="Survey it")
+
+    async def child(messages, info):
+        yield "REPORT ONE"
+
+    run(runtime(tmp_path, parent, child))
+    listing = seen[-1]
+    assert '"status": "done"' in listing or "'status': 'done'" in listing
+    assert "Survey it" in listing and "Follow up" not in listing
+
+
+def test_the_hub_validates_before_claiming_and_releases_a_refused_claim():
+    hub = WorkerHub()
+    with pytest.raises(ModelRetry, match="Unknown worker 'w9'"):
+        hub.claim("c1", {"agent_name": "worker", "include_reports": ["w9"]})
+    assert hub.handles() == []
+    first = hub.claim("c1", {"agent_name": "worker", "task": "A"})
+    first.status, first.messages, first.review = "stopped", ["history"], "rejected"
+    first.stop_requested = True
+    resumed = hub.claim("c2", {"agent_name": "worker", "task": "B", "continue_worker": "w1"})
+    assert resumed is first and first.running and not first.stop_requested
+    assert first.claimed == 2 and first.review == ""
+    hub.release(first)
+    assert (first.status, first.review, first.call_id) == ("stopped", "rejected", "c1")
+    assert hub.for_call("c1") is first and hub.for_call("c2") is None
+    fresh = hub.claim("c3", {"agent_name": "worker", "task": "C"})
+    hub.release(fresh)
+    assert hub.get(fresh.id) is None
+
+
+def test_a_workers_tokens_include_its_final_response(tmp_path):
+    async def parent(messages, info):
+        if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+            yield "Final"
+        else:
+            yield call("delegate_task", "first", agent_name="worker", task="Survey it")
+
+    async def child(messages, info):
+        yield "REPORT ONE"
+
+    events = run(runtime(tmp_path, parent, child))
+    final = [e for e in events if isinstance(e, WorkerStatus) and e.status == "done"][-1]
+    assert final.tokens and final.tokens > 0

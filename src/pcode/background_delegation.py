@@ -228,6 +228,10 @@ class BackgroundDelegation(BackgroundTools):
                 child.done.set()
                 if handle is not None:
                     handle.cancel = None
+                    if not handle.started:
+                        # Refused before delegate_task ran (another capability, a
+                        # validation error): no worker exists, so none stays running.
+                        hub.release(handle)
                 if child.detached and child.cancelled and not stop_requested():
                     self._live -= 1
                     _abandoned(ctx, task_id)

@@ -107,9 +107,9 @@ def setup(pcode) -> None:
     # The hub as last seen by a hook, for `/manager status` (commands get no
     # run context). Workers are memory only, so a reload rightly forgets it.
     seen: dict[str, worker_channel.WorkerHub] = {}
-    # Tokens per worker id, kept after the hub trims old workers from its
-    # history so the budget does not shrink. Reset when the hub changes.
-    tokens: dict[str, int] = {}
+    # The run that already got this turn's reminder; later requests in the same
+    # run (tool results, background results, questions, steering) do not.
+    reminded: dict[str, str] = {}
 
     def reason() -> str | None:
         try:
@@ -145,24 +145,25 @@ def setup(pcode) -> None:
         marker.unlink(missing_ok=True)
         iso.force_isolation = False
 
+    # Lessons belong to the project, so they live in its main checkout: a
+    # session worktree's `.pcode/` goes when the worktree is merged and removed.
+    # Decisions are per task and may go with it; lessons may not.
+    from pcode.worktree import repo_scope
+
+    lessons_dir = repo_scope(workspace) / MANAGER
+    shared_lessons = lessons_dir != directory.resolve()
+
     def lessons() -> Path:
-        """Lessons belong to the project, so they live in its main checkout.
+        return lessons_dir / LESSONS
 
-        A session worktree's `.pcode/` goes when the worktree is merged and
-        removed; decisions are per task and may go with it, lessons may not.
-        """
-        from pcode.worktree import repo_scope
-
-        main = repo_scope(workspace) / MANAGER
-        if main != directory:
-            main.mkdir(parents=True, exist_ok=True)
-            if not (ignore := main / ".gitignore").exists():
-                ignore.write_text("*\n")
-        return main / LESSONS
+    def ensure_lessons_dir() -> None:
+        lessons_dir.mkdir(parents=True, exist_ok=True)
+        if not (ignore := lessons_dir / ".gitignore").exists():
+            ignore.write_text("*\n")
 
     def relative(name: str) -> str:
-        if name == LESSONS and (path := lessons()).parent != directory:
-            return str(path)
+        if name == LESSONS and shared_lessons:
+            return str(lessons())
         return f"{MANAGER}/{name}"
 
     def rules() -> str:
@@ -271,6 +272,7 @@ def setup(pcode) -> None:
         if not active():
             return "Manager mode was not on; carry on."
         stop()
+        ensure_lessons_dir()
         pcode.ui.notify("Manager mode off.")
         return (
             "Manager mode off; you may edit files directly again. Before moving on, append "
@@ -332,17 +334,11 @@ def setup(pcode) -> None:
     def remember(ctx) -> worker_channel.WorkerHub | None:
         hub = worker_channel.hub_for(ctx)
         if hub is not None:
-            if seen.get("hub") is not hub:
-                tokens.clear()
             seen["hub"] = hub
         return hub
 
     def total(hub) -> int:
-        if hub is None:
-            return 0
-        for handle in hub.handles():
-            tokens[handle.id] = max(tokens.get(handle.id, 0), handle.tokens)
-        return sum(tokens.values())
+        return hub.total_tokens() if hub is not None else 0
 
     def under_pcode(path: str) -> bool:
         target = Path(path).expanduser()
@@ -387,9 +383,14 @@ def setup(pcode) -> None:
         for step, state in changes:
             if not step or _status(state) != "completed":
                 continue
-            linked = [h for h in hub.handles() if h.plan_step == str(step)]
-            if linked and linked[-1].review != "accepted":
-                worker = linked[-1]
+            linked = sorted(
+                (h for h in hub.handles() if h.plan_step == str(step)), key=lambda h: h.claimed
+            )
+            # Any linked worker still running blocks the step; otherwise the
+            # newest attempt decides, so an accepted retry clears a rejection.
+            running = [h for h in linked if h.running]
+            worker = running[0] if running else linked[-1] if linked else None
+            if worker is not None and (running or worker.review != "accepted"):
                 raise ModelRetry(
                     f"Plan step {step} is linked to worker {worker.id}, which is not accepted "
                     f"yet ({worker.status}, review {worker.review or 'pending'}). Verify its "
@@ -427,6 +428,10 @@ def setup(pcode) -> None:
         remember(ctx)
         if not active():
             return request_context
+        run_id = getattr(ctx, "run_id", None)
+        if run_id and reminded.get("run") == run_id:
+            return request_context
+        reminded["run"] = run_id or ""
         request = run_request(ctx, request_context)
         parts = request.parts if isinstance(request, ModelRequest) else ()
         prompts = [p for p in parts if isinstance(p, UserPromptPart)]

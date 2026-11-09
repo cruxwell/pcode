@@ -2218,9 +2218,12 @@ class PreviewApp:
             )
             prefill = await browser.run()
         if prefill:
-            # "Answer for w2: " and friends: the user finishes it, the parent relays it.
-            session.default_buffer.text = prefill
-            session.default_buffer.cursor_position = len(prefill)
+            # "Answer for w2: " and friends: the user finishes it, the parent
+            # relays it. A draft already typed is kept after it.
+            buffer = session.default_buffer
+            draft = buffer.text
+            buffer.text = f"{prefill}{draft}"
+            buffer.cursor_position = len(prefill)
 
     async def choose_tree(self, output: TerminalOutput, session) -> None:
         from pcode.tree_ui import tree_dialog

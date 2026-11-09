@@ -42,6 +42,8 @@ HISTORY = 20
 REPORT_LIMIT = 8000
 ASK_WAIT_SECONDS = 600
 ASK_WAIT_BOUNDS = (30, 3600)
+# A shielded notice gives up after this, as Harness bounds its own shielded emits.
+NOTIFY_SECONDS = 5
 
 _current: ContextVar[WorkerHandle | None] = ContextVar("current_worker", default=None)
 
@@ -136,6 +138,12 @@ class WorkerHandle:
     # Set by `BackgroundDelegation` while the call is detached.
     cancel: Callable[[], None] | None = None
     stop_requested: bool = False
+    # Order of the latest claim (new or continued), so "newest" survives resumes.
+    claimed: int = 0
+    # What a continued worker was before its claim, for `WorkerHub.release`.
+    previous: tuple | None = None
+    # Whether `delegate_task` got as far as running it since the last claim.
+    started: bool = False
 
     @property
     def running(self) -> bool:
@@ -163,6 +171,8 @@ class WorkerHub:
         self._handles: dict[str, WorkerHandle] = {}
         self._by_call: dict[str, str] = {}
         self._count = 0
+        self._claims = 0
+        self._trimmed_tokens = 0
 
     def handles(self) -> list[WorkerHandle]:
         return list(self._handles.values())
@@ -192,9 +202,18 @@ class WorkerHub:
         """
         if (handle := self.for_call(call_id)) is not None:
             return handle
+        # Everything that can refuse the call is checked before any state changes.
+        for worker_id in args.get("include_reports") or ():
+            self.require(str(worker_id))
         agent = str(args.get("agent_name") or "worker")
+        self._claims += 1
         if prior_id := args.get("continue_worker"):
             handle = self.require(str(prior_id))
+            if args.get("workspace_mode") == "isolated":
+                raise ModelRetry(
+                    "continue_worker resumes a worker in the shared workspace it worked in; "
+                    "drop workspace_mode='isolated'."
+                )
             if handle.running:
                 raise ModelRetry(
                     f"Worker {handle.id} is still running; use message_worker to steer it."
@@ -210,14 +229,19 @@ class WorkerHub:
                 raise ModelRetry(f"Worker {handle.id} is a {handle.agent!r}; use that agent_name.")
             # The previous call no longer names it, so its row stops updating.
             self._by_call = {c: w for c, w in self._by_call.items() if w != handle.id}
+            handle.previous = (handle.status, handle.review, handle.review_note, handle.call_id)
             handle.resume_from = handle.messages
             handle.status = "running"
             handle.review = handle.review_note = ""
+            handle.stop_requested = False
+            handle.cancel = None
         else:
             self._count += 1
             handle = WorkerHandle(id=f"w{self._count}", call_id=call_id, agent=agent)
             self._handles[handle.id] = handle
             self._trim()
+        handle.claimed = self._claims
+        handle.started = False
         handle.call_id = call_id
         handle.task = str(args.get("task") or "")
         handle.purpose = str(args.get("purpose") or "")
@@ -226,9 +250,25 @@ class WorkerHub:
         self._by_call[call_id] = handle.id
         return handle
 
+    def release(self, handle: WorkerHandle) -> None:
+        """Undo a claim whose call was refused before the worker started.
+
+        A new worker is forgotten; a continued one gets back the state it had.
+        """
+        self._by_call = {c: w for c, w in self._by_call.items() if w != handle.id}
+        handle.resume_from = None
+        if handle.previous is None:
+            self._handles.pop(handle.id, None)
+            return
+        handle.status, handle.review, handle.review_note, handle.call_id = handle.previous
+        handle.previous = None
+        self._by_call[handle.call_id] = handle.id
+
     def _trim(self) -> None:
         finished = [h for h in self._handles.values() if not h.running]
         for handle in finished[: max(0, len(self._handles) - HISTORY)]:
+            # Forgotten workers still count against a token budget.
+            self._trimmed_tokens += handle.tokens
             del self._handles[handle.id]
             self._by_call = {c: w for c, w in self._by_call.items() if w != handle.id}
 
@@ -249,7 +289,8 @@ class WorkerHub:
         return messages
 
     def total_tokens(self) -> int:
-        return sum(handle.tokens for handle in self._handles.values())
+        """Every worker's tokens this session, including workers trimmed from history."""
+        return self._trimmed_tokens + sum(handle.tokens for handle in self._handles.values())
 
 
 def question_message(handle: WorkerHandle, question: Question) -> str:
@@ -369,7 +410,7 @@ async def ask_parent(
             await pending.answered.wait()
     finally:
         handle.question = None
-        with anyio.CancelScope(shield=True):
+        with anyio.move_on_after(NOTIFY_SECONDS, shield=True):
             await notify(handle, answered=pending.answer is not None)
     if pending.answer is None:
         tail = f" Proceed with your fallback: {pending.fallback}" if pending.fallback else ""

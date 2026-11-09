@@ -106,10 +106,7 @@ class Worker:
             self.review = event.review
         if event.workspace:
             self.workspace_mode = event.workspace
-        if event.status == "running" and not self.running:
-            # Continued with continue_worker: the same worker runs again.
-            self.settled, self.failed, self.ending, self.review = None, False, "", ""
-        elif event.status in SETTLED and self.running:
+        if event.status in SETTLED and self.running:
             self.settled = monotonic()
             self.failed = event.status != "done"
             self.ending = SETTLED[event.status]
@@ -210,7 +207,16 @@ class Workers:
         return sum(bool(worker.question) for worker in self.items)
 
     def tokens(self) -> int:
-        return sum(worker.tokens for worker in self.items)
+        """Tokens across workers. A continued worker gets a new row whose count
+        includes its earlier runs, so only the newest row per worker id counts."""
+        newest: dict[str, int] = {}
+        anonymous = 0
+        for worker in self.items:
+            if worker.worker_id:
+                newest[worker.worker_id] = worker.tokens
+            else:
+                anonymous += worker.tokens
+        return anonymous + sum(newest.values())
 
     def latest(self) -> Worker | None:
         """The newest running worker, else the newest one."""

@@ -35,8 +35,9 @@ and why. Saying "don't use manager mode for this" works as well as `/manager off
 ## What changes while it's on
 
 - **The agent delegates instead of editing.** It can still read, search and run
-  read-only commands to plan and to verify, but changes to your files go through
-  workers. (It can still write its own notes under `.pcode/`.)
+  commands to plan and to verify, but its file-editing tools refuse anything
+  outside its own notes under `.pcode/`, so changes go through workers. Shell
+  commands aren't policed; the agent is told to keep them read-only.
 - **Every brief has to say enough.** A worker starts with none of the
   conversation, so each delegation carries context (files, earlier decisions)
   or a "done when" condition, usually both, plus boundaries for what not to
@@ -53,8 +54,9 @@ and why. Saying "don't use manager mode for this" works as well as `/manager off
   `.pcode/manager/decisions.md`, and the agent passes the relevant ones into
   each brief. You can edit that file yourself between turns.
 - **It learns between runs.** When manager mode ends, the agent adds a few
-  lessons to `.pcode/manager/lessons.md` (briefs that went wrong, splits that
-  worked), and they're read back at the start of every later managed turn.
+  lessons to `.pcode/manager/lessons.md` in the project's main checkout (briefs
+  that went wrong, splits that worked), and they're read back at the start of
+  every later managed turn, in any session or worktree of that project.
 
 Watch it all in `/agents`: each worker's id, the plan step it's on, its state,
 whether it's been reviewed, and its token count. A worker that gets stuck can
@@ -66,9 +68,13 @@ message. See [talking to workers](tools.md#talking-to-workers).
 If [`worktree`](workspace.md#one-git-worktree-per-session) is on, manager mode
 gives every worker its own checkout and branch for the session, as if
 [`worker_isolation`](tools.md#worker-worktrees) were on too, so parallel workers
-can't trip over each other's edits. Each accepted result is merged back into
-the session's branch. With `worktree` off, workers share the session's checkout,
-and `/manager status` says so.
+can't trip over each other's edits. The agent merges each accepted worker's
+branch into the session's branch with `integrate_task`. Isolated workers start
+from the session's last commit, so the agent commits a checkpoint before
+delegating. Isolated workers
+can't be resumed for a follow-up, so a rework gets a fresh worker briefed with
+the review note. With `worktree` off, workers share the session's checkout, and
+`/manager status` says so.
 
 ## Cost controls
 
@@ -97,7 +103,8 @@ session's. Both are read at each delegation, so no reload is needed. See
 - `/manager off` switches it off.
 
 Manager mode is saved in `.pcode/manager/`, so it stays on across `/reload` and
-restarts until it's switched off. It works alongside [`/plan`](commands.md):
+restarts until it's switched off. The worker list and the token count behind
+the budget live in memory, so they start over after a `/reload` or restart. It works alongside [`/plan`](commands.md):
 plan first, then let the manager carry the plan out. Side questions and the
 workers themselves are never affected. To remove it entirely, including the
 agent's ability to switch it on, run `/extensions off manager`.

@@ -19,6 +19,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
@@ -112,6 +113,7 @@ class ResumableAgent(WrapperAgent):
         attempts = int(load_preferences().get("retry_attempts", SETTINGS["retry_attempts"].default))
         attempt = 0
         handle = current_worker()
+        earlier = handle.tokens if handle is not None else 0
         if message_history is None and handle is not None and handle.resume_from:
             # `continue_worker`: the follow-up joins the worker's own history.
             message_history = handle.resume_from
@@ -126,6 +128,12 @@ class ResumableAgent(WrapperAgent):
                 )
                 if handle is not None:
                     handle.messages = result.all_messages()
+                    # Exact, from this run's own responses: the live count misses
+                    # the final response and cannot read a shared usage counter.
+                    added = handle.messages[len(handle.resume_from or ()) :]
+                    handle.tokens = earlier + sum(
+                        m.usage.total_tokens for m in added if isinstance(m, ModelResponse)
+                    )
                 return result
             except Exception as error:
                 if attempt >= attempts or checkpoint.messages is None or not transient(error):
@@ -153,6 +161,10 @@ async def stream_child_activity(_ctx, events):
     worker = current_worker()
     # The child's usage can be the parent's counter; count only what it adds.
     usage = getattr(_ctx, "usage", None)
+    if parent is not None and usage is parent.usage:
+        # Forwarded usage is the parent's counter: siblings and the parent
+        # would count too. The exact total arrives when the worker settles.
+        usage = None
     baseline = usage.total_tokens if usage is not None else 0
     # A resumed worker's count continues from its earlier runs.
     earlier = reported = worker.tokens if worker is not None else 0
