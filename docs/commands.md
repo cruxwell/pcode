@@ -103,6 +103,11 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   `/plan status` shows its file; `/plan off` stops planning without deleting it.
   Approve in the conversation to start implementation. See
   [Planning in Obsidian](obsidian.md) for where vault plans go and feedback from Obsidian.
+- `/manager [on [request]|off|status]`: make the agent a coordinator that hands the
+  implementation to workers, checks each result, and keeps a decisions log, for large
+  tasks that split into loosely coupled pieces. The agent can also switch it on itself
+  and tells you when it does. `/manager status` lists the workers, their reviews and
+  tokens, and the budget used. See [Manager mode](manager.md).
 - `/reflect [--project|--all] [focus]`: propose an instruction, skill or extension change
   from what went wrong in this session (or, with a flag, across this project's or every
   project's saved sessions), apply it if you approve, and log the lesson. See
@@ -162,9 +167,11 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   instead, one side question each ([choosing the model](side-questions.md#choosing-the-model)).
   A `+EFFORT` suffix (`$openai:gpt-5+high`), or a bare `+EFFORT` word for the
   conversation's model, sets that question's reasoning effort from the `/effort` levels.
-- `/agents`: follow delegated agents live in a read-only popup: each agent's
-  assignment, plan, prose, and tool calls, which the transcript only summarizes. Works
-  while the turn runs. **Ctrl+T** shows or hides reasoning. Agents are kept in memory
+- `/agents`: follow delegated agents live in a popup: each agent's worker id, plan
+  step, state, tokens, assignment, plan, prose, and tool calls, which the transcript
+  only summarizes. Works while the turn runs. **Ctrl+T** shows or hides reasoning;
+  `a` answers a worker's question, `m` messages a worker, and `r` shows its report
+  (see [talking to workers](tools.md#talking-to-workers)). Agents are kept in memory
   only, so a resumed session starts with none.
 - `/skill:NAME [text]`: run a discovered skill; see
   [Skills as slash commands](workspace.md#skills-as-slash-commands).
@@ -777,7 +784,7 @@ these actions alongside the current popup's navigation and editing keys:
 | `/jobs` | `w` watch in the preview · `k` stop |
 | `/links` | `f` search · `t` show/hide tool links |
 | `/tree` | `y` copy the selection, or pick a quote or code block from a response |
-| `/agents` | `t` thinking |
+| `/agents` | `t` thinking · `a` answer the worker's question · `m` message the worker · `r` show its report |
 
 With an explicitly configured `key_prefix ctrl+b`, press Ctrl+B then the letter
 instead: Ctrl+B `y` copies.

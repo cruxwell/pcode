@@ -182,6 +182,8 @@ class WorkerStatus:
     tokens: int | None = None
     review: str | None = None
     status: str | None = None
+    # "isolated" or "shared", once delegation has decided.
+    workspace: str | None = None
 
 
 Event = (

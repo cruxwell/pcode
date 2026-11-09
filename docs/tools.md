@@ -155,6 +155,48 @@ session; extra delegations then wait for a slot. Provider limits and machine
 resources still apply. Sub-agents defined by extensions keep their own tools
 rather than gaining the worker's.
 
+### Talking to workers
+
+Delegation isn't fire-and-forget. Every worker gets a short id (`w1`, `w2`, ...)
+that the agent, and you, can refer to for the rest of the session.
+
+**Briefs say what a worker needs.** A worker sees none of the conversation, so
+besides the task itself a delegation can carry `context` (relevant files,
+earlier decisions), `boundaries` (what not to touch) and `done_when` (how the
+worker knows it's finished). A step that builds on earlier work can include
+those workers' reports in its brief, and a worker can be linked to a step of
+the agent's plan, which `/agents` shows beside it.
+
+**Reports come back in a fixed shape.** Each worker ends with a summary, its
+changes, the commands it ran, what it verified, what it didn't, open questions,
+and decisions other workers should follow. "Verified" lists only what the
+worker actually ran or checked, so you can tell a passing test from a hopeful
+one.
+
+**Workers can run in the background.** The agent can start a worker and carry
+on (dispatch the next independent piece, or keep talking to you) instead of
+waiting; its result arrives when it's done. A finished worker can also be
+resumed with its own context for a follow-up ("now add the test you skipped"),
+which is cheaper than briefing a new one from scratch. Resuming works for
+workers that shared the session's checkout, not isolated ones.
+
+**Workers ask instead of guessing.** When a brief is ambiguous in a way that
+changes the result, a worker can ask the agent a question and keep going on
+what doesn't depend on the answer. The agent answers it, or asks you first if
+only you can decide. If nobody answers in time, the worker uses the fallback it
+named and notes the assumption in its report.
+
+**You can step in.** In `/agents`, a worker waiting on a question is marked
+`? asks parent`. Press `a` to answer it or `m` to send any worker a message:
+both put `Answer for w3: ` or `Message for w3: ` in your prompt, and the agent
+relays what you type. `r` shows a finished worker's report. You can also just
+ask in the conversation: "stop w2", "tell w1 to skip the migration", "what
+are the workers doing?". The agent can mark a worker's result accepted or
+rejected after checking it, which the dashboard shows as `done · reviewed`.
+
+[Manager mode](manager.md) builds on all of this for large tasks: the agent
+only coordinates, and every result is checked before it counts.
+
 ### Sub-agents on other models
 
 By default every sub-agent runs on the session's model. A delegation can name
@@ -265,6 +307,9 @@ alone and explain how to restore its path.
 
 Sub-agents defined by extensions always share the workspace; isolation is only
 for the built-in worker.
+
+While [manager mode](manager.md) is on, `worktree=on` alone is enough: workers
+are isolated for the session without changing `worker_isolation`.
 
 ## File and shell tools
 

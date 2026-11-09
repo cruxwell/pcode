@@ -374,6 +374,7 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
             isolated = False
         if handle is not None:
             handle.workspace_mode = "isolated" if isolated else "shared"
+            await notify(handle, ctx, workspace=handle.workspace_mode)
         if not isolated:
             return await super().delegate_task(ctx, agent_name, task, model)
         if not isolation_enabled():

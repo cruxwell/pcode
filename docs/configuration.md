@@ -245,6 +245,8 @@ Every key works with `pcode config set KEY VALUE` and `/config set KEY VALUE`.
 | `strict_tools` | `on` | `on`, `off` (constrain `edit_file` arguments with Anthropic strict tool use) |
 | `subagent_models` | empty | `,`-separated models `delegate_task` lists for running a sub-agent; others can still be named per delegation ([`/subagents`](tools.md#sub-agents-on-other-models)); empty runs every sub-agent on the session's model; `/reload` to apply |
 | `worker_concurrency` | `0` | `0` means unlimited; a positive integer caps concurrent built-in workers per session; `/reload` to apply |
+| `manager_worker_model` | unset | model that built-in workers run on in [manager mode](manager.md) when the agent doesn't pick one, such as a cheaper model for routine pieces; unset uses the session's model |
+| `manager_token_budget` | `0` | Whole number, worker tokens [manager mode](manager.md) may spend before it refuses new delegations; `0` is unlimited |
 | `tool_output_mode` | `spill` | `spill`, `truncate`, `off` |
 | `tool_output_threshold` | `10000` | Positive integer, characters that trigger reduction |
 | `tool_output_preview_chars` | `1000` | Positive integer, spill preview characters |

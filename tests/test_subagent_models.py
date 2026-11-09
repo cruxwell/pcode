@@ -97,7 +97,7 @@ def test_a_delegation_runs_on_the_model_it_picks(tmp_path, monkeypatch):
         for part in message.parts
         if isinstance(part, ToolReturnPart)
     ]
-    assert returned == ["from the other provider"]
+    assert returned == ["[worker w1]\nfrom the other provider"]
 
 
 def test_a_worker_without_delegation_resolves_no_models(tmp_path, monkeypatch):
@@ -168,7 +168,7 @@ def test_a_delegation_runs_on_a_model_off_the_menu(tmp_path, monkeypatch):
 
     asyncio.run(run())
     assert "Cannot use nope:z: no credentials" in seen["retry"]
-    assert seen["returned"] == ["second opinion", "second opinion"]
+    assert [r.split("\n", 1)[1] for r in seen["returned"]] == ["second opinion"] * 2
     # A name is resolved once, then reused; a failed one is not remembered.
     assert resolved == ["nope:z", "other:big"]
 

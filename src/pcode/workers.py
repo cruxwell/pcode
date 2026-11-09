@@ -6,15 +6,32 @@ calls beneath it. This keeps what the worker itself said and did, in order, so
 here is journaled, so a resumed session starts with no workers.
 """
 
+import json
 from dataclasses import dataclass, field
 from time import monotonic
 
-from pcode.runtime import ChildPlan, ChildText, ToolStarted, ToolSummary
+from pcode.runtime import ChildPlan, ChildText, ToolStarted, ToolSummary, WorkerStatus
 from pcode.tool_display import PLAN_TOOLS
 
 DELEGATE = "delegate_task"
 # Workers accumulate over a long session; keep the recent ones.
 WORKER_HISTORY = 20
+# WorkerStatus.status values that settle a worker, mapped to how it ended.
+SETTLED = {"done": "", "failed": "", "stopped": "Stopped"}
+
+
+def delegate_options(arguments: str | None) -> dict:
+    """The delegate call's own arguments, or {} when they were not captured as a JSON object."""
+    try:
+        value = json.loads(arguments or "")
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def option(options: dict, key: str) -> str:
+    value = options.get(key)
+    return str(value).strip() if value not in (None, "") else ""
 
 
 @dataclass
@@ -39,6 +56,16 @@ class Worker:
     activity: str = ""
     plan: list[dict] = field(default_factory=list)
     entries: list[WorkerEntry] = field(default_factory=list)
+    # Short id ("w1") the parent uses to answer, message or stop it; "" until known.
+    worker_id: str = ""
+    plan_step: str = ""
+    model: str = ""
+    workspace_mode: str = ""
+    tokens: int = 0
+    # A pending ask_parent question and what the worker will do if unanswered.
+    question: str = ""
+    fallback: str = ""
+    review: str = ""  # "accepted", "rejected" or ""
     # Bumped on every change, so a viewer can skip unchanged repaints.
     version: int = 0
 
@@ -51,8 +78,43 @@ class Worker:
 
     def state(self) -> str:
         if self.running:
+            if self.question:
+                return "? asks parent"
             return self.activity or "Starting"
-        return self.ending or ("Failed" if self.failed else "Done")
+        if self.ending:
+            return self.ending
+        if self.failed:
+            return "Failed"
+        if self.review == "accepted":
+            return "Done · reviewed"
+        if self.review == "rejected":
+            return "Done · rejected"
+        return "Done"
+
+    def apply(self, event: WorkerStatus) -> None:
+        """Fold a status change; None fields leave their value alone."""
+        if event.worker_id:
+            self.worker_id = event.worker_id
+        if event.question is not None:
+            self.question = event.question
+            self.fallback = event.fallback or ""
+        if event.answered is not None:
+            self.question = self.fallback = ""
+        if event.tokens is not None:
+            self.tokens = event.tokens
+        if event.review is not None:
+            self.review = event.review
+        if event.workspace:
+            self.workspace_mode = event.workspace
+        if event.status == "running" and not self.running:
+            # Continued with continue_worker: the same worker runs again.
+            self.settled, self.failed, self.ending, self.review = None, False, "", ""
+        elif event.status in SETTLED and self.running:
+            self.settled = monotonic()
+            self.failed = event.status != "done"
+            self.ending = SETTLED[event.status]
+        if not self.running:
+            self.question = self.fallback = ""
 
     def add_text(self, event: ChildText) -> None:
         kind = "thinking" if event.thinking else "text"
@@ -83,6 +145,11 @@ class Workers:
         if isinstance(event, ToolStarted | ToolSummary) and event.name == DELEGATE:
             self._delegate(event)
             return
+        if isinstance(event, WorkerStatus):
+            if worker := self.get(event.call_id):
+                worker.apply(event)
+                worker.version += 1
+            return
         call_id = (
             event.call_id
             if isinstance(event, ChildText | ChildPlan)
@@ -106,7 +173,15 @@ class Workers:
         worker = self.get(event.call_id)
         if isinstance(event, ToolStarted):
             if worker is None:
-                worker = Worker(event.call_id, event.agent or "worker", event.task)
+                options = delegate_options(event.arguments)
+                worker = Worker(
+                    event.call_id,
+                    event.agent or "worker",
+                    event.task,
+                    plan_step=option(options, "plan_step"),
+                    model=option(options, "model"),
+                    workspace_mode=option(options, "workspace_mode"),
+                )
                 self.items.append(worker)
                 del self.items[:-WORKER_HISTORY]
             # A restated start carries the worker's current phase.
@@ -129,6 +204,13 @@ class Workers:
 
     def running(self) -> int:
         return sum(worker.running for worker in self.items)
+
+    def waiting(self) -> int:
+        """Workers blocked on an ask_parent question."""
+        return sum(bool(worker.question) for worker in self.items)
+
+    def tokens(self) -> int:
+        return sum(worker.tokens for worker in self.items)
 
     def latest(self) -> Worker | None:
         """The newest running worker, else the newest one."""

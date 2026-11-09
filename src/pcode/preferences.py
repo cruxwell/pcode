@@ -349,6 +349,18 @@ SETTINGS = {
         whole_number=True,
         description="Concurrent worker cap; 0 is unlimited (reload to apply)",
     ),
+    # Read at each delegation by the bundled manager extension (/manager).
+    "manager_worker_model": Setting(
+        None,
+        description="Model /manager workers run on when the agent names none; "
+        "unset uses the session's model",
+    ),
+    "manager_token_budget": Setting(
+        "0",
+        whole_number=True,
+        description="Worker tokens /manager may spend before refusing new delegations; "
+        "0 is unlimited",
+    ),
     "subagent_models": Setting(
         "",
         name_list=True,

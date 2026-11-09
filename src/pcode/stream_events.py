@@ -320,6 +320,7 @@ class EventTranslator:
             tokens=event.tokens,
             review=event.review,
             status=event.status,
+            workspace=event.workspace,
         )
 
     def on_shell(

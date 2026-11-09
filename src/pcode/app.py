@@ -2216,7 +2216,11 @@ class PreviewApp:
                 output=session.app.output,
                 style=session.app.style,
             )
-            await browser.run()
+            prefill = await browser.run()
+        if prefill:
+            # "Answer for w2: " and friends: the user finishes it, the parent relays it.
+            session.default_buffer.text = prefill
+            session.default_buffer.cursor_position = len(prefill)
 
     async def choose_tree(self, output: TerminalOutput, session) -> None:
         from pcode.tree_ui import tree_dialog

@@ -3,8 +3,8 @@
 import asyncio
 import fcntl
 import json
-import re
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -65,7 +65,7 @@ def results(messages):
 
 
 def content(part):
-    """A delegate result without the worker id it is labelled with (tested in test_worker_channel)."""
+    """A delegate result without its worker label (see test_worker_channel)."""
     value = part.content
     if isinstance(value, str):
         value = re.sub(r"^\[worker w\d+\]\n", "", value)

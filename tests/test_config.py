@@ -41,6 +41,8 @@ def test_defaults_and_path_do_not_create_files():
         "worktree": "off",
         "worker_isolation": "off",
         "worker_concurrency": "0",
+        "manager_worker_model": None,
+        "manager_token_budget": "0",
         "subagent_models": "",
         "session_host": "off",
         "session_host_idle_minutes": "0",

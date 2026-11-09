@@ -98,6 +98,8 @@ class WorkerUpdate(CapabilityEvent, namespace="pcode_workers", name="update"):
     tokens: int | None = None
     review: str | None = None
     status: str | None = None
+    # "isolated" or "shared", once delegation has decided.
+    workspace: str | None = None
 
 
 @dataclass(eq=False)

@@ -1,13 +1,18 @@
-"""Read-only popup following delegated agents' own streams; never steers them."""
+"""Dashboard popup following delegated agents' own streams.
+
+It never steers a worker itself: answering or messaging one closes the popup
+and prefills the main prompt, and the parent model relays it with its
+`answer_worker` / `message_worker` tools.
+"""
 
 import asyncio
 
 from prompt_toolkit.application import Application, get_app
 from prompt_toolkit.document import Document
-from prompt_toolkit.filters import Always, has_focus
+from prompt_toolkit.filters import Always, Condition, has_focus
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.bindings.focus import focus_next, focus_previous
-from prompt_toolkit.layout import DynamicContainer, HSplit, Layout, VSplit
+from prompt_toolkit.layout import ConditionalContainer, DynamicContainer, HSplit, Layout, VSplit
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import Label, TextArea
 from rich.markdown import Markdown
@@ -29,18 +34,67 @@ from pcode.session_ui import literal
 from pcode.task_prompt import TaskPrompt
 from pcode.text_selection import copy_drags
 from pcode.tool_display import label, plain
-from pcode.tool_panel import ACTIVE_TASK_ICON, AGENT_ICON, plan_row
+from pcode.tool_panel import ACTIVE_TASK_ICON, plan_row
 from pcode.workers import Worker, Workers
 
 # Streaming should look live without repainting the pane every token.
 REFRESH_SECONDS = 0.3
 
 
+WORKSPACES = {"isolated": "iso", "shared": "shared", "auto": "auto"}
+
+
+def tokens(count: int) -> str:
+    """A compact token count: 950, 182k, 1.2M; — before any is known."""
+    if count <= 0:
+        return "—"
+    if count < 1000:
+        return str(count)
+    if count < 1_000_000:
+        return f"{count // 1000}k"
+    return f"{count / 1_000_000:.1f}M"
+
+
+def cell(value: str, width: int) -> str:
+    return plain(" ".join(value.split()) or "—", width).ljust(width)
+
+
 def row(worker: Worker, width: int = 90) -> str:
-    """One list line: who, how long, what state, and the assignment."""
-    name = worker.agent[:1].upper() + worker.agent[1:]
-    task = plain(" ".join(worker.task.split()), width)
-    return f"{AGENT_ICON} {name} · {worker.elapsed():.0f}s · {worker.state()} · {task}"
+    """One dashboard line: id, plan step, model, state, elapsed, tokens, workspace, task."""
+    workspace = WORKSPACES.get(worker.workspace_mode, worker.workspace_mode)
+    columns = [
+        cell(worker.worker_id or worker.agent, 6),
+        cell(worker.plan_step, 14),
+        cell(worker.model, 14),
+        cell(worker.state(), 16),
+        f"{worker.elapsed():.0f}s".rjust(5),
+        tokens(worker.tokens).rjust(5),
+        cell(workspace, 6),
+        plain(" ".join(worker.task.split()), width),
+    ]
+    return " ".join(columns)
+
+
+def header(workers: Workers) -> str:
+    """Counts across the session's workers, for the line above the list."""
+    line = f"Agents · {len(workers.items)} this session · {workers.running()} running"
+    if waiting := workers.waiting():
+        line += f" · {waiting} waiting on answer"
+    return line + f" · {tokens(workers.tokens())} tokens"
+
+
+def question_text(worker: Worker) -> str:
+    text = worker.question
+    if worker.fallback:
+        text += f"\nIf unanswered: {worker.fallback}"
+    return text + "\n(a to answer)"
+
+
+def report_index(blocks: list) -> int | None:
+    """Where the worker's last prose starts: its final report once it has finished."""
+    return next(
+        (i for i in range(len(blocks) - 1, -1, -1) if isinstance(blocks[i], Markdown)), None
+    )
 
 
 def tool_line(event) -> Text:
@@ -59,7 +113,11 @@ def details(worker: Worker | None, *, code_theme: str, show_thinking: bool) -> l
         return [Text("Agents appear here once the model delegates a task.", style="dim")]
     blocks: list = [
         TaskPrompt(literal(worker.task)),
-        Text(f"  {worker.agent} · {worker.elapsed():.0f}s · {worker.state()}", style="dim"),
+        Text(
+            f"  {' · '.join(filter(None, [worker.worker_id, worker.agent]))}"
+            f" · {worker.elapsed():.0f}s · {worker.state()}",
+            style="dim",
+        ),
     ]
     if worker.plan:
         done = sum(item.get("status") == "completed" for item in worker.plan)
@@ -123,6 +181,20 @@ class WorkerBrowser:
         def close(event):
             event.app.exit(result=None)
 
+        @keys.add("a")
+        def answer(event):
+            if prefill := self.prefill("answer"):
+                event.app.exit(result=prefill)
+
+        @keys.add("m")
+        def message(event):
+            if prefill := self.prefill("message"):
+                event.app.exit(result=prefill)
+
+        @keys.add("r")
+        def report(event):
+            self.show_report()
+
         self.prefix_keys = shortcuts = PrefixKeys(key_prefix)
         shortcuts.set_help(
             lambda: [
@@ -130,6 +202,9 @@ class WorkerBrowser:
                 ("PgUp/PgDn", "Page"),
                 ("Ctrl+U/D", "Half page"),
                 ("Tab/Shift+Tab", "Change focus"),
+                ("a", "Answer the worker's question"),
+                ("m", "Message the selected worker"),
+                ("r", "Jump to the final report"),
                 ("Enter/Esc/Ctrl+C", "Close"),
             ]
         )
@@ -142,23 +217,37 @@ class WorkerBrowser:
         keys.add("tab")(focus_next)
         keys.add("s-tab")(focus_previous)
 
-        header = Label(
+        top = Label(
             lambda: (
-                f"Agents · {len(self.items)} this session · {self.workers.running()} running"
-                f" · read-only · thinking {'on' if self.show_thinking else 'off'}"
+                header(self.workers)
+                + f" · thinking {'on' if self.show_thinking else 'off'}"
                 + (f" · {self.notice}" if self.notice else "")
             )
         )
+        question = ConditionalContainer(
+            Frame(
+                Label(lambda: question_text(asking) if (asking := self.asking()) else ""),
+                title=lambda: (
+                    f"Question from {asking.worker_id or asking.agent}"
+                    if (asking := self.asking())
+                    else "Question"
+                ),
+                # A long question must not crowd out the output below it.
+                height=Dimension(max=10),
+            ),
+            filter=Condition(lambda: self.asking() is not None),
+        )
+        output = HSplit([question, Frame(self.detail, title="Output")])
         wide = VSplit(
             [
                 Frame(self.list, title="Agents", width=Dimension(weight=2)),
-                Frame(self.detail, title="Output", width=Dimension(weight=3)),
+                HSplit([output], width=Dimension(weight=3)),
             ]
         )
         narrow = HSplit(
             [
                 Frame(self.list, title="Agents", height=lambda: list_pane_height(len(self.items))),
-                Frame(self.detail, title="Output"),
+                output,
             ]
         )
         body = DynamicContainer(
@@ -166,9 +255,9 @@ class WorkerBrowser:
         )
         root_container = HSplit(
             [
-                header,
+                top,
                 body,
-                Label(shortcuts.summary),
+                Label(lambda: f"a Answer · m Message · r Report · {shortcuts.summary()}"),
             ]
         )
         self.app = Application(
@@ -198,6 +287,35 @@ class WorkerBrowser:
     def current(self) -> Worker | None:
         return next((w for w in self.items if w.call_id == self.selected), None)
 
+    def asking(self) -> Worker | None:
+        """The worker whose question the panel shows: the selected one's, else the oldest."""
+        worker = self.current()
+        if worker is not None and worker.question:
+            return worker
+        return next((w for w in self.workers.items if w.question), None)
+
+    def prefill(self, kind: str) -> str | None:
+        """The prompt text that asks the parent to answer or message a worker, or None."""
+        worker = self.asking() if kind == "answer" else self.current()
+        if worker is None:
+            self.notice = "no question to answer" if kind == "answer" else "no agent selected"
+        elif not worker.worker_id:
+            self.notice = "this agent has no worker id to address"
+        elif kind == "message" and not worker.running:
+            self.notice = f"{worker.worker_id} has finished"
+        else:
+            return f"{kind.capitalize()} for {worker.worker_id}: "
+        return None
+
+    def show_report(self) -> None:
+        worker = self.current()
+        blocks = self.detail.renderables
+        index = report_index(blocks) if worker is not None else None
+        if index is None:
+            self.notice = "no report yet"
+            return
+        self.detail.scroll_to(index)
+
     def select(self, force: bool = False) -> None:
         if self._refreshing:
             return
@@ -224,7 +342,9 @@ class WorkerBrowser:
         else:
             self.detail.follow(blocks)
 
-    async def run(self) -> None:
+    async def run(self) -> str | None:
+        """Show the popup; return text to prefill the main prompt with, if any."""
+
         async def follow():
             while True:
                 await asyncio.sleep(REFRESH_SECONDS)
@@ -240,4 +360,4 @@ class WorkerBrowser:
         def start():
             self.app.create_background_task(follow())
 
-        await self.app.run_async(pre_run=start)
+        return await self.app.run_async(pre_run=start)

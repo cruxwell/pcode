@@ -29,6 +29,7 @@ nav = [
     { "Keybindings" = "keybindings.md" },
     { "Terminal setup" = "terminal.md" },
     { "Tools" = "tools.md" },
+    { "Manager mode" = "manager.md" },
     { "MCP servers" = "mcp.md" },
     { "Working in a repository" = "workspace.md" },
     { "Sessions and recovery" = "sessions.md" },

@@ -56,7 +56,7 @@ def test_delegated_worker_reads_external_worktree_and_runs_shell(tmp_path):
                     )
                 }
             elif parent_calls == 2:
-                assert "External review complete" in results
+                assert "[worker w1]\nExternal review complete" in results
                 yield {0: DeltaToolCall(name="shell", json_args='{"command":"pwd"}')}
             else:
                 # The child's shell cd did not change the parent's cwd.
