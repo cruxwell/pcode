@@ -23,11 +23,8 @@ from dataclasses import dataclass, field
 
 from pydantic_ai import CapabilityEvent
 from pydantic_ai.messages import BinaryImage
-from pydantic_ai_harness.filesystem._toolset import (
-    FileSystemToolset,
-    _apply_replacements,
-    _is_binary,
-)
+from pydantic_ai_harness.filesystem._content import apply_replacements, is_binary
+from pydantic_ai_harness.filesystem._toolset import FileSystemToolset
 
 from pcode.edits import MAX_SOURCE, completed_change
 from pcode.images import IMAGE_SUFFIXES, MAX_IMAGE_BYTES, image_type, unsendable
@@ -202,7 +199,7 @@ class DisplayFileSystemToolset(FileSystemToolset):
             return
         if len(raw) > MAX_SOURCE * 4:
             snapshot.omitted = "File exceeds preview size limit"
-        elif _is_binary(raw):
+        elif is_binary(raw):
             snapshot.omitted = "Binary content"
         else:
             try:
@@ -285,5 +282,5 @@ class DisplayFileSystemToolset(FileSystemToolset):
             lambda: super(DisplayFileSystemToolset, self)._edit_file(
                 scope, ctx, path, replacements, expected_hash=expected_hash
             ),
-            lambda before: _apply_replacements(before, replacements, path),
+            lambda before: apply_replacements(before, replacements, path),
         )

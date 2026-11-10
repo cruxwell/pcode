@@ -13,7 +13,10 @@ from pydantic_ai_harness.repo_context import RepoContext
 # Harness exposes no public scanner; reuse its metadata-only scan so the
 # inventory stays consistent with the upstream tool. Covered by integration tests.
 from pydantic_ai_harness.repo_context._inventory import scan_assets
-from pydantic_ai_harness.repo_context._loader import discover_instruction_files
+from pydantic_ai_harness.repo_context._loader import (
+    context_file_label,
+    discover_instruction_files,
+)
 
 from pcode.context_breakdown import REPO_CONTEXT
 from pcode.preferences import SETTINGS, load_preferences
@@ -123,7 +126,9 @@ class AutomaticRepoContext(RepoContext):
         files = self.preload()._context_files or []
         if not files:
             return []
-        labels = ", ".join(self._label(file.path) for file in files)
+        labels = ", ".join(
+            context_file_label(file.path, self._cached_working_dir) for file in files
+        )
         return [f"Loaded repository instructions: {labels}"]
 
 

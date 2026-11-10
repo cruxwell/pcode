@@ -34,14 +34,15 @@ dependencies = [
     # itself is downloaded on first use, not at install.
     # Harness ships from the pydantic-ai repo with every Pydantic AI release and
     # pins pydantic-ai-slim to the same minor; bump both together.
-    "pydantic-ai-harness[exa,coder,codemode,playwright]>=0.56.0,<0.57",
+    "pydantic-ai-harness[exa,coder,codemode,playwright]>=0.66.0,<0.67",
     # duckduckgo and web-fetch back the bundled web_research extension when no
     # provider-native search or Exa key is available.
     # google covers both google and google-cloud providers; bedrock pulls boto3.
-    "pydantic-ai-slim[anthropic,bedrock,duckduckgo,google,groq,mcp,openai,web-fetch,xai]>=2.56.0,<3",
-    # Floors for provider SDKs pydantic-ai-slim leaves loose. anthropic stays on
-    # 1.x: 2.x needs pydantic-ai-slim 2.61+. Pydantic AI's main branch caps
+    "pydantic-ai-slim[anthropic,bedrock,duckduckgo,google,groq,mcp,openai,web-fetch,xai]>=2.66.0,<3",
+    # Floors for provider SDKs pydantic-ai-slim leaves loose. anthropic 2.7 is
+    # the first to list claude-fable-5-2. Pydantic AI's main branch caps
     # google-genai below 3; follow it until a release says 3.x works.
+    "anthropic>=2.7.0,<3",
     "openai>=3.48.0,<4",
     "google-genai>=2.34.0,<3",
     "rich>=15,<16",

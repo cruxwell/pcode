@@ -11,7 +11,7 @@ from pydantic_ai_harness.background_tools import BackgroundTools
 from pydantic_ai_harness.background_tools import _capability as upstream
 from pydantic_ai_harness.subagents import SubAgent, SubAgents
 
-from pcode.background_delegation import BackgroundDelegation, _failure
+from pcode.background_delegation import BackgroundDelegation, _failure, _shown
 from pcode.claude_sdk import ClaudeConnectionError
 from pcode.delegation import DelegationReporting, stream_child_activity
 from pcode.live import AgentRuntime
@@ -153,7 +153,7 @@ def test_steering_reaches_the_parent_while_its_delegate_keeps_working():
         assert len(h.requests) == 3 and not task.done()
         h.second_gate.set()
         await asyncio.wait_for(task, 5)
-        assert "Background tool 'delegate_task' (task call-1) completed" in h.requests[3]
+        assert '<tool_result tool_name="delegate_task" tool_call_id="call-1"' in h.requests[3]
         assert [e.markdown for e in events if isinstance(e, Message)] == [
             "Still working on it",
             "Second answer",
@@ -175,7 +175,7 @@ def test_without_steering_a_delegation_returns_in_the_foreground():
         events = await asyncio.wait_for(task, 5)
         assert len(h.requests) == 2
         assert "CHILD REPORT" in h.requests[1]
-        assert "Background tool" not in h.requests[1]
+        assert "<tool_result" not in h.requests[1]
         (end,) = [e for e in events if isinstance(e, ToolSummary) and e.call_id == "call-1"]
         assert end.outcome == "ok"
 
@@ -241,14 +241,18 @@ def test_a_retried_turn_learns_its_detached_child_was_lost(monkeypatch):
     ],
 )
 def test_a_detached_failure_the_call_would_have_reported_is_a_message(error, detail):
-    (message,) = _failure("call-1", error)
-    assert message.startswith("Background tool 'delegate_task' (task call-1) failed: ")
-    assert detail in message
+    completion = _failure("call-1", error, 3)
+    assert completion.retry is None and not completion.succeeded
+    (message,) = completion.content
+    assert 'tool_call_id="call-1"' in message.content
+    assert 'outcome="failed"' in message.content
+    assert detail in message.content
+    assert detail in _shown(completion) and "<tool_result" not in _shown(completion)
 
 
 def test_a_detached_crash_still_ends_the_run():
     crash = RuntimeError("bug")
-    assert _failure("call-1", crash) is crash
+    assert _failure("call-1", crash, 3) is crash
 
 
 async def _collect(stream):
@@ -262,7 +266,8 @@ def test_upstream_internals_this_relies_on():
     }
     assert callable(BackgroundTools._arrived)
     assert callable(BackgroundTools._background_mode)
-    for name in ("_deliver", "_format_background_error", "_format_background_result"):
+    assert callable(BackgroundTools._deliver)
+    for name in ("_Completion", "_format_background_failure", "_format_background_result"):
         assert callable(getattr(upstream, name))
     # The end-of-run wait reads which node a stream belongs to and drains its buffer.
     assert "_next_node" in CallToolsNode.__dataclass_fields__

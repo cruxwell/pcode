@@ -11,8 +11,8 @@ carries on, and its result is enqueued for a later request. Harness then keeps
 the run alive until every detached child has reported: the model can answer the
 user, do other work, or end its response and be woken by the result.
 
-Reaches into `BackgroundTools`' private task group, outcome stream and live
-count; `tests/test_background_delegation.py` pins them.
+Reaches into `BackgroundTools`' private task group, outcome stream, live count
+and result framing; `tests/test_background_delegation.py` pins them.
 """
 
 from __future__ import annotations
@@ -30,15 +30,16 @@ from pydantic_ai.exceptions import (
     CallDeferred,
     ModelRetry,
     RunCancelled,
+    ToolFailed,
     ToolFailedError,
     ToolRetryError,
 )
-from pydantic_ai.messages import UserPromptPart
+from pydantic_ai.messages import ModelRequest, TextContent, UserPromptPart
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai_harness.background_tools import BackgroundTools
 from pydantic_ai_harness.background_tools._capability import (
-    _deliver,
-    _format_background_error,
+    _Completion,
+    _format_background_failure,
     _format_background_result,
 )
 
@@ -154,22 +155,35 @@ class _Child:
     detached: bool = False
 
 
-def _failure(task_id: str, error: BaseException) -> tuple[str, ...] | BaseException:
-    """What a detached child's error delivers: a message, or the error that ends the run.
+def _failure(task_id: str, error: BaseException, max_retries: int) -> _Completion | BaseException:
+    """What a detached child's error delivers: a failed result, or the error that ends the run.
 
     Errors the foreground call would have turned into a failed tool result
-    become a message too. Anything else ends the run, as it would have inline:
-    Harness's `contain_errors` already turns child crashes into retries.
+    become a failed result too. Anything else ends the run, as it would have
+    inline: Harness's `contain_errors` already turns child crashes into retries.
+    Neither counts toward `delegate_task`'s retries: the call already returned.
     """
-    if isinstance(error, ToolRetryError | ToolFailedError | ApprovalRequired | CallDeferred):
-        detail = _format_background_error(error)
-    elif isinstance(error, ModelRetry):
-        detail = str(error)
-    elif isinstance(error, RunCancelled):
-        detail = f"the sub-agent was cancelled. {error}".strip()
-    else:
+    if isinstance(error, RunCancelled):
+        error = ToolFailed(f"the sub-agent was cancelled. {error}".strip())
+    elif not isinstance(
+        error, ToolRetryError | ToolFailedError | ApprovalRequired | CallDeferred | ModelRetry
+    ):
         return error
-    return (f"Background tool '{DELEGATE}' (task {task_id}) failed: {detail}",)
+    content = (_format_background_failure(DELEGATE, task_id, error),)
+    return _Completion(DELEGATE, max_retries, content)
+
+
+def _shown(completion: _Completion) -> str:
+    """A delivered result as the delegate row shows it, without the frame the model reads."""
+    text = "\n".join(
+        item.content if isinstance(item, TextContent) else item
+        for item in completion.content
+        if isinstance(item, TextContent | str)
+    )
+    lines = text.splitlines()
+    if lines and lines[0].startswith("<tool_result") and lines[-1] == "</tool_result>":
+        lines = lines[1:-1]
+    return "\n".join(lines)
 
 
 @dataclass
@@ -237,19 +251,27 @@ class BackgroundDelegation(BackgroundTools):
                     _abandoned(ctx, task_id)
             if not child.detached:
                 return
+            outcome: _Completion | BaseException
             if child.cancelled:
                 if not stop_requested():
                     return
                 # Stopped by `manage_worker(action='stop')`, not by the run ending: say so.
-                outcome = (stopped_message(task_id, worker_id),)
+                outcome = _Completion(
+                    DELEGATE, ctx.max_retries, (stopped_message(task_id, worker_id),)
+                )
             elif child.error is not None:
-                outcome = _failure(task_id, child.error)
+                if isinstance(child.error, ToolRetryError) and ctx.tool_manager is not None:
+                    # As upstream: core charged the child's retry to the step that
+                    # issued the call, which already counted it a success.
+                    ctx.tool_manager.failed_tools.discard(DELEGATE)
+                outcome = _failure(task_id, child.error, ctx.max_retries)
             else:
-                outcome = _format_background_result(DELEGATE, task_id, child.result)
+                content = _format_background_result(DELEGATE, task_id, child.result)
+                outcome = _Completion(DELEGATE, ctx.max_retries, content, succeeded=True)
             try:
                 if not isinstance(outcome, BaseException):
                     # Settles the delegate row; `_live` still holds the run open.
-                    await ctx.emit(DelegationDelivered(content="\n".join(map(str, outcome))))
+                    await ctx.emit(DelegationDelivered(content=_shown(outcome)))
             finally:
                 self._send.send_nowait(outcome)
                 self._live -= 1
@@ -321,7 +343,7 @@ class BackgroundDelegation(BackgroundTools):
         user is never stuck behind a child the model left running.
         """
         with anyio.move_on_after(POLL_SECONDS):
-            _deliver(ctx, await self._outcomes.receive())
+            self._deliver(ctx, await self._outcomes.receive())
             return True
         if (hub := hub_for(ctx)) is not None and (questions := hub.take_questions()):
             ctx.enqueue(*questions)
@@ -333,7 +355,7 @@ class BackgroundDelegation(BackgroundTools):
             # The last outcome raced the timeout, or a child was cancelled
             # without one; either way nothing more will come.
             for outcome in self._arrived():
-                _deliver(ctx, outcome)
+                self._deliver(ctx, outcome)
             return True
         return False
 
@@ -370,10 +392,14 @@ class BackgroundDelegation(BackgroundTools):
         from pydantic_graph import End
 
         if isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests):
-            # As upstream: a deferred-tool pause must not become another request.
+            # As upstream: a deferred-tool pause must not become another request,
+            # but arrived results are recorded when the step's own request ends it.
+            if isinstance(ctx.messages[-1], ModelRequest):
+                for outcome in self._arrived():
+                    self._deliver(ctx, outcome)
             return result
         for outcome in self._arrived():
-            _deliver(ctx, outcome)
+            self._deliver(ctx, outcome)
         if self._ending(ctx, result):
             await ctx.emit(DelegatesPending(count=self._live))
             while not ctx.pending_messages and not await self._wait_step(ctx):

@@ -429,17 +429,16 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
                     "The parent will review and integrate your result. Stop all jobs before "
                     "finishing; remaining jobs will be terminated when delegation ends."
                 )
-                # Harness hands a delegate the parent's `ctx.workspace`; this
-                # one works in its own checkout instead.
-                child_ctx = replace(
-                    ctx, workspace=Workspace(LocalWorkspaceBackend(record.worktree))
-                )
+                # Harness hands a delegate the parent's workspace; this one
+                # works in its own checkout instead.
+                workspace = Workspace(LocalWorkspaceBackend(record.worktree))
                 output = await self._run_delegation(
-                    child_ctx,
+                    replace(ctx, workspace=workspace),
                     agent_name,
                     replace(self._agents[agent_name], agent=worker),
                     task=prompt,
                     key=key,
+                    workspace=workspace,
                 )
             status = "completed" if _outcome.get() == "ok" else "failed"
             record = await _finish(store, record.task_id, status, output)
@@ -463,9 +462,9 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
             "verification": "Worker-reported; see summary.",
         }
 
-    async def _run_delegation(self, ctx, agent_name, sub_agent, *, task, key):
+    async def _run_delegation(self, ctx, agent_name, sub_agent, **kwargs):
         resumable = replace(sub_agent, agent=ResumableAgent(sub_agent.agent))
-        return await super()._run_delegation(ctx, agent_name, resumable, task=task, key=key)
+        return await super()._run_delegation(ctx, agent_name, resumable, **kwargs)
 
     def _crash_outcome(self, agent_name, sub_agent, exc):
         """Harness's containment, minus the raw exception text and the traceback.
