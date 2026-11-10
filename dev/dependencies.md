@@ -16,7 +16,7 @@ a snapshot, not a second set of pins: update them when dependencies change.
 | Pydantic AI (`pydantic-ai-slim`) | 2.56.0 | [Docs](https://ai.pydantic.dev/) | [pydantic-ai](https://github.com/pydantic/pydantic-ai) (package: `pydantic_ai_slim/`) |
 | Pydantic AI Harness (`pydantic-ai-harness`) | 0.56.0 (released with Pydantic AI 2.56.0) | [Docs](https://pydantic.dev/docs/ai/harness/) | [pydantic-ai](https://github.com/pydantic/pydantic-ai) (package: `src/pydantic_ai_harness/`) |
 | Playwright (`playwright`, via the Harness `playwright` extra; Chromium downloaded on first `/browser` use) | 1.64.0 | [Docs](https://playwright.dev/python/) | [playwright-python](https://github.com/microsoft/playwright-python) |
-| Claude Agent SDK (`claude-agent-sdk`, bundles the Claude Code CLI) | 0.2.167 (CLI 2.1.300) | [Docs](https://code.claude.com/docs/en/agent-sdk/python) | [claude-agent-sdk-python](https://github.com/anthropics/claude-agent-sdk-python) |
+| Claude Agent SDK (`claude-agent-sdk`, bundles the Claude Code CLI) | 0.2.180 (CLI 2.1.321) | [Docs](https://code.claude.com/docs/en/agent-sdk/python) | [claude-agent-sdk-python](https://github.com/anthropics/claude-agent-sdk-python) |
 
 From the repository root, this read-only command prints installed versions and
 package source locations without importing the agent runtime or loading credentials:

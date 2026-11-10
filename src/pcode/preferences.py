@@ -1140,7 +1140,9 @@ ANTHROPIC_THINKS_BY_DEFAULT = re.compile(
 # someone watching the agent, and nothing else: a status line's own format.
 # `(?!\d)`: `fable-5` must not also match a future `fable-50`, which would get
 # the beta (and a 400) without supporting it.
-ANTHROPIC_PROGRESS_UPDATES = re.compile(r"claude-(?:opus-5-5|sonnet-5-5|fable-5|mythos-5-1)(?!\d)")
+ANTHROPIC_PROGRESS_UPDATES = re.compile(
+    r"claude-(?:opus-5-5|sonnet-5-5|fable-5|mythos-5-[12])(?!\d)"
+)
 UPDATES_BETA = "thinking-display-updates-2026-08-18"
 
 

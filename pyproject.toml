@@ -21,7 +21,8 @@ classifiers = [
 requires-python = ">=3.14"
 dependencies = [
     "filelock>=4,<5",
-    "genai-prices>=0.1.7,<0.2",
+    # 0.2.2 is the first to price claude-fable-5-2.
+    "genai-prices>=0.2.2,<0.3",
     "httpx2>=2.13.1,<3",
     # Exact: pcode relies on prompt_toolkit internals, and point releases
     # change them. Bump on purpose after tests/test_prompt_toolkit_internals.py
@@ -38,9 +39,15 @@ dependencies = [
     # provider-native search or Exa key is available.
     # google covers both google and google-cloud providers; bedrock pulls boto3.
     "pydantic-ai-slim[anthropic,bedrock,duckduckgo,google,groq,mcp,openai,web-fetch,xai]>=2.56.0,<3",
+    # Floors for provider SDKs pydantic-ai-slim leaves loose. anthropic stays on
+    # 1.x: 2.x needs pydantic-ai-slim 2.61+. Pydantic AI's main branch caps
+    # google-genai below 3; follow it until a release says 3.x works.
+    "openai>=3.48.0,<4",
+    "google-genai>=2.34.0,<3",
     "rich>=15,<16",
     # FastMCP 4.x OAuth callback server selects Uvicorn's websockets-sansio protocol.
-    # Capped below 17 by google-genai (still <17 as of 2.29), not by pcode.
+    # The <17 cap came from google-genai, which allows <18 since 2.34; raise it
+    # once the OAuth callback flow is checked on websockets 17.
     "websockets>=15.0.1,<17",
 ]
 
@@ -49,7 +56,8 @@ dependencies = [
 # (about 95 MB to download, 215 MB installed); the sdist would run whatever
 # `claude` is on PATH instead of the CLI version pcode was verified against.
 claude = [
-    "claude-agent-sdk>=0.2.167,<0.3",
+    # 0.2.180 bundles Claude Code 2.1.321, the first to serve claude-fable-5-2.
+    "claude-agent-sdk>=0.2.180,<0.3",
 ]
 
 [project.urls]

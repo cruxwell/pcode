@@ -25,6 +25,27 @@ def test_anthropic_can_start_without_key(tmp_path):
     app.runtime.close()
 
 
+@pytest.mark.parametrize(
+    "name, fable_5_2",
+    [
+        ("claude-fable-5-2", True),
+        ("claude-mythos-5-2", True),
+        ("claude-fable-5-2-20261109", True),
+        # Fable 5 keeps Pydantic AI's profile, and a longer number is not 5.2.
+        ("claude-fable-5", False),
+        ("claude-fable-5-20", False),
+    ],
+)
+def test_fable_5_2_profile_binds_thinking_and_refuses_forced_tools(name, fable_5_2):
+    from pcode.auth import anthropic_model
+
+    profile = anthropic_model(f"anthropic:{name}", "synthetic-test-key").profile
+    assert profile["anthropic_binds_thinking_blocks"] is fable_5_2
+    assert profile["supports_forced_tool_choice"] is not fable_5_2
+    # Everything else still comes from Pydantic AI's own profile.
+    assert profile["anthropic_supports_adaptive_thinking"] is True
+
+
 def test_environment_key_used(monkeypatch, tmp_path):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-test-key")
     factory = Mock(return_value="test")

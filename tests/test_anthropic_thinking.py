@@ -298,6 +298,8 @@ def test_resume_applies_current_thinking_preference(monkeypatch, tmp_path):
         ("claude-fable-5", True),
         ("claude-fable-5-1", True),
         ("claude-mythos-5-1", True),
+        ("claude-fable-5-2", True),
+        ("claude-mythos-5-2", True),
         # A later model with a longer number is not assumed to support the beta.
         ("claude-fable-50", False),
         ("claude-opus-5-50", False),
