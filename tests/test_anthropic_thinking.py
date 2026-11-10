@@ -134,7 +134,6 @@ def test_thinking_stream_request_and_persistable_events(name, expected, status_l
             provider = AnthropicProvider(
                 anthropic_client=AsyncAnthropic(
                     api_key="test-key",
-                    auth_token="",
                     http_client=client,
                 )
             )

@@ -130,7 +130,9 @@ def test_native_anthropic_preserves_auth_base_url_and_input_limit(tmp_path):
         def handler(request):
             assert request.url.host == "deployment.example"
             assert request.url.path == "/prefix/v1/models/example"
-            assert request.headers["x-api-key"] == "synthetic-key"
+            # anthropic 2.x sends the key as a bearer token, 1.x as `x-api-key`.
+            sent = request.headers.get("x-api-key") or request.headers.get("authorization")
+            assert sent in {"synthetic-key", "Bearer synthetic-key"}
             return httpx2.Response(
                 200, json={"id": "example", "max_input_tokens": 90_000, "max_tokens": 8_000}
             )

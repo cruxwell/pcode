@@ -196,7 +196,12 @@ def test_exa_backs_the_local_tools_when_a_key_is_set(tmp_path, monkeypatch):
                 "Find example docs", model=FunctionModel(stream_function=model, profile=NO_NATIVE)
             )
             assert response.output == "Found the docs."
-            assert all(args == () and kwargs == {} for args, kwargs in ctor.call_args_list)
+            # pcode never handles the key: Exa reads it, or since Harness 0.66
+            # Harness passes it on from the same environment variable.
+            assert all(
+                args == () and kwargs in ({}, {"api_key": "test-exa-key"})
+                for args, kwargs in ctor.call_args_list
+            )
         client.search.assert_awaited_once()
         client.get_contents.assert_awaited_once_with(
             # One over the cap, so a longer page is marked truncated.
