@@ -99,6 +99,9 @@ def anthropic_credential_hint() -> str:
 # separate SDK catalog, so expose every OpenAI model ID and let the provider
 # enforce account access; Claude Code fronts Anthropic models.
 CATALOG_SOURCES = {"openai-codex": "openai", "claude": "anthropic"}
+# Released models Pydantic AI's KnownModelName doesn't list yet, by catalog
+# source. Drop an entry once the locked release lists it.
+UNLISTED_MODELS = {"anthropic": ("claude-fable-5-2",)}
 
 
 def claude_code_configured() -> bool:
@@ -166,6 +169,8 @@ def model_catalog(providers: set[str], current: str | None = None) -> list[str]:
         if isinstance(name, str):
             source, _, model = name.partition(":")
             by_source.setdefault(source, set()).add(model)
+    for source, extra in UNLISTED_MODELS.items():
+        by_source.setdefault(source, set()).update(extra)
     models = set()
     for provider in providers:
         source = CATALOG_SOURCES.get(provider, provider)
