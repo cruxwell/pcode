@@ -641,12 +641,93 @@ def test_snapshots_store_each_message_once_and_read_back_whole(tmp_path):
         assert [snapshot.messages for snapshot in latest] == states
         assert [snapshot.messages for snapshot in listed] == [states[3]]
         with sqlite3.connect(saved.directory / "steps.sqlite3") as connection:
-            stored = connection.execute("select count(*) from pcode_messages").fetchone()[0]
+            stored = connection.execute("select count(*) from snapshot_messages").fetchone()[0]
             rows = [text for (text,) in connection.execute("select messages from snapshots")]
         assert stored == len(states[-1])
         assert all(len(text) < 1_000 for text in rows)
     finally:
         saved.close()
+
+
+def _legacy_rows(saved, states):
+    """Rows as pcode stored them before Harness did: hashes, with bodies in `pcode_messages`."""
+    import hashlib
+    import zlib
+
+    from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+    directory = saved.directory
+    # The schema as a session already in use has it.
+    asyncio.run(
+        saved.store.save_snapshot(
+            ContinuableSnapshot(run_id="seed", step_index=0, messages=[], conversation_id="x")
+        )
+    )
+    saved.close()
+    with sqlite3.connect(directory / "steps.sqlite3") as connection:
+        connection.execute("delete from snapshots")
+        connection.execute(
+            "create table pcode_messages (hash text primary key, body blob not null) without rowid"
+        )
+        # A message nothing references any more, as a pruned checkpoint leaves.
+        connection.execute("insert into pcode_messages values ('orphan', x'00')")
+        for turn, messages in enumerate(states):
+            hashes = []
+            for message in json.loads(ModelMessagesTypeAdapter.dump_json(messages)):
+                text = json.dumps(message, separators=(",", ":"), sort_keys=True)
+                key = hashlib.blake2b(text.encode(), digest_size=16).hexdigest()
+                hashes.append(key)
+                connection.execute(
+                    "insert or ignore into pcode_messages values (?, ?)",
+                    (key, zlib.compress(text.encode())),
+                )
+            connection.execute(
+                "insert into snapshots (run_id, step_index, timestamp, state, messages)"
+                " values (?, 0, '2026-01-01T00:00:00+00:00', 'complete', ?)",
+                (f"run-{turn}", json.dumps({"pcode_message_refs": hashes})),
+            )
+
+
+def test_a_session_pcode_stored_itself_moves_to_harness_and_reads_back(tmp_path):
+    root = tmp_path / "sessions"
+    saved = SavedSession.create("test:local", tmp_path, root)
+    directory = saved.directory
+    states = growing_history(4)
+    _legacy_rows(saved, states)
+
+    reopened = SavedSession.open(directory.name, root)
+    try:
+
+        async def read():
+            return [await reopened.store.latest_snapshot(run_id=f"run-{t}") for t in range(4)]
+
+        assert [snapshot.messages for snapshot in asyncio.run(read())] == states
+        with sqlite3.connect(directory / "steps.sqlite3") as connection:
+            tables = {name for (name,) in connection.execute("select name from sqlite_master")}
+            stored = connection.execute("select count(*) from snapshot_messages").fetchone()[0]
+        assert "pcode_messages" not in tables
+        assert stored == len(states[-1])
+    finally:
+        reopened.close()
+
+
+def test_a_legacy_store_missing_a_message_is_left_untouched_and_still_opens(tmp_path):
+    root = tmp_path / "sessions"
+    saved = SavedSession.create("test:local", tmp_path, root)
+    directory = saved.directory
+    _legacy_rows(saved, growing_history(2))
+    with sqlite3.connect(directory / "steps.sqlite3") as connection:
+        connection.execute("delete from pcode_messages where hash != 'orphan'")
+        before = connection.execute("select seq, messages from snapshots").fetchall()
+    reopened = SavedSession.open(directory.name, root)
+    try:
+        with pytest.raises(ValueError):
+            asyncio.run(reopened.store.latest_snapshot(run_id="run-0"))
+    finally:
+        reopened.close()
+    with sqlite3.connect(directory / "steps.sqlite3") as connection:
+        assert connection.execute("select seq, messages from snapshots").fetchall() == before
+        assert connection.execute("select count(*) from pcode_messages").fetchone()[0] == 1
 
 
 def test_compacting_stores_whole_history_rows_once_and_keeps_them_readable(tmp_path):
@@ -668,9 +749,6 @@ def test_compacting_stores_whole_history_rows_once_and_keeps_them_readable(tmp_p
     saved.close()
     with sqlite3.connect(directory / "steps.sqlite3") as connection:
         connection.execute("delete from snapshots")
-        connection.execute("delete from pcode_messages")
-        # A message nothing references any more, as a pruned checkpoint leaves.
-        connection.execute("insert into pcode_messages values ('orphan', x'00')")
         for turn, messages in enumerate(states[:-1]):
             connection.execute(
                 "insert into snapshots (run_id, step_index, timestamp, state, messages)"
@@ -695,12 +773,11 @@ def test_compacting_stores_whole_history_rows_once_and_keeps_them_readable(tmp_p
 
     def stored_hashes():
         with sqlite3.connect(directory / "steps.sqlite3") as connection:
-            return {key for (key,) in connection.execute("select hash from pcode_messages")}
+            return {key for (key,) in connection.execute("select sha256 from snapshot_messages")}
 
     before, after = compact_snapshots(directory)
     assert after < before / 4
     hashes = stored_hashes()
-    assert "orphan" not in hashes
     assert len(hashes) == len(states[-1])
     assert [snapshot.messages for snapshot in asyncio.run(read())] == states
 
@@ -708,28 +785,6 @@ def test_compacting_stores_whole_history_rows_once_and_keeps_them_readable(tmp_p
     compact_snapshots(directory)
     assert stored_hashes() == hashes
     assert [snapshot.messages for snapshot in asyncio.run(read())] == states
-
-
-def test_a_snapshot_missing_a_stored_message_fails_loudly(tmp_path):
-    from pcode.sessions import PrivateStepStore
-
-    store = PrivateStepStore(database=tmp_path / "steps.sqlite3")
-    states = growing_history(2)
-
-    async def write_then_read():
-        for turn, messages in enumerate(states):
-            await store.save_snapshot(
-                ContinuableSnapshot(run_id="run", step_index=turn, messages=messages)
-            )
-        with sqlite3.connect(tmp_path / "steps.sqlite3") as connection:
-            connection.execute("delete from pcode_messages")
-        listed = await store.list_snapshots(run_id="run")
-        with pytest.raises(ValueError, match="does not hold"):
-            await store.latest_snapshot(run_id="run")
-        return listed
-
-    # A broken row is skipped by the listing rather than hiding the others.
-    assert asyncio.run(write_then_read()) == []
 
 
 def test_compacting_an_old_session_frees_space_and_keeps_what_resume_reads(tmp_path):
