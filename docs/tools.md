@@ -286,16 +286,16 @@ cleanliness details come from Git; test claims in the summary are the worker's
 own. Cancellation or failure keeps the checkout and record, and a task whose
 owning pcode died shows as failed.
 
-Only the parent can manage tasks:
+Only the parent can manage tasks, with one `task_worktree` tool:
 
-- `list_task_worktrees()` lists this checkout's tasks, including after a restart.
+- `list` shows this checkout's tasks, including after a restart.
   Task records are local files in the Git directory, never tracked files.
-- `integrate_task(task_id)` merges a finished result into its **parent branch**,
+- `integrate` merges a finished result into its **parent branch**,
   never into the main branch. Both checkouts must be clean (untracked files
   included), and the worker's branch must still match its result. Conflicts stay
   in the parent to resolve and commit before retrying. Review the diff first and
   run the combined checks afterward.
-- `discard_task(task_id, confirm=False)` removes an inactive task's checkout and
+- `discard` removes an inactive task's checkout and
   branch. Unintegrated or dirty work requires `confirm=True`, which the agent is
   told to use only after you approve. Running tasks cannot be discarded. This is
   an instruction to the model, not an approval prompt.

@@ -67,7 +67,7 @@ If [`worktree`](workspace.md#one-git-worktree-per-session) is on, manager mode
 gives every worker its own checkout and branch for the session, as if
 [`worker_isolation`](tools.md#worker-worktrees) were on too, so parallel workers
 can't trip over each other's edits. The agent merges each accepted worker's
-branch into the session's branch with `integrate_task`. Isolated workers start
+branch into the session's branch. Isolated workers start
 from the session's last commit, so the agent commits a checkpoint before
 delegating. Isolated workers
 can't be resumed for a follow-up, so a rework gets a fresh worker briefed with

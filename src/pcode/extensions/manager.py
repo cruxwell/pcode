@@ -59,7 +59,10 @@ for planning and checking. Small edits you can make yourself; use your judgement
 
 REMINDER = "<manager-mode>\nManager mode is on.\n{rules}{files}\n</manager-mode>"
 
-ISOLATION = "\n- Workers get isolated worktrees: commit before delegating, then `integrate_task`."
+ISOLATION = (
+    "\n- Workers get isolated worktrees: commit before delegating, then "
+    "`task_worktree(action='integrate')`."
+)
 
 
 def _excerpt(path: Path) -> str:

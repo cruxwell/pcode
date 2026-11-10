@@ -24,7 +24,7 @@ from pcode.preferences import save_preferences, set_project_root, update_prefere
 from pcode.task_worktrees import TaskWorktrees
 from pcode.task_worktrees import records as task_records
 
-PARENT_ONLY = {"delegate_task", "integrate_task", "discard_task", "list_task_worktrees"}
+PARENT_ONLY = {"delegate_task", "task_worktree"}
 
 
 def git(repo, *args):
@@ -164,7 +164,11 @@ def test_isolated_edit_commit_extension_rebind_close_then_parent_integrates(repo
                 assert git(repo, "rev-parse", "HEAD") == base
                 assert (session / (child_path.name + ".closed")).read_text() == str(child_path)
                 assert not (session / (repo.name + ".closed")).exists()
-                yield call("integrate_task", {"task_id": artifact["task_id"]}, "integrate")
+                yield call(
+                    "task_worktree",
+                    {"action": "integrate", "task_id": artifact["task_id"]},
+                    "integrate",
+                )
             else:
                 assert content(previous[-1])["status"] == "integrated"
                 yield "Integrated"
@@ -220,10 +224,18 @@ def test_concurrent_children_same_filename_and_serial_integration_conflict(repo)
                 assert len({a["worktree"] for a in artifacts}) == 2
                 assert len({a["base_commit"] for a in artifacts}) == 1
                 assert (repo / "file.txt").read_text() == "original\n"
-                yield call("integrate_task", {"task_id": artifacts[0]["task_id"]}, "merge-0")
+                yield call(
+                    "task_worktree",
+                    {"action": "integrate", "task_id": artifacts[0]["task_id"]},
+                    "merge-0",
+                )
             elif parent_step == 3:
                 assert content(previous[-1])["status"] == "integrated"
-                yield call("integrate_task", {"task_id": artifacts[1]["task_id"]}, "merge-1")
+                yield call(
+                    "task_worktree",
+                    {"action": "integrate", "task_id": artifacts[1]["task_id"]},
+                    "merge-1",
+                )
             else:
                 assert isinstance(previous[-1], RetryPromptPart)
                 assert "conflict" in str(previous[-1].content).lower()
@@ -347,13 +359,13 @@ def test_disabling_isolation_keeps_existing_task_recovery_available(repo):
     async def model(messages, info):
         previous = results(messages)
         if not previous:
-            yield call("list_task_worktrees", {})
+            yield call("task_worktree", {"action": "list"})
         elif len(previous) == 1:
             assert content(previous[-1])[0]["task_id"] == record.task_id
-            yield call("integrate_task", {"task_id": record.task_id})
+            yield call("task_worktree", {"action": "integrate", "task_id": record.task_id})
         elif len(previous) == 2:
             assert content(previous[-1])["status"] == "integrated"
-            yield call("discard_task", {"task_id": record.task_id})
+            yield call("task_worktree", {"action": "discard", "task_id": record.task_id})
         else:
             returned.append(content(previous[-1]))
             yield "Existing task recovered and cleaned"
@@ -470,11 +482,13 @@ def test_aside_keeps_task_management_tools_declared_but_refuses_them(repo):
             assert PARENT_ONLY <= {t.name for t in info.function_tools}
             yield {
                 0: DeltaToolCall(
-                    name="discard_task",
-                    json_args='{"task_id":"missing","confirm":true}',
+                    name="task_worktree",
+                    json_args='{"action":"discard","task_id":"missing","confirm":true}',
                     tool_call_id="discard",
                 ),
-                1: DeltaToolCall(name="list_task_worktrees", json_args="{}", tool_call_id="list"),
+                1: DeltaToolCall(
+                    name="task_worktree", json_args='{"action":"list"}', tool_call_id="list"
+                ),
             }
             return
         seen.update({part.tool_call_id: part.model_response_str() for part in returned})
@@ -987,3 +1001,17 @@ def test_worker_concurrency_limits_calls_in_one_response(repo, mode, configured_
     else:
         assert records == []
         assert returned == ["Worker complete"] * call_count
+
+
+def test_task_worktree_outside_a_checkout_asks_the_model_to_adjust(tmp_path):
+    from pydantic_ai import ModelRetry
+
+    from pcode.isolated_delegation import WorkspaceSubAgentToolset
+
+    toolset = WorkspaceSubAgentToolset.__new__(WorkspaceSubAgentToolset)
+    toolset.workspace = tmp_path
+    for action, task_id in (("list", ""), ("integrate", "t1"), ("discard", "t1")):
+        with pytest.raises(ModelRetry):
+            asyncio.run(toolset.task_worktree(action, task_id))
+    with pytest.raises(ModelRetry, match="needs a task_id"):
+        asyncio.run(toolset.task_worktree("integrate"))

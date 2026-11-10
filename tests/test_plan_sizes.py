@@ -72,3 +72,21 @@ def test_tools_store_the_size():
 def test_preview_keeps_the_size():
     part = ToolCallPart("write_plan", {"items": [{"content": "Build", "size": "L"}]}, "call")
     assert project_plan([], part)[0]["size"] == "L"
+
+
+def test_the_plan_tools_offer_one_status_tool_and_no_subtask_fields():
+    seen = {}
+
+    def model(messages, info):
+        seen["tools"] = {tool.name: tool for tool in info.function_tools}
+        return ModelResponse(parts=[TextPart("ok")])
+
+    Agent(FunctionModel(model), capabilities=[IdentifiedPlanning()]).run_sync("hi")
+    tools = seen["tools"]
+    assert "update_task_status" not in tools and "update_task_statuses" in tools
+    schema = str(tools["write_plan"].parameters_json_schema)
+    assert "parent_id" not in schema and "depends_on" not in schema and "size" in schema
+    for tool in tools.values():
+        assert "update_task_status" not in tool.description.replace("update_task_statuses", "")
+    # Hidden fields still validate, so stored steps round-trip.
+    assert SizedPlanItem(content="x", depends_on=["a"]).depends_on == ["a"]

@@ -3,8 +3,10 @@
 from dataclasses import dataclass
 
 from pydantic import Field
+from pydantic.json_schema import SkipJsonSchema
 from pydantic_ai import CapabilityEvent, RunContext
-from pydantic_ai_harness.planning import PlanItem, Planning, PlanningToolset
+from pydantic_ai_harness.planning import PlanItem, Planning, PlanningToolset, TaskStatus
+from pydantic_ai_harness.planning._types import PlanStatusUpdate
 
 from pcode.plan_sizes import Size
 from pcode.tool_display import PLAN_TOOLS
@@ -39,30 +41,48 @@ ID_GUIDANCE = (
 # trigger GUIDANCE drops and steers routine progress away from the cheaper
 # status tools.
 WRITE_PLAN_DESCRIPTION = (
-    "Create or replace the entire plan. Pass the whole ordered list every time -- "
-    "including steps that are unchanged, completed, or cancelled -- so there are no "
-    "indices to track. Use it to create the plan or restructure it; report routine "
-    "progress with `update_task_statuses` instead. Keep one step `in_progress` while "
-    "work is underway."
+    "Create or replace the whole plan: pass every step, including finished ones. "
+    "Report routine progress with `update_task_statuses` instead."
 )
 
+# Harness's own descriptions for the rest run long, and its remove_task one
+# points at `update_task_status`, which pcode does not offer.
+DESCRIPTIONS = {
+    "write_plan": WRITE_PLAN_DESCRIPTION,
+    "read_plan": "Read the plan: step ids, content and status.",
+    "add_task": "Append one pending step.",
+    "update_task_statuses": (
+        "Update one or more steps' statuses, e.g. complete one and start the next. "
+        "All or nothing; entries apply in order."
+    ),
+    "remove_task": (
+        "Delete a step added in error or no longer relevant; mark finished work completed instead."
+    ),
+}
 
-SIZE_DESCRIPTION = (
-    "Relative effort: S (a quick check or one-line change), M (typical; the default), "
-    "L (the bulk of the work, e.g. the main implementation or a long test run). "
-    "Omit for M."
-)
+SIZE_DESCRIPTION = "Effort: S quick, M typical (default), L the bulk of the work."
+STATUS_DESCRIPTION = "pending, in_progress, completed or cancelled."
+
+# The planning tools offered. `update_task_status` is left out: `update_task_statuses`
+# takes one update as well, and two near-identical tools only split the model's choice.
+PLAN_TOOL_NAMES = ("write_plan", "read_plan", "add_task", "update_task_statuses", "remove_task")
 
 
 class SizedPlanItem(PlanItem):
-    """One step in the plan.
+    """One plan step; omit `id` for a new one."""
 
-    `id` is auto-generated when omitted, so the model can create a plan without
-    ids and reference existing steps by id when restructuring. `size` weights
-    the user's progress bar.
-    """
-
+    status: TaskStatus = Field(default=TaskStatus.pending, description=STATUS_DESCRIPTION)
     size: Size | None = Field(default=None, description=SIZE_DESCRIPTION)
+    # pcode never enables subtasks, so the hierarchy fields stay out of the schema.
+    parent_id: SkipJsonSchema[str | None] = None
+    depends_on: SkipJsonSchema[list[str]] = Field(default_factory=list)
+
+
+class StatusUpdate(PlanStatusUpdate):
+    """One `{task_id, status}` change."""
+
+    task_id: str = Field(description="Step id.")
+    status: TaskStatus = Field(description=STATUS_DESCRIPTION)
 
 
 class SizedPlanningToolset(PlanningToolset):
@@ -77,6 +97,17 @@ class SizedPlanningToolset(PlanningToolset):
         """
         return await super().write_plan(ctx, list(items))
 
+    async def update_task_statuses(  # type: ignore[override]
+        self, ctx: RunContext, updates: list[StatusUpdate]
+    ) -> str:
+        """Update one or more steps' statuses.
+
+        Args:
+            ctx: Framework-provided run context.
+            updates: The changes, applied together or not at all.
+        """
+        return await super().update_task_statuses(ctx, list(updates))
+
     async def add_task(  # type: ignore[override]
         self,
         ctx: RunContext,
@@ -89,10 +120,8 @@ class SizedPlanningToolset(PlanningToolset):
         Args:
             ctx: Framework-provided run context.
             content: The step description in imperative form.
-            active_form: Optional present-continuous label, e.g. "Fix bug" -> "Fixing bug".
-            size: Relative effort: S (a quick check or one-line change), M (typical; the
-                default), L (the bulk of the work, e.g. the main implementation or a long
-                test run). Omit for M.
+            active_form: Optional present-continuous label, e.g. "Fixing bug".
+            size: Effort: S quick, M typical (default), L the bulk of the work.
         """
         store = await self._resolve(ctx)
         before = await store.get_items()
@@ -127,7 +156,9 @@ class IdentifiedPlanning(Planning):
 
     def __post_init__(self):
         # An explicit `descriptions` still wins per tool.
-        self.descriptions = {"write_plan": WRITE_PLAN_DESCRIPTION, **(self.descriptions or {})}
+        self.descriptions = {**DESCRIPTIONS, **(self.descriptions or {})}
+        if self.tools is None and not self.enable_subtasks:
+            self.tools = PLAN_TOOL_NAMES
 
     @classmethod
     def from_spec(cls, *, inject: bool = False, **kwargs):

@@ -264,9 +264,9 @@ question costs little more than the question.
 Tools work as they do in a turn. The model can read files, search the web, use
 MCP tools, and run shell commands or edit files if the question calls for it,
 with the usual permission checks. The exceptions are the tools that change the
-conversation itself: the plan (`write_plan`, `add_task`, `update_task_status`
-and the rest; `read_plan` is fine) and delegation (`delegate_task`,
-`integrate_task`, `discard_task`). A call to one is refused, and the model
+conversation itself: the plan (`write_plan`, `add_task`, `update_task_statuses`
+and the rest; `read_plan` is fine) and delegation (`delegate_task`, and anything
+but listing in `task_worktree` and `manage_worker`). A call to one is refused, and the model
 carries on answering. If the answer implies work, send it as a normal message.
 
 Nothing about a side question joins the conversation:

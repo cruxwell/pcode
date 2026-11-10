@@ -55,7 +55,7 @@ always the top-level session.
 (`background` and `resume` are Harness names it strips without a
 `DelegationTasks` owner, hence the different names.)
 
-Every result names its worker id. New parent tools beside `integrate_task`:
+Every result names its worker id. New parent tool beside `task_worktree`:
 `manage_worker(action, worker_id, text)` with action `answer`, `message`,
 `stop` or `list`: one tool rather than four, so the rarely used controls cost
 one schema. (Deferring them with Pydantic AI's `ToolSearch` was considered: on

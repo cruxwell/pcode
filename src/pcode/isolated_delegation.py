@@ -207,10 +207,10 @@ class WorkspaceSubAgents(SubAgents):
             "Use shared explicitly for work that needs the live parent files; coordinate writes. "
             "Specialized delegates retain their own tools and use shared mode. "
             "Isolated results are branches, not changes to your checkout. Review them, then "
-            "integrate_task into this parent branch and verify the combined changes. "
-            "Use list_task_worktrees to recover task IDs after restart. "
+            "task_worktree(action='integrate') into this parent branch and verify the combined "
+            "changes. task_worktree(action='list') recovers task IDs after a restart. "
             "Never push worker branches or merge them directly into mainline. "
-            "Ask the user before discard_task(confirm=True) destroys unintegrated work."
+            "Ask the user before a confirmed discard destroys unintegrated work."
             + PARENT_INSTRUCTIONS
             + (
                 # Harness's listing above reads as the only keys allowed.
@@ -228,9 +228,7 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
         self.worker_slots = worker_slots
         self.hub = hub if hub is not None else WorkerHub()
         super().__init__(**kwargs)
-        self.add_function(self.integrate_task)
-        self.add_function(self.discard_task)
-        self.add_function(self.list_task_worktrees)
+        self.add_function(self.task_worktree)
         # One tool, not four: the rarely used worker controls cost one schema.
         self.add_function(self.manage_worker)
 
@@ -303,7 +301,7 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
         worker_isolation=on in the active config. isolated requires both settings
         and clean tracked files, creates a branch at the parent's HEAD, and returns
         a persistent task record. shared is not read-only. Specialized agents only
-        support shared mode. Review isolated results before integrate_task.
+        support shared mode. Review isolated results before integrating them.
 
         Args:
             purpose: What the sub-agent is doing, at most 8 words, present tense
@@ -495,35 +493,37 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
         _outcome.set(ended.outcome)
         return ended
 
-    async def integrate_task(self, task_id: str) -> dict:
-        """Merge a completed task into its recorded parent, never mainline.
+    async def task_worktree(
+        self,
+        action: Literal["list", "integrate", "discard"],
+        task_id: str = "",
+        confirm: bool = False,
+    ) -> Any:
+        """List isolated worker tasks, merge one into its parent branch, or discard one.
 
-        Requires clean parent and child checkouts. Conflicts remain in the parent;
-        resolve and commit them, then retry. The child is kept for worktree cleanup.
+        integrate needs clean parent and child checkouts and never touches mainline;
+        conflicts stay in the parent to resolve, commit and retry. discard of
+        unintegrated or dirty work needs confirm=True, only after the user approves.
+
+        Args:
+            action: list (survives restarts), integrate, or discard.
+            task_id: The task, for integrate and discard.
+            confirm: For discard: the user approved losing unintegrated work.
         """
+        if action != "list" and not task_id.strip():
+            raise ModelRetry(f"task_worktree action={action!r} needs a task_id.")
         try:
-            record = await _joined(
-                asyncio.create_task(
-                    asyncio.to_thread(TaskWorktrees(self.workspace).integrate, task_id)
+            # Opening the store runs git and fails outside a checkout: keep it
+            # off the event loop for writes, and inside the retry handling.
+            if action == "list":
+                return [asdict(record) for record in TaskWorktrees(self.workspace).list()]
+            if action == "integrate":
+                work = asyncio.to_thread(lambda: TaskWorktrees(self.workspace).integrate(task_id))
+            else:
+                work = asyncio.to_thread(
+                    lambda: TaskWorktrees(self.workspace).discard(task_id, confirm)
                 )
-            )
-            return asdict(record)
-        except WorktreeError as error:
-            raise ModelRetry(str(error)) from error
-
-    async def discard_task(self, task_id: str, confirm: bool = False) -> dict:
-        """Remove an inactive task checkout and branch.
-
-        Unintegrated or dirty work requires confirm=True, only after the user has
-        explicitly approved discarding it. Active tasks cannot be discarded.
-        """
-        try:
-            record = await _joined(
-                asyncio.create_task(
-                    asyncio.to_thread(TaskWorktrees(self.workspace).discard, task_id, confirm)
-                )
-            )
-            return asdict(record)
+            return asdict(await _joined(asyncio.create_task(work)))
         except WorktreeError as error:
             raise ModelRetry(str(error)) from error
 
@@ -590,10 +590,3 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
         handle.stop_requested = True
         handle.cancel()
         return f"Stopping worker {handle.id}; a notice arrives when it has stopped."
-
-    async def list_task_worktrees(self) -> list[dict]:
-        """List this parent's persistent worker artifacts, including failed tasks."""
-        try:
-            return [asdict(record) for record in TaskWorktrees(self.workspace).list()]
-        except WorktreeError as error:
-            raise ModelRetry(str(error)) from error

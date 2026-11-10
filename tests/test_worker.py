@@ -72,9 +72,7 @@ def test_worker_inherits_tools_instructions_guards_and_reports_edits(tmp_path):
             return
         assert names == parent_names - {
             "delegate_task",
-            "integrate_task",
-            "discard_task",
-            "list_task_worktrees",
+            "task_worktree",
             "manage_worker",
         } | {"ask_parent"}
         assert {"write_file", "edit_file", "shell", "write_plan", "extension_tool"} <= names
@@ -130,7 +128,7 @@ def test_worker_inherits_native_and_local_web_policy(tmp_path, monkeypatch, mode
         native = [tool.kind for tool in info.model_request_parameters.native_tools]
         if "delegate_task" in names:
             parent_shape = (
-                names - {"delegate_task", "integrate_task", "discard_task", "list_task_worktrees"},
+                names - {"delegate_task", "task_worktree"},
                 native,
             )
             if not returns(messages):

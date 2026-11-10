@@ -170,24 +170,33 @@ def test_aside_guard_passes_everything_but_plan_writes_and_delegation():
     async def handler(args):
         return "ran"
 
-    async def call(name):
+    async def call(name, args=None):
         return await guard.wrap_tool_execute(
             None,
-            call=ToolCallPart(name, {}),
+            call=ToolCallPart(name, args or {}),
             tool_def=None,
-            args={},
+            args=args or {},
             handler=handler,
         )
 
     async def run():
-        for name in ["shell", "write_file", "edit_file", "read_plan", "list_task_worktrees"]:
+        for name in ["shell", "write_file", "edit_file", "read_plan"]:
             assert await call(name) == "ran"
+        for name in ["task_worktree", "manage_worker"]:
+            assert await call(name, {"action": "list"}) == "ran"
         for name in ["write_plan", "add_task", "update_task_statuses", "remove_task"]:
             with pytest.raises(ToolFailed):
                 await call(name)
-        for name in ["delegate_task", "integrate_task", "discard_task"]:
+        with pytest.raises(ToolFailed):
+            await call("delegate_task")
+        for name, action in [
+            ("task_worktree", "integrate"),
+            ("task_worktree", "discard"),
+            ("manage_worker", "answer"),
+            ("manage_worker", "stop"),
+        ]:
             with pytest.raises(ToolFailed):
-                await call(name)
+                await call(name, {"action": action})
 
     asyncio.run(run())
 

@@ -20,8 +20,9 @@ from pcode.tool_display import PLAN_TOOLS
 
 # Reading the plan is how a side question learns what the turn is doing.
 PLAN_READS = frozenset({"read_plan", "get_available_tasks"})
-# `list_task_worktrees` only reads, so it stays available with the plan reads.
-DELEGATION_TOOLS = frozenset({"delegate_task", "integrate_task", "discard_task"})
+DELEGATION_TOOLS = frozenset({"delegate_task"})
+# Tools with read and write actions: listing stays available, like the plan reads.
+ACTION_TOOLS = frozenset({"task_worktree", "manage_worker"})
 REFUSED_TOOLS = (PLAN_TOOLS - PLAN_READS) | DELEGATION_TOOLS
 
 
@@ -29,7 +30,10 @@ class AsideGuard(AbstractCapability):
     """Per-run capability for side questions; see the module docstring."""
 
     async def wrap_tool_execute(self, ctx, *, call, tool_def, args, handler):
-        if call.tool_name in REFUSED_TOOLS:
+        refused = call.tool_name in REFUSED_TOOLS or (
+            call.tool_name in ACTION_TOOLS and args.get("action") != "list"
+        )
+        if refused:
             # A failed result rather than `ModelRetry`: nothing about the call
             # can be corrected, and a retry would spend the tool's retry budget.
             raise ToolFailed(
