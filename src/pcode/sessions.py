@@ -471,7 +471,7 @@ def _legacy_refs(text: str) -> list[str] | None:
 
 
 def _legacy_messages(connection: sqlite3.Connection, hashes: list[str]) -> list:
-    """The messages a legacy row lists, from `pcode_messages`; ValueError if one is gone."""
+    """The messages a legacy row lists, from `pcode_messages`, None for one lost or corrupt."""
     distinct = list(set(hashes))
     bodies: dict[str, bytes] = {}
     for start in range(0, len(distinct), _LOOKUP_CHUNK):
@@ -482,13 +482,13 @@ def _legacy_messages(connection: sqlite3.Connection, hashes: list[str]) -> list:
                 f"SELECT hash, body FROM pcode_messages WHERE hash IN ({marks})", chunk
             ).fetchall()
         )
-    missing = len(distinct) - len(bodies)
-    if missing:
-        raise ValueError(f"snapshot references {missing} messages the store does not hold")
-    try:
-        return [json.loads(zlib.decompress(bodies[key])) for key in hashes]
-    except zlib.error as error:
-        raise ValueError(f"stored message is corrupt: {error}") from None
+    messages = []
+    for key in hashes:
+        try:
+            messages.append(json.loads(zlib.decompress(bodies[key])))
+        except KeyError, zlib.error, ValueError:
+            messages.append(None)
+    return messages
 
 
 def snapshot_messages_json(connection: sqlite3.Connection, seq: int, text: str) -> str:
@@ -501,8 +501,13 @@ def snapshot_messages_json(connection: sqlite3.Connection, seq: int, text: str) 
         return text
     refs = _legacy_refs(text)
     if refs is not None:
-        return json.dumps(_legacy_messages(connection, refs))
+        messages = _legacy_messages(connection, refs)
+        if None in messages:
+            raise ValueError("snapshot references messages the store does not hold")
+        return json.dumps(messages)
     expected = json.loads(text).get("stored_messages")
+    if not isinstance(expected, int):
+        raise ValueError("snapshot row holds neither messages nor references")
     found = [
         message
         for (message,) in connection.execute(
@@ -523,10 +528,18 @@ def _store_once(connection: sqlite3.Connection, seq: int, messages: list) -> Non
 
     Harness's on-disk form, which it keeps reading: each message's compact JSON
     once in `snapshot_messages` under its SHA-256, the row's order in
-    `snapshot_message_refs`, and only a count in the row itself.
+    `snapshot_message_refs`, and only a count in the row itself. A None (a
+    message a legacy row lost) is counted but not stored, so Harness reports
+    that row as missing messages and reads every other row as usual.
+
+    Legacy bodies were written with sorted keys, so they hash differently from
+    the same message as Harness writes it: a migrated session stores its
+    history once more when it continues, then never again.
     """
     keyed = []
     for message in messages:
+        if message is None:
+            continue
         text = json.dumps(message, separators=(",", ":"))
         keyed.append((hashlib.sha256(text.encode()).hexdigest(), text))
     # Refs first: Harness's trigger drops a message once nothing references it.
@@ -540,7 +553,7 @@ def _store_once(connection: sqlite3.Connection, seq: int, messages: list) -> Non
     )
     connection.execute(
         "UPDATE snapshots SET messages = ? WHERE seq = ?",
-        (json.dumps({"stored_messages": len(keyed)}), seq),
+        (json.dumps({"stored_messages": len(messages)}), seq),
     )
 
 
@@ -564,8 +577,8 @@ def _store_rows_once(connection: sqlite3.Connection, *, whole_histories: bool) -
     """Move legacy pcode rows (and, if asked, whole-history rows) into Harness's form.
 
     Needs Harness's tables (`_ensure_harness_schema`). Only safe while no store
-    has the session open. Raises ValueError, before the caller commits, on a
-    row whose references it cannot read.
+    has the session open. A row it cannot read stays as it was, and only that
+    row fails to load.
     """
     legacy = _has_table(connection, "pcode_messages")
     for (seq,) in connection.execute("SELECT seq FROM snapshots").fetchall():
@@ -576,7 +589,10 @@ def _store_rows_once(connection: sqlite3.Connection, *, whole_histories: bool) -
         if not isinstance(text, str):
             continue
         if text.lstrip().startswith("{"):
-            refs = _legacy_refs(text) if legacy else None
+            try:
+                refs = _legacy_refs(text) if legacy else None
+            except ValueError:
+                continue  # Malformed references: left for Harness to refuse.
             if refs is None:
                 continue  # Already Harness's form.
             messages = _legacy_messages(connection, refs)
@@ -597,8 +613,9 @@ def _store_rows_once(connection: sqlite3.Connection, *, whole_histories: bool) -
 def adopt_legacy_messages(database: Path) -> None:
     """Move a session's own message store into Harness's, once. Call under the session lock.
 
-    A store it cannot move is left exactly as it was: the session still opens,
-    and only the snapshot that lost a message fails to load, as before.
+    A row that lost a message moves too, marked as missing it, so only that
+    snapshot fails to load, as before. A store SQLite cannot rewrite is left as
+    it was, and the session still opens.
     """
     if not database.is_file():
         return
@@ -609,7 +626,7 @@ def adopt_legacy_messages(database: Path) -> None:
         _ensure_harness_schema(database)
         _store_rows_once(connection, whole_histories=False)
         connection.commit()
-    except sqlite3.Error, ValueError:
+    except sqlite3.Error:
         connection.rollback()
     finally:
         connection.close()

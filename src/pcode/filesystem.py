@@ -26,7 +26,7 @@ from pydantic_ai_harness.filesystem import FileSystemToolset
 from pydantic_ai_harness.filesystem._content import apply_replacements
 
 from pcode.edits import MAX_SOURCE, completed_change
-from pcode.images import MAX_IMAGE_BYTES, unsendable
+from pcode.images import unsendable
 from pcode.runtime import EditCompleted
 from pcode.tool_output_limits import inline_result_limit
 from pcode.workspace_filesystem import WorkspaceFileSystem
@@ -84,6 +84,10 @@ def grep_summary(
     if rest := ranked[len(rows) :]:
         rows.append(f"… {len(rest):,} more files with {sum(n for _, n in rest):,} matches")
     return "\n".join([head, *rows, *tail])
+
+
+# Harness's whole note, after its header line, for an image or PDF over its cap.
+HARNESS_TOO_LARGE = re.compile(r"\]\nToo large to view: the limit is \d+ bytes\.\n\Z")
 
 
 def too_large(why: str) -> str:
@@ -227,6 +231,9 @@ class DisplayFileSystemToolset(FileSystemToolset):
         result = await super()._read_file(scope, ctx, path, offset=offset, limit=limit)
         if isinstance(result, list):
             return viewable(result)
+        if isinstance(result, str) and HARNESS_TOO_LARGE.search(result):
+            # Harness's own note for a file over its 5 MB cap; say how to see it.
+            return result.removesuffix("\n") + " Make a smaller copy (shell) and read that.\n"
         return result
 
     async def _write_file(self, scope, ctx, path, content, *, expected_hash=None):
@@ -264,8 +271,6 @@ def viewable(result: list):
             return result
     if not media_type.startswith("image/"):
         return f"{header}{media_type} files are not shown; read their text another way.\n"
-    if len(raw) > MAX_IMAGE_BYTES:
-        return header + too_large(f"the limit is {MAX_IMAGE_BYTES} bytes")
     if why := unsendable(raw):
         return header + too_large(why)
     # The type a saved history comes back as, so reopening a session finds it equal.

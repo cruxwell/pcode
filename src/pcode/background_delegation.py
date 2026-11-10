@@ -22,6 +22,7 @@ from typing import Any
 
 import anyio
 import anyio.lowlevel
+from pydantic import ValidationError
 from pydantic_ai import CallToolsNode, CapabilityEvent
 from pydantic_ai._run_context import dispatch_event_stream
 from pydantic_ai.capabilities import AbstractCapability
@@ -155,6 +156,19 @@ class _Child:
     detached: bool = False
 
 
+# What Harness's own background tools report as a failed result (its private
+# `_SignalledError`); anything else ends the run.
+_REPORTED = (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    ToolFailed,
+    ToolFailedError,
+    ToolRetryError,
+    ValidationError,
+)
+
+
 def _failure(task_id: str, error: BaseException, max_retries: int) -> _Completion | BaseException:
     """What a detached child's error delivers: a failed result, or the error that ends the run.
 
@@ -165,9 +179,7 @@ def _failure(task_id: str, error: BaseException, max_retries: int) -> _Completio
     """
     if isinstance(error, RunCancelled):
         error = ToolFailed(f"the sub-agent was cancelled. {error}".strip())
-    elif not isinstance(
-        error, ToolRetryError | ToolFailedError | ApprovalRequired | CallDeferred | ModelRetry
-    ):
+    elif not isinstance(error, _REPORTED):
         return error
     content = (_format_background_failure(DELEGATE, task_id, error),)
     return _Completion(DELEGATE, max_retries, content)

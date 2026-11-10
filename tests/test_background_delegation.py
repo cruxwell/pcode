@@ -4,7 +4,7 @@ import json
 import pytest
 from pydantic_ai import Agent, CallToolsNode, ModelRetry, RunContext
 from pydantic_ai._run_context import dispatch_event_stream
-from pydantic_ai.exceptions import CallDeferred, RunCancelled
+from pydantic_ai.exceptions import CallDeferred, RunCancelled, ToolFailed
 from pydantic_ai.messages import ModelRequest, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai_harness.background_tools import BackgroundTools
@@ -238,6 +238,7 @@ def test_a_retried_turn_learns_its_detached_child_was_lost(monkeypatch):
         (ModelRetry("logs unreadable"), "logs unreadable"),
         (RunCancelled("stopped by the child"), "cancelled"),
         (CallDeferred(), "CallDeferred"),
+        (ToolFailed("guard refused"), "guard refused"),
     ],
 )
 def test_a_detached_failure_the_call_would_have_reported_is_a_message(error, detail):

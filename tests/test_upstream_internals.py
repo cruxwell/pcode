@@ -1,4 +1,4 @@
-"""Every private Pydantic AI, Harness and Anthropic SDK name pcode relies on, in one place.
+"""Every private Pydantic AI, Harness and Anthropic SDK name pcode imports, in one place.
 
 A release that moves or drops one fails here first, by name, rather than as
 scattered behavior failures. Upgrading: fix what fails here, then run the suite.
@@ -6,8 +6,12 @@ scattered behavior failures. Upgrading: fix what fails here, then run the suite.
 The second half guards the quieter trap. A pcode subclass overriding an
 upstream underscore method keeps working until a release removes or renames
 that method; the override is then never called and nothing fails. So every
-underscore method on such a subclass must override something, or be listed
-below as pcode's own helper.
+underscore method on a module-level subclass must override something, or be
+listed below as pcode's own helper.
+
+Not covered here: private attributes read off upstream objects (pinned beside
+their use, as in `test_background_delegation.py`) and the classes `browser.py`
+builds inside a function.
 """
 
 import ast

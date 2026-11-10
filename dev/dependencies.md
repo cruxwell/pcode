@@ -53,6 +53,11 @@ then show up in the rest of the suite; 0.66's were retries arriving as
 `ToolReturnPart(outcome="retried")`, summaries as `CompactionPart`,
 `keep_tokens` becoming a floor, and messages stored once per session.
 
+Session stores only migrate forward. Opening a session moves pcode's old
+`pcode_messages` rows into Harness's `snapshot_messages` tables
+(`sessions.adopt_legacy_messages`), and a pcode on Harness 0.56 cannot read
+those rows back, so a session opened by a newer pcode stays with it.
+
 ### Local Harness checkout
 
 Harness upstream source is the one dependency worth reading in full, because the

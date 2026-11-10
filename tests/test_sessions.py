@@ -711,23 +711,32 @@ def test_a_session_pcode_stored_itself_moves_to_harness_and_reads_back(tmp_path)
         reopened.close()
 
 
-def test_a_legacy_store_missing_a_message_is_left_untouched_and_still_opens(tmp_path):
+def test_a_legacy_row_that_lost_a_message_fails_alone(tmp_path):
     root = tmp_path / "sessions"
     saved = SavedSession.create("test:local", tmp_path, root)
     directory = saved.directory
-    _legacy_rows(saved, growing_history(2))
+    states = growing_history(2)
+    _legacy_rows(saved, states)
     with sqlite3.connect(directory / "steps.sqlite3") as connection:
-        connection.execute("delete from pcode_messages where hash != 'orphan'")
-        before = connection.execute("select seq, messages from snapshots").fetchall()
+        (text,) = connection.execute(
+            "select messages from snapshots where run_id = 'run-0'"
+        ).fetchone()
+        kept = json.loads(text)["pcode_message_refs"]
+        # Lose a message only the newer row references.
+        marks = ",".join("?" * len(kept))
+        connection.execute(f"delete from pcode_messages where hash not in ({marks})", kept)
     reopened = SavedSession.open(directory.name, root)
     try:
-        with pytest.raises(ValueError):
-            asyncio.run(reopened.store.latest_snapshot(run_id="run-0"))
+        intact = asyncio.run(reopened.store.latest_snapshot(run_id="run-0"))
+        assert intact.messages == states[0]
+        with pytest.raises(ValueError, match="missing"):
+            asyncio.run(reopened.store.latest_snapshot(run_id="run-1"))
     finally:
         reopened.close()
     with sqlite3.connect(directory / "steps.sqlite3") as connection:
-        assert connection.execute("select seq, messages from snapshots").fetchall() == before
-        assert connection.execute("select count(*) from pcode_messages").fetchone()[0] == 1
+        tables = {name for (name,) in connection.execute("select name from sqlite_master")}
+    # Moved once, damage and all: reopening does not try again.
+    assert "pcode_messages" not in tables
 
 
 def test_compacting_stores_whole_history_rows_once_and_keeps_them_readable(tmp_path):

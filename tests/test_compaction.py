@@ -470,9 +470,10 @@ def test_auto_compacts_inside_tool_loop_and_saves_before_next_request(tmp_path, 
         with pytest.raises(RuntimeError, match="next request failed"):
             async for _ in runtime.stream("Find auth bug"):
                 pass
-        assert len(effects) >= 2 and set(effects) == {"read"}
+        # Two results pass the threshold; the first is summarized, the second kept.
+        assert effects == ["read", "read"]
         assert len(summaries) == 1
-        assert len(main_calls) == len(effects) + 1
+        assert len(main_calls) == 3
         assert "Tests failed; not yet fixed." in str(runtime.history)
         assert any("automatically" in text for text in notices)
         runtime.close()
