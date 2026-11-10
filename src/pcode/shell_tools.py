@@ -111,6 +111,11 @@ class JobShellToolset(ShellToolset[AgentDepsT]):
     ) -> str:
         """Run a shell command and wait for its output and exit status.
 
+        Commands run under `/bin/sh -c`, not the user's login shell, so write
+        POSIX sh: no fish or zsh syntax, and no bash-only features such as
+        `<(...)` or `[[ ]]`. Wrap a command that needs bash in
+        `bash -c '...'`.
+
         If you have independent work to do while it runs, pass
         `background=True` and you get a job handle immediately instead.
 
