@@ -22,7 +22,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -51,6 +50,7 @@ from pcode.tool_display import (
     stored_source,
     subject,
     target,
+    tool_outcome,
 )
 from pcode.worker_channel import current_worker, notify
 
@@ -229,7 +229,7 @@ async def stream_child_activity(_ctx, events):
             name, args, started = tools.pop(
                 event.tool_call_id, (event.part.tool_name or "tool", {}, monotonic())
             )
-            outcome = "retry" if isinstance(event.part, RetryPromptPart) else event.part.outcome
+            outcome = tool_outcome(event.part)
             detail, failed = result_detail(
                 name, args, event.part.content, outcome, stored_source(args, called)
             )

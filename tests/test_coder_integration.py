@@ -154,7 +154,11 @@ def test_real_coder_batch_edits_are_atomic_and_emit_one_completed_diff(tmp_path,
             }
         else:
             parts = [part for msg in messages for part in msg.parts]
-            assert any(isinstance(p, RetryPromptPart) for p in parts) is not valid
+            retried = any(
+                isinstance(p, RetryPromptPart) or getattr(p, "outcome", None) == "retried"
+                for p in parts
+            )
+            assert retried is not valid
             if valid:
                 result = next(p for p in parts if isinstance(p, ToolReturnPart))
                 assert result.content == "Edited sample.txt."

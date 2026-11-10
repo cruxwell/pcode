@@ -20,7 +20,6 @@ from uuid import uuid4
 from filelock import FileLock, Timeout
 from pydantic import BaseModel
 from pydantic_ai_harness.step_persistence import (
-    ContinuableSnapshot,
     SqliteStepStore,
     StepEvent,
     ToolEffectRecord,

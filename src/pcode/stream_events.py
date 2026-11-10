@@ -30,7 +30,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     ToolCallPart,
 )
 from pydantic_ai_harness.shell import (
@@ -83,6 +82,7 @@ from pcode.tool_display import (
     stated_purpose,
     subject,
     target,
+    tool_outcome,
 )
 from pcode.turn import TurnContext
 from pcode.worker_channel import WorkerUpdate
@@ -432,7 +432,7 @@ class EventTranslator:
             event.tool_call_id,
             (event.part.tool_name or "tool", {}, monotonic()),
         )
-        outcome = "retry" if isinstance(event.part, RetryPromptPart) else event.part.outcome
+        outcome = tool_outcome(event.part)
         detail, failed = result_detail(
             name, args, event.part.content, outcome, self.spill_source(name, args)
         )
