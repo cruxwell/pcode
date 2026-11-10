@@ -2,7 +2,7 @@
 
 It never steers a worker itself: answering or messaging one closes the popup
 and prefills the main prompt, and the parent model relays it with its
-`answer_worker` / `message_worker` tools.
+`manage_worker` tool.
 """
 
 import asyncio

@@ -92,7 +92,7 @@ def question_detached_message(task_id: str, worker_id: str = "") -> str:
     return (
         f"A worker asked you a question, so this delegation ({_named(task_id, worker_id)}) "
         f"moved to the background; it is still working. {WAIT_ADVICE} The question follows; "
-        "answer it with answer_worker."
+        "answer it with manage_worker."
     )
 
 
@@ -240,7 +240,7 @@ class BackgroundDelegation(BackgroundTools):
             if child.cancelled:
                 if not stop_requested():
                     return
-                # Stopped by `stop_worker`, not by the run ending: say so.
+                # Stopped by `manage_worker(action='stop')`, not by the run ending: say so.
                 outcome = (stopped_message(task_id, worker_id),)
             elif child.error is not None:
                 outcome = _failure(task_id, child.error)

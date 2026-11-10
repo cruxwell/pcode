@@ -56,8 +56,11 @@ always the top-level session.
 `DelegationTasks` owner, hence the different names.)
 
 Every result names its worker id. New parent tools beside `integrate_task`:
-`answer_worker(worker_id, answer)`, `message_worker(worker_id, message)`,
-`stop_worker(worker_id)`, `list_workers()`.
+`manage_worker(action, worker_id, text)` with action `answer`, `message`,
+`stop` or `list`: one tool rather than four, so the rarely used controls cost
+one schema. (Deferring them with Pydantic AI's `ToolSearch` was considered: on
+`claude:` a discovery changes the tool list, which forks the CLI process and
+rewrites the whole prompt cache.)
 
 ### How a question reaches the parent
 
@@ -71,13 +74,13 @@ work, or (c) waiting at the end of its response for detached children.
   questions to the next request and marks them delivered.
 - (c) `BackgroundDelegation._wait_step` wakes on one and enqueues it.
 
-`ask_parent` waits up to `wait_seconds` (default 600) for `answer_worker`,
+`ask_parent` waits up to `wait_seconds` (default 600) for `manage_worker(action='answer')`,
 else returns "no answer; proceed with your fallback".
 
 The dashboard does not talk to the runtime directly (it may be across a
 socket). Its answer/message keys prefill the prompt with
 `Answer for w3: ` / `Message for w3: `; the parent's instructions say to relay
-those with `answer_worker` / `message_worker`.
+those with `manage_worker`.
 
 ## /agents dashboard
 

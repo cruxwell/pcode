@@ -231,10 +231,8 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
         self.add_function(self.integrate_task)
         self.add_function(self.discard_task)
         self.add_function(self.list_task_worktrees)
-        self.add_function(self.answer_worker)
-        self.add_function(self.message_worker)
-        self.add_function(self.stop_worker)
-        self.add_function(self.list_workers)
+        # One tool, not four: the rarely used worker controls cost one schema.
+        self.add_function(self.manage_worker)
 
     def _prepare_delegate(self, ctx, tool_def):
         """Offer `model` as any `provider:model` name, not only a /subagents key.
@@ -372,7 +370,7 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
         result = labelled(handle, result)
         if unread and isinstance(result, str):
             result += (
-                f"\n\n[pcode] {unread} message(s) sent with message_worker arrived after the "
+                f"\n\n[pcode] {unread} message(s) sent with manage_worker arrived after the "
                 "worker's last step and were not read."
             )
         return result
@@ -529,23 +527,48 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
         except WorktreeError as error:
             raise ModelRetry(str(error)) from error
 
-    async def answer_worker(self, ctx: RunContext, worker_id: str, answer: str) -> str:
-        """Answer a worker's ask_parent question."""
+    async def manage_worker(
+        self,
+        ctx: RunContext,
+        action: Literal["answer", "message", "stop", "list"],
+        worker_id: str = "",
+        text: str = "",
+    ) -> Any:
+        """Answer a worker's question, message or stop a running one, or list workers.
+
+        Args:
+            action: answer (its ask_parent question), message (read before its next
+                step), stop (background workers only), or list.
+            worker_id: The worker, such as w3; not needed for list.
+            text: The answer or message.
+        """
+        if action == "list":
+            return [handle.summary() for handle in self.hub.handles()]
+        if not worker_id.strip():
+            raise ModelRetry(f"manage_worker action={action!r} needs a worker_id.")
+        if action == "stop":
+            return self._stop_worker(worker_id)
+        if not text.strip():
+            raise ModelRetry(f"manage_worker action={action!r} needs text.")
+        if action == "answer":
+            return self._answer_worker(worker_id, text)
+        return self._message_worker(worker_id, text)
+
+    def _answer_worker(self, worker_id: str, answer: str) -> str:
         handle = self.hub.require(worker_id)
         question = handle.question
         if question is None:
             raise ModelRetry(
                 f"Worker {handle.id} has no open question"
                 + ("." if handle.running else f"; it is {handle.status}.")
-                + (" Use message_worker to tell it something." if handle.running else "")
+                + (" Use action='message' to tell it something." if handle.running else "")
             )
         question.answer = answer
         question.delivered = True
         question.answered.set()
         return f"Answered worker {handle.id}."
 
-    async def message_worker(self, ctx: RunContext, worker_id: str, message: str) -> str:
-        """Send a running worker a message, read before its next step."""
+    def _message_worker(self, worker_id: str, message: str) -> str:
         handle = self.hub.require(worker_id)
         if not handle.running:
             raise ModelRetry(
@@ -555,8 +578,7 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
         handle.inbox.append(message)
         return f"Queued for worker {handle.id}; it reads it before its next step."
 
-    async def stop_worker(self, ctx: RunContext, worker_id: str) -> str:
-        """Stop a background worker; its partial changes stay."""
+    def _stop_worker(self, worker_id: str) -> str:
         handle = self.hub.require(worker_id)
         if not handle.running:
             return f"Worker {handle.id} is already {handle.status}."
@@ -568,10 +590,6 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
         handle.stop_requested = True
         handle.cancel()
         return f"Stopping worker {handle.id}; a notice arrives when it has stopped."
-
-    async def list_workers(self, ctx: RunContext) -> list[dict]:
-        """List this session's workers and their status."""
-        return [handle.summary() for handle in self.hub.handles()]
 
     async def list_task_worktrees(self) -> list[dict]:
         """List this parent's persistent worker artifacts, including failed tasks."""

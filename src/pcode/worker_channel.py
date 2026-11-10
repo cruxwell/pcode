@@ -5,7 +5,8 @@ This adds what both sides need in between, for every delegating session:
 
 - Short worker ids (`w1`, `w2`, ...) the parent can name in later calls.
 - `ask_parent` for a worker that would otherwise guess, answered with the
-  parent's `answer_worker`; `message_worker` to steer a running worker.
+  parent's `manage_worker(action='answer')`; `action='message'` steers a
+  running worker.
 - The worker's final report and message history, kept so a later brief can
   include the report and a follow-up can resume the same worker.
 
@@ -67,9 +68,9 @@ CHILD_INSTRUCTIONS = (
 )
 
 PARENT_INSTRUCTIONS = (
-    "\nResults name a worker id (w1, ...). Answer a worker's question with `answer_worker`, "
-    "asking the user if only they can decide. Relay the user's 'Answer for w3: ...' or "
-    "'Message for w3: ...' with `answer_worker` or `message_worker`."
+    "\nResults name a worker id (w1, ...). Answer a worker's question with `manage_worker`, "
+    "asking the user if only they can decide; relay the user's 'Answer for w3: ...' or "
+    "'Message for w3: ...' with action answer or message."
 )
 
 
@@ -78,7 +79,7 @@ class WorkerUpdate(CapabilityEvent, namespace="pcode_workers", name="update"):
     """A change to one worker's dashboard state, keyed by its delegate call.
 
     `call_id` is explicit because the event is often emitted from another
-    tool's call (`answer_worker`, a review) or from inside the child.
+    tool's call (`manage_worker`, a review) or from inside the child.
     Fields left at None did not change.
     """
 
@@ -206,7 +207,8 @@ class WorkerHub:
                 )
             if handle.running:
                 raise ModelRetry(
-                    f"Worker {handle.id} is still running; use message_worker to steer it."
+                    f"Worker {handle.id} is still running; steer it with "
+                    "manage_worker(action='message')."
                 )
             if handle.workspace_mode == "isolated":
                 raise ModelRetry(
@@ -292,8 +294,9 @@ def question_message(handle: WorkerHandle, question: Question) -> str:
     )
     return (
         f"[pcode] Worker {handle.id} ({about}) asks: {question.text}\n{fallback}\n"
-        f"Answer with answer_worker('{handle.id}', ...). If only the user can decide, ask them "
-        "in visible text and relay their reply; the worker waits meanwhile."
+        f"Answer with manage_worker(action='answer', worker_id='{handle.id}', text=...). "
+        "If only the user can decide, ask them in visible text and relay their reply; "
+        "the worker waits meanwhile."
     ).replace("\n\n", "\n")
 
 

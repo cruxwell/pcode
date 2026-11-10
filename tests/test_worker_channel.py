@@ -69,7 +69,7 @@ def test_a_workers_question_reaches_the_parent_and_its_answer_comes_back(tmp_pat
         elif "Answered worker w1" in text:
             yield "Waiting for the worker."
         elif "asks: A or B?" in text:
-            yield call("answer_worker", "answer", worker_id="w1", answer="B")
+            yield call("manage_worker", "answer", action="answer", worker_id="w1", text="B")
         elif len(seen) == 1:
             yield call(
                 "delegate_task",
@@ -121,7 +121,7 @@ def test_a_background_worker_reads_parent_messages_before_its_next_step(tmp_path
             released.set()
             yield "Waiting."
         elif "Started in the background (worker w1" in text:
-            yield call("message_worker", "msg", worker_id="w1", message="use B")
+            yield call("manage_worker", "msg", action="message", worker_id="w1", text="use B")
         else:
             yield call(
                 "delegate_task",
@@ -203,7 +203,7 @@ def test_a_background_worker_can_be_stopped(tmp_path):
             yield "Waiting."
         elif "Started in the background" in text:
             await started.wait()
-            yield call("stop_worker", "stop", worker_id="w1")
+            yield call("manage_worker", "stop", action="stop", worker_id="w1")
         else:
             yield call(
                 "delegate_task",
@@ -270,7 +270,7 @@ def test_a_refused_follow_up_leaves_the_worker_as_it_was(tmp_path):
         if '"worker_id": "w1"' in text or "'worker_id': 'w1'" in text:
             yield "Final"
         elif "Unknown worker 'w9'" in text:
-            yield call("list_workers", "list")
+            yield call("manage_worker", "list", action="list")
         elif "REPORT ONE" in text:
             yield call(
                 "delegate_task",
@@ -324,3 +324,28 @@ def test_a_workers_tokens_include_its_final_response(tmp_path):
     events = run(runtime(tmp_path, parent, child))
     final = [e for e in events if isinstance(e, WorkerStatus) and e.status == "done"][-1]
     assert final.tokens and final.tokens > 0
+
+
+@pytest.mark.parametrize(
+    ("args", "error"),
+    [
+        ({"action": "answer"}, "action='answer' needs a worker_id"),
+        ({"action": "message", "worker_id": "w1"}, "action='message' needs text"),
+    ],
+)
+def test_manage_worker_says_which_argument_is_missing(tmp_path, args, error):
+    seen: list[str] = []
+
+    async def parent(messages, info):
+        text = request_text(messages)
+        seen.append(text)
+        if "needs" in text:
+            yield "Final"
+        else:
+            yield call("manage_worker", "manage", **args)
+
+    async def child(messages, info):
+        yield "unused"
+
+    run(runtime(tmp_path, parent, child))
+    assert error in seen[-1]
