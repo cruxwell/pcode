@@ -143,13 +143,17 @@ def test_summarizer_is_tool_free_focused_incremental_and_pair_safe(monkeypatch):
     asyncio.run(run())
 
 
+# How Harness before 0.66 stored a summary, which saved histories still hold.
+LEGACY_SUMMARY_PREFIX = "Summary of previous conversation:\n\n"
+
+
 @pytest.mark.parametrize("merged", [True, False])
 def test_recompaction_updates_the_newest_summary_and_keeps_only_its_own(monkeypatch, merged):
-    from pcode.compaction import SUMMARY_PREFIX
+    from pydantic_ai.messages import CompactionPart
 
     monkeypatch.setenv("PCODE_CONTEXT_WINDOW", "100000")
-    newest = SystemPromptPart(SUMMARY_PREFIX + "newest summary")
-    oldest = SystemPromptPart(SUMMARY_PREFIX + "oldest summary")
+    newest = SystemPromptPart(LEGACY_SUMMARY_PREFIX + "newest summary")
+    oldest = SystemPromptPart(LEGACY_SUMMARY_PREFIX + "oldest summary")
     first = UserPromptPart("Fix auth")
     # A compaction leaves its summary in a request of its own; pydantic-ai
     # merges that into the kept first user request on the next run.
@@ -165,14 +169,13 @@ def test_recompaction_updates_the_newest_summary_and_keeps_only_its_own(monkeypa
         previous = calls[-1][0][-1].parts[0].content.split("<previous-summary>")[-1]
         assert "newest summary" in previous
         assert "oldest summary" not in calls[-1][0][-1].parts[0].content
-        summaries = [
-            part.content
-            for message in result.messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX)
-        ]
-        assert summaries == [SUMMARY_PREFIX + SUMMARY]
+        parts = [part for message in result.messages for part in message.parts]
+        # The legacy summaries are replaced by one summary in Harness's own form.
+        assert [p.content for p in parts if isinstance(p, CompactionPart)] == [SUMMARY.strip()]
+        assert not any(
+            isinstance(p, SystemPromptPart) and p.content.startswith(LEGACY_SUMMARY_PREFIX)
+            for p in parts
+        )
         assert "Fix auth" in str(result.messages)
         assert is_provider_valid(result.messages)
 
@@ -180,7 +183,9 @@ def test_recompaction_updates_the_newest_summary_and_keeps_only_its_own(monkeypa
 
 
 def test_unmeasured_history_tokens_are_not_carried_forward_as_overhead(monkeypatch):
-    from pydantic_ai_harness.compaction._shared import estimate_token_count
+    from pydantic_ai_harness.compaction import estimate_token_count
+
+    from pcode.compaction import summary_index
 
     monkeypatch.setenv("PCODE_CONTEXT_WINDOW", "1000000")
 
@@ -193,8 +198,10 @@ def test_unmeasured_history_tokens_are_not_carried_forward_as_overhead(monkeypat
         assert result.changed
         # The kept tail is scaled by the measured density; the fresh summary
         # is not, and the ~150k gap is not padded on as overhead.
-        summary, tail = result.messages[:1], result.messages[1:]
-        assert result.after == estimate_token_count(summary) + 4 * estimate_token_count(tail)
+        at = summary_index(result.messages)
+        summary = result.messages[at : at + 1]
+        kept = result.messages[:at] + result.messages[at + 1 :]
+        assert result.after == estimate_token_count(summary) + 4 * estimate_token_count(kept)
 
     asyncio.run(run())
 
@@ -202,7 +209,7 @@ def test_unmeasured_history_tokens_are_not_carried_forward_as_overhead(monkeypat
 def test_media_in_the_kept_tail_is_counted_apart_from_text_density(monkeypatch):
     from pydantic_ai.messages import BinaryContent
 
-    from pcode.compaction import MEDIA_TOKENS, text_and_media
+    from pcode.compaction import MEDIA_TOKENS, summary_index, text_and_media
 
     monkeypatch.setenv("PCODE_CONTEXT_WINDOW", "1000000")
     shot = BinaryContent(data=b"\x89PNG" + b"x" * 400_000, media_type="image/png")
@@ -219,8 +226,14 @@ def test_media_in_the_kept_tail_is_counted_apart_from_text_density(monkeypatch):
         assert media == 2
         source[-1].usage = RequestUsage(input_tokens=text + 2 * MEDIA_TOKENS)
         result = await summarize(source, model=summary_model([]))
-        assert "Why this layout?" in str(result.messages[1:])
-        assert 2 * MEDIA_TOKENS < result.after < 3 * MEDIA_TOKENS
+        assert "Why this layout?" in str(result.messages[summary_index(result.messages) + 1 :])
+        # The same history without the images: they add their own count and
+        # nothing else, rather than inflating the text's measured density.
+        plain = deepcopy(source)
+        plain[-2].parts[0].content = ["Why this layout?"]
+        plain[-1].usage = RequestUsage(input_tokens=text)
+        without = await summarize(plain, model=summary_model([]))
+        assert result.after - without.after == 2 * MEDIA_TOKENS
         # A tool return's image bytes are not read as text either.
         returned = ModelRequest(parts=[ToolReturnPart("screenshot", ["page", shot], "s")])
         tokens, media = text_and_media([returned])
@@ -246,7 +259,13 @@ def test_oversized_summary_request_retries_with_tighter_caps(monkeypatch):
         yield SUMMARY
 
     async def run():
-        result = await summarize(history(), model=FunctionModel(stream_function=stream))
+        # A long run of older work, so what is summarized is too big on its own.
+        source = history()
+        source[1:1] = [
+            ModelResponse(parts=[TextPart("Earlier work " * 6000)]),
+            ModelRequest(parts=[UserPromptPart("Continue.")]),
+        ]
+        result = await summarize(source, model=FunctionModel(stream_function=stream))
         assert result.changed
         summary = [
             part.content
@@ -420,9 +439,12 @@ def test_auto_compacts_inside_tool_loop_and_saves_before_next_request(tmp_path, 
                 summaries.append(deepcopy(messages))
                 assert not info.function_tools
                 yield SUMMARY
-            elif not main_calls:
+            elif not summaries:
+                # Reads until the history needs compacting. Harness keeps the
+                # newest result verbatim, so only the older ones are summarized.
                 main_calls.append(deepcopy(messages))
-                yield {0: DeltaToolCall(name="read", json_args="{}", tool_call_id="tool-1")}
+                call_id = f"tool-{len(main_calls)}"
+                yield {0: DeltaToolCall(name="read", json_args="{}", tool_call_id=call_id)}
             else:
                 main_calls.append(deepcopy(messages))
                 assert "Tests failed; not yet fixed." in str(messages)
@@ -439,7 +461,7 @@ def test_auto_compacts_inside_tool_loop_and_saves_before_next_request(tmp_path, 
         @agent.tool_plain
         def read() -> str:
             effects.append("read")
-            return "diagnostic result " * 5000
+            return "diagnostic result " * 1500
 
         runtime = AgentRuntime(agent, session)
         runtime.auto_compact = True
@@ -448,9 +470,9 @@ def test_auto_compacts_inside_tool_loop_and_saves_before_next_request(tmp_path, 
         with pytest.raises(RuntimeError, match="next request failed"):
             async for _ in runtime.stream("Find auth bug"):
                 pass
-        assert effects == ["read"]
+        assert len(effects) >= 2 and set(effects) == {"read"}
         assert len(summaries) == 1
-        assert len(main_calls) == 2
+        assert len(main_calls) == len(effects) + 1
         assert "Tests failed; not yet fixed." in str(runtime.history)
         assert any("automatically" in text for text in notices)
         runtime.close()
@@ -512,7 +534,7 @@ def test_autocompact_change_mid_turn_applies_to_the_next_request(monkeypatch):
         def read() -> str:
             # As `/autocompact 50k` typed while this tool runs would.
             runtime.auto_compact, runtime.auto_compact_limit = True, 50_000
-            return "diagnostic result " * 5000
+            return "diagnostic result " * 1500
 
         runtime = AgentRuntime(agent)
         runtime.history = history() * 2

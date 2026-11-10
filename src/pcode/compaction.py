@@ -12,6 +12,7 @@ from dataclasses import dataclass, replace
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.messages import (
     BinaryContent,
+    CompactionPart,
     FilePart,
     FileUrl,
     ModelResponse,
@@ -27,13 +28,13 @@ from pydantic_ai_harness.compaction import (
     SummarizingCompaction,
     TieredCompaction,
     compact_now,
-)
-from pydantic_ai_harness.compaction._shared import (
+    drain_summary_events,
     estimate_context_tokens,
     estimate_token_count,
-    find_token_cutoff,
 )
-from pydantic_ai_harness.compaction._summarizing_compaction import drain_summary_events
+
+# Private: the tail budget must split history where Harness's own cut would.
+from pydantic_ai_harness.compaction._shared import find_token_cutoff
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, is_provider_valid
 
 from pcode.context_usage import compact_tokens
@@ -48,9 +49,6 @@ TIGHTENED_ATTEMPTS = ((2_000, 8_000), (500, 2_000))
 
 MARKER = "pcode.compaction.v1"
 SCHEMAS = "pcode.request-schemas.v1"
-# Harness's SummarizingCompaction opens the summary message with this text; it
-# keeps the constant private, so this copy is what the rest of pcode matches on.
-SUMMARY_PREFIX = "Summary of previous conversation:\n\n"
 # The character heuristic sees none of an image in a prompt, and a tool
 # return's image bytes as text, so media is counted apart at about what a
 # provider bills for a full-size image.
@@ -177,6 +175,20 @@ class CompactionResult:
         )
 
 
+def summary_index(messages) -> int | None:
+    """The index of the newest message holding a non-empty compaction summary.
+
+    Harness writes its summary as a `CompactionPart` of its own, unlike a
+    provider's compaction record, which names its provider.
+    """
+    for index in range(len(messages) - 1, -1, -1):
+        for part in messages[index].parts:
+            if isinstance(part, CompactionPart) and part.provider_name is None:
+                if (part.content or "").strip():
+                    return index
+    return None
+
+
 async def summarize(messages, *, model, focus=None, usage=None, window=None, parameters=None):
     """Return a validated candidate without mutating or publishing the source history."""
     from pcode.model_metadata import refresh_context
@@ -197,15 +209,20 @@ async def summarize(messages, *, model, focus=None, usage=None, window=None, par
     # a compaction to ~244k whose next request was billed 67k.
     text, media = text_and_media(messages)
     density = max(1.0, (before - schemas - media * MEDIA_TOKENS) / text) if text else 1.0
+    # Harness keeps the shortest suffix holding at least `keep` tokens, whole
+    # messages and tool batches included, so it overshoots by about its oldest
+    # batch. Past twice the budget that batch alone is bigger than the budget.
     cutoff = find_token_cutoff(messages, keep)
-    oversized_tail = estimate_token_count(messages[cutoff:]) > keep
+    oversized_tail = estimate_token_count(messages[cutoff:]) > 2 * keep
 
     def summarizer(tool_return_max_chars: int) -> SummarizingCompaction:
         return SummarizingCompaction(
             max_tokens=1,  # compact_now bypasses triggers; a trigger is required by Harness.
             # A single recent tool batch can exceed the entire tail budget. In that
             # case summarize the settled batch too; never split its call/return pair.
-            keep_tokens=None if oversized_tail else keep,
+            # A zero token floor summarizes everything (`keep_messages=0` would
+            # still keep the newest message, which is that batch).
+            keep_tokens=0 if oversized_tail else keep,
             keep_messages=0 if oversized_tail else 20,
             summary_prompt=SUMMARY_PROMPT,
             # The 500-character upstream default can hide the actual failure. Bound
@@ -244,23 +261,20 @@ async def summarize(messages, *, model, focus=None, usage=None, window=None, par
         return CompactionResult(messages, before, before, False)
     if not is_provider_valid(candidate):
         raise CompactionError("Compaction produced invalid tool-call pairs; history unchanged.")
-    # Harness returns text, not structured output: reject empty summaries explicitly.
-    summary_parts = candidate[0].parts
-    if not any(
-        getattr(part, "content", "").startswith(SUMMARY_PREFIX)
-        and getattr(part, "content", "").removeprefix(SUMMARY_PREFIX).strip()
-        for part in summary_parts
-        if isinstance(getattr(part, "content", None), str)
-    ):
+    # Harness retries an empty summary itself; this guards a strategy that
+    # changed the history without writing one.
+    at = summary_index(candidate)
+    if at is None:
         raise CompactionError("Compaction returned an empty summary; history unchanged.")
-    # The new summary is fresh prose the heuristic reads well; the kept tail is
-    # the same kind of history `density` was measured on.
-    tail, tail_media = text_and_media(candidate[1:])
+    # The new summary is fresh prose the heuristic reads well; what Harness kept
+    # around it (system prompts, the first request, the tail) is the same kind
+    # of history `density` was measured on.
+    kept, kept_media = text_and_media(candidate[:at] + candidate[at + 1 :])
     after = (
         schemas
-        + estimate_token_count(candidate[:1])
-        + math.ceil(density * tail)
-        + tail_media * MEDIA_TOKENS
+        + estimate_token_count(candidate[at : at + 1])
+        + math.ceil(density * kept)
+        + kept_media * MEDIA_TOKENS
     )
     if after >= before:
         raise CompactionError("Summary did not reduce context; history unchanged.")

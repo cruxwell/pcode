@@ -17,7 +17,6 @@ from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.toolsets import FunctionToolset
 
 from pcode.agent import create_agent, has_mcp_servers
-from pcode.compaction import SUMMARY_PREFIX
 from pcode.live import AgentRuntime
 from pcode.mcp import MCPState
 from pcode.mcp_notice import INSTRUCTIONS, TAG, MCPServers, render
@@ -253,7 +252,11 @@ def test_cancelling_the_first_connection_closes_the_servers_already_open():
 def test_list_returns_after_compaction_drops_it():
     runtime, requests = recording_runtime()
     summary = [
-        ModelRequest(parts=[UserPromptPart(content=SUMMARY_PREFIX + "Read the design doc.")]),
+        ModelRequest(
+            parts=[
+                UserPromptPart(content="Summary of the conversation so far: read the design doc.")
+            ]
+        ),
         ModelResponse(parts=[TextPart(content="Understood.")]),
     ]
 
