@@ -5,9 +5,10 @@ from dataclasses import fields
 from unittest.mock import patch
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai_harness.shell import Shell
+from retry_parts import is_retry
 
 from pcode.agent import create_coder
 from pcode.shell_tools import JobShell
@@ -42,7 +43,7 @@ def test_delegated_worker_reads_external_worktree_and_runs_shell(tmp_path):
         nonlocal parent_calls, child_calls
         names = {tool.name for tool in info.function_tools}
         parts = [part for msg in messages for part in msg.parts]
-        assert not any(isinstance(p, RetryPromptPart) for p in parts)
+        assert not any(is_retry(p) for p in parts)
         results = [str(p.content) for p in parts if isinstance(p, ToolReturnPart)]
         if "delegate_task" in names:
             parent_calls += 1

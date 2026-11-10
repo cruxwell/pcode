@@ -490,10 +490,11 @@ def tool_outcome(part) -> str:
     A retry is a `RetryPromptPart`, or since Pydantic AI 2.66 usually a
     `ToolReturnPart` whose `outcome` is "retried".
     """
-    outcome = getattr(part, "outcome", None)
-    if outcome is None or outcome == "retried":
+    from pydantic_ai.messages import RetryPromptPart
+
+    if isinstance(part, RetryPromptPart) or part.outcome == "retried":
         return "retry"
-    return outcome
+    return part.outcome
 
 
 def result_detail(

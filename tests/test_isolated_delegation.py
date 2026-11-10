@@ -16,6 +16,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import RetryPromptPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai_harness.subagents import SubAgent
+from retry_parts import is_retry
 
 from pcode.agent import create_agent
 from pcode.ext import ExtensionAPI, ExtensionUI, load_extensions
@@ -237,7 +238,7 @@ def test_concurrent_children_same_filename_and_serial_integration_conflict(repo)
                     "merge-1",
                 )
             else:
-                assert isinstance(previous[-1], RetryPromptPart)
+                assert is_retry(previous[-1])
                 assert "conflict" in str(previous[-1].content).lower()
                 yield "Conflict preserved"
             return
@@ -308,7 +309,7 @@ def test_isolation_requires_both_settings(repo, worktree, worker_isolation, mode
         assert_artifact(repo, content(returned))
     else:
         if mode == "isolated":
-            assert isinstance(returned, RetryPromptPart)
+            assert is_retry(returned)
             assert "worktree=on and worker_isolation=on" in str(returned.content)
         else:
             assert content(returned) == "Worker complete"
@@ -430,7 +431,7 @@ def test_rejected_isolation_is_actionable_and_never_starts_child(repo, tmp_path,
         yield "Unexpected child"
 
     returned = delegate_once(create_agent("test", workspace), child, workspace_mode="isolated")
-    assert isinstance(returned, RetryPromptPart)
+    assert is_retry(returned)
     assert expected in str(returned.content).lower()
     assert not seen
     assert TaskWorktrees(repo).list() == []
@@ -461,7 +462,7 @@ def test_specialized_delegate_is_shared_or_rejects_explicit_isolation(repo, mode
     agent = create_agent("test", repo, subagents=[SubAgent(specialist)])
     result = delegate_once(agent, child, agent_name="specialist", workspace_mode=mode)
     if mode == "isolated":
-        assert isinstance(result, RetryPromptPart)
+        assert is_retry(result)
         assert "shared" in str(result.content)
         assert not seen
     else:

@@ -10,9 +10,10 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import CombinedCapability, LocalWorkspace
-from pydantic_ai.messages import RetryPromptPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai_harness import Coder
+from retry_parts import is_retry
 from rich.console import Console
 
 from pcode.agent import create_agent, create_coder
@@ -142,7 +143,7 @@ def test_coder_file_paths_are_unconfined_but_workspace_relative(tmp_path, outsid
         elif requests == 2:
             parts = [p for message in messages for p in message.parts]
             assert any("outside marker" in str(getattr(p, "content", "")) for p in parts)
-            assert not any(isinstance(p, RetryPromptPart) for p in parts)
+            assert not any(is_retry(p) for p in parts)
             yield {0: DeltaToolCall(name="read_file", json_args=json.dumps({"path": "inside.txt"}))}
         else:
             results = [

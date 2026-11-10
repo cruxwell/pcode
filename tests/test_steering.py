@@ -4,8 +4,9 @@ import asyncio
 import json
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import RetryPromptPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from retry_parts import is_retry
 
 from pcode.agent import create_coder
 from pcode.live import AgentRuntime
@@ -64,7 +65,7 @@ def test_pending_steering_lets_the_whole_batch_run_then_arrives_once(tmp_path):
         assert (tmp_path / "two.txt").read_text() == "two.txt"
         assert not pending and requests == 2
         history = [part for message in runtime.history for part in message.parts]
-        assert not any(isinstance(part, RetryPromptPart) for part in history)
+        assert not any(is_retry(part) for part in history)
 
     asyncio.run(asyncio.wait_for(run(), timeout=10))
 
@@ -104,7 +105,7 @@ def test_steering_beside_a_limit_warning_reaches_history(tmp_path):
         async for _ in runtime.stream("Read it"):
             pass
         assert STEER in str(sent[1])
-        assert "[WarnNearLimits]" in str(sent[1])
+        assert "Configured run limits are approaching" in str(sent[1])
         assert STEER in str(runtime.history)
 
     asyncio.run(asyncio.wait_for(run(), timeout=10))
