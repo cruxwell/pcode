@@ -5,8 +5,13 @@ from dataclasses import dataclass
 from pydantic import Field
 from pydantic.json_schema import SkipJsonSchema
 from pydantic_ai import CapabilityEvent, RunContext
-from pydantic_ai_harness.planning import PlanItem, Planning, PlanningToolset, TaskStatus
-from pydantic_ai_harness.planning._types import PlanStatusUpdate
+from pydantic_ai_harness.planning import (
+    PlanItem,
+    Planning,
+    PlanningToolset,
+    PlanStatusUpdate,
+    TaskStatus,
+)
 
 from pcode.plan_sizes import Size
 from pcode.tool_display import PLAN_TOOLS

@@ -20,10 +20,10 @@ from dataclasses import dataclass, field
 
 from pydantic_ai import CapabilityEvent
 from pydantic_ai.messages import BinaryContent, BinaryImage
+from pydantic_ai_harness.filesystem import FileSystemToolset
 
 # Private, but the edit preview must apply replacements exactly as the edit did.
 from pydantic_ai_harness.filesystem._content import apply_replacements
-from pydantic_ai_harness.filesystem._toolset import FileSystemToolset
 
 from pcode.edits import MAX_SOURCE, completed_change
 from pcode.images import MAX_IMAGE_BYTES, unsendable

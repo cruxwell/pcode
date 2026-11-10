@@ -20,8 +20,10 @@ import anyio
 from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.messages import UserPromptPart
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
-from pydantic_ai_harness.subagents import SubAgents
-from pydantic_ai_harness.subagents._toolset import SubAgentToolset, _Ended
+from pydantic_ai_harness.subagents import SubAgents, SubAgentToolset
+
+# Private: `_crash_outcome` must return the record Harness's `_settle` reads.
+from pydantic_ai_harness.subagents._toolset import _Ended
 
 from pcode.delegation import ResumableAgent
 from pcode.error_report import error_message
