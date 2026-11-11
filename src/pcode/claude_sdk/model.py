@@ -12,6 +12,7 @@ from anthropic._models import construct_type
 from anthropic.types.beta import BetaRawMessageStreamEvent
 from pydantic_ai import RunContext
 from pydantic_ai._utils import PeekableAsyncStream
+from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import (
     ModelRequestParameters,
     StreamedResponse,
@@ -38,12 +39,45 @@ class ClaudeProvider(AnthropicProvider):
     def name(self) -> str:
         return "claude"
 
+    @property
+    def canonical_system(self) -> str:
+        # Not Anthropic's, though the CLI's thinking signatures are: the
+        # models that bind a thinking block to the prompt that produced it
+        # (Fable 5.x, the 5.5 family) reject one made under the CLI's own
+        # prompt, so after a `/model` switch to `anthropic:` every earlier
+        # block failed the first request and was dropped. Under its own system
+        # that thinking is replayed to the API as text instead, and the CLI's
+        # stand-in web blocks (`web.py`) are no longer sent to it at all.
+        return "claude"
+
+    @property
+    def compatible_systems(self) -> frozenset[str]:
+        # The CLI still takes what it took before: histories saved while this
+        # provider claimed Anthropic's system, and `anthropic:` responses.
+        return frozenset({"anthropic"})
+
     def __init__(self) -> None:
         super().__init__(
             anthropic_client=AsyncAnthropic(
                 api_key="unused", base_url="https://claude-code.invalid", max_retries=0
             )
         )
+
+
+def restamp(messages) -> None:
+    """Clear the system a response saved before `canonical_system` was ours claims, in place.
+
+    Those responses say `anthropic`, which Pydantic AI trusts over the
+    provider's name, so their thinking would still go to the API signed and
+    fail once. Unstamped, the name decides; the CLI still accepts them.
+    """
+    for message in messages:
+        if (
+            isinstance(message, ModelResponse)
+            and message.provider_name == "claude"
+            and message.canonical_system == "anthropic"
+        ):
+            message.canonical_system = None
 
 
 class _Events:

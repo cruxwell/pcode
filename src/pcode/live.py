@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import warnings
 from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing, asynccontextmanager, nullcontext
 from copy import deepcopy
@@ -32,6 +33,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     UserPromptPart,
 )
+from pydantic_ai.models.anthropic import AnthropicStaleThinkingBlockWarning
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.filesystem import FileSystem
@@ -100,6 +102,21 @@ from pcode.stream_events import EventTranslator
 from pcode.token_accounting import TokenAccounting, TokenTotals
 from pcode.tool_display import label, target
 from pcode.turn import TurnContext
+
+# Pydantic AI already recovered (it resent without the stale thinking) and
+# recorded the drop on the response; printed, the warning lands on top of the
+# terminal UI as a wall of stderr.
+warnings.filterwarnings("ignore", category=AnthropicStaleThinkingBlockWarning)
+
+
+def _for_run(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """`messages`, with `claude:` responses from older saves restamped; see `restamp`."""
+    # Imported only when needed: the `claude:` package is otherwise unused.
+    if any(isinstance(m, ModelResponse) and m.provider_name == "claude" for m in messages):
+        from pcode.claude_sdk.model import restamp
+
+        restamp(messages)
+    return messages
 
 
 def _local_workspace(agent) -> Path | None:
@@ -506,7 +523,7 @@ class AgentRuntime:
                 enabled_servers(self.mcp.servers, self.mcp.unavailable),
                 agent.run_stream_events(
                     None if joined else pending.pop(),
-                    message_history=messages,
+                    message_history=_for_run(messages),
                     workspace=self._run_workspace(agent),
                     toolsets=[self.mcp.live()],
                     conversation_id=conversation_id,
@@ -1331,7 +1348,7 @@ class AgentRuntime:
             enabled_servers(self.mcp.servers, self.mcp.unavailable),
             agent.run_stream_events(
                 content,
-                message_history=context.messages(),
+                message_history=_for_run(context.messages()),
                 workspace=self._run_workspace(agent),
                 toolsets=[self.mcp.live()],
                 conversation_id=chosen.conversation_id,

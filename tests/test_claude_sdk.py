@@ -1339,3 +1339,38 @@ def test_replay_renders_cli_web_blocks():
     assert "T: https://u" in block["text"] and "page text" in block["text"]
     assert "T: https://u\n\nAbout u." in block["text"]
     assert "(error: Fetch failed: 503)" in block["text"]
+
+
+def test_cli_thinking_is_not_replayed_signed_to_the_api():
+    """Binding models (Fable 5.x, the 5.5 family) reject thinking signed under
+    the CLI's prompt, so a `/model` switch failed its first request."""
+    from pydantic_ai.messages import ModelResponse, ThinkingPart
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    from pcode.claude_sdk.model import ClaudeModel, ClaudeProvider, restamp
+
+    cli = ClaudeModel(MODEL, provider=ClaudeProvider())
+    api = AnthropicModel(MODEL, provider=AnthropicProvider(api_key="t"))
+
+    def signed(provider: str, stamp: str | None) -> tuple[ModelResponse, ThinkingPart]:
+        part = ThinkingPart("why", signature="sig", provider_name=provider)
+        return ModelResponse(parts=[part], provider_name=provider, canonical_system=stamp), part
+
+    fresh = signed("claude", cli._canonical_system_stamp)
+    assert not api.accepts_stateless_artifacts(*fresh)
+    assert cli.accepts_stateless_artifacts(*fresh)
+    # What the CLI took before still goes to it signed: a history saved while
+    # this provider claimed Anthropic's system, and the API's own thinking.
+    assert cli.accepts_stateless_artifacts(*signed("claude", "anthropic"))
+    assert cli.accepts_stateless_artifacts(*signed("anthropic", None))
+    assert api.accepts_stateless_artifacts(*signed("anthropic", None))
+
+    # A saved response's own stamp outranks the provider; cleared, it no
+    # longer reaches the API signed, and the CLI still takes it.
+    saved = signed("claude", "anthropic")
+    direct = signed("anthropic", "anthropic")
+    restamp([saved[0], direct[0]])
+    assert not api.accepts_stateless_artifacts(*saved)
+    assert cli.accepts_stateless_artifacts(*saved)
+    assert direct[0].canonical_system == "anthropic"
