@@ -62,7 +62,7 @@ class StreamingEditPreview:
             return clear
 
         part = self.parts[index]
-        if part.tool_name not in ("edit_file", "write_file", "run_code"):
+        if part.tool_name not in ("edit_file", "write_file", "run_code", "run_workflow"):
             return clear
         if isinstance(part.args, str) and len(part.args) > MAX_SOURCE * 2:
             self.blocked.add(index)
@@ -84,7 +84,7 @@ class StreamingEditPreview:
             return clear
         if not isinstance(complete, dict) or not isinstance(partial, dict):
             return clear
-        if part.tool_name == "run_code":
+        if part.tool_name in ("run_code", "run_workflow"):
             return clear + self._code_preview(index, partial, complete)
         path = complete.get("path")
         # Never expose content until the complete path is known and checked.

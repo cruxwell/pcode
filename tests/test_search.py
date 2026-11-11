@@ -72,6 +72,7 @@ def test_bundled_extension_is_discovered_last_and_shadowed_by_user_files(tmp_pat
         "sandbox (bundled): off by default (/extensions on sandbox)",
         "session_history (bundled): 2 tools",
         "web_research (bundled): 2 tools",
+        "workflows (bundled): off by default (/extensions on workflows)",
     ]
 
     user_extension_dir().mkdir(parents=True, exist_ok=True)

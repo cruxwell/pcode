@@ -21,6 +21,7 @@ LABELS = {
     # Verb + object, so a group tally ("Read file ✓ 15 · Run shell ✓ 1") says
     # what each count acted on without the per-row path or command beside it.
     "run_code": "Run code",
+    "run_workflow": "Run workflow",
     "delegate_task": "Delegate task",
     "read_file": "Read file",
     "read_tool_result": "Read results",
@@ -354,7 +355,7 @@ def session_name(session_id: str) -> str:
 
 def target(name: str, args: dict, source: str = "") -> str:
     """`source` names the tool whose stored output a `read_tool_result` call reads."""
-    if name == "run_code":
+    if name in {"run_code", "run_workflow"}:
         code = args.get("code")
         return code_preview(code) if isinstance(code, str) else "code unavailable"
     if name == "delegate_task":
