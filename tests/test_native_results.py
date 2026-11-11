@@ -20,13 +20,19 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     TextPart,
     ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
 from pcode.live import AgentRuntime
-from pcode.native_results import drop_unreadable_results, unreadable_native_results
+from pcode.native_results import (
+    drop_orphaned_native_parts,
+    drop_unreadable_results,
+    unreadable_native_results,
+)
 
 URL = "https://learn.microsoft.com/azure/deployments"
 REJECTION = {
@@ -225,3 +231,164 @@ def test_a_history_that_stays_rejected_fails_instead_of_looping():
 
     # One repair attempt, then the failure is the user's to see.
     assert len(bodies) == 2
+
+
+def spanning_response(*, with_call: bool) -> ModelResponse:
+    """The tail of a `code_execution` call that started in an earlier response.
+
+    Its code ran a fetch, which names the call as its `caller`, and the
+    call's own result lands here too. `with_call` keeps the opening call, as
+    an uncompacted history would.
+    """
+    caller = {"anthropic_caller": {"tool_id": "srvtoolu_exec", "type": "code_execution_20260120"}}
+    parts = [
+        NativeToolCallPart(
+            tool_name="web_fetch",
+            tool_call_id="srvtoolu_fetch",
+            args={"url": URL},
+            provider_name="anthropic",
+            provider_details=caller,
+        ),
+        NativeToolReturnPart(
+            tool_name="web_fetch",
+            tool_call_id="srvtoolu_fetch",
+            provider_name="anthropic",
+            provider_details=caller,
+            content={
+                "type": "web_fetch_tool_result_error",
+                "error_code": "url_not_in_prior_context",
+            },
+        ),
+        NativeToolReturnPart(
+            tool_name="code_execution",
+            tool_call_id="srvtoolu_exec",
+            provider_name="anthropic",
+            content={"stdout": "81", "return_code": 0},
+        ),
+        TextPart(content="The page could not be fetched."),
+    ]
+    if with_call:
+        parts.insert(
+            0,
+            NativeToolCallPart(
+                tool_name="code_execution",
+                tool_call_id="srvtoolu_exec",
+                args={"code": "await web_fetch(...)"},
+                provider_name="anthropic",
+            ),
+        )
+    return ModelResponse(parts=parts)
+
+
+def test_native_parts_whose_call_was_compacted_away_are_dropped():
+    response = spanning_response(with_call=False)
+    messages = [ModelRequest(parts=[UserPromptPart(content="backfill?")]), response]
+    also_held = list(messages)
+
+    # The fetch call (its caller is gone), its result, and the orphaned result.
+    assert drop_orphaned_native_parts(messages) == 3
+    assert [type(part).__name__ for part in also_held[1].parts] == ["TextPart"]
+
+
+def test_a_complete_native_chain_is_left_alone():
+    # The opening call in an earlier response, a client tool round between.
+    opening = ModelResponse(
+        parts=[
+            NativeToolCallPart(
+                tool_name="code_execution",
+                tool_call_id="srvtoolu_exec",
+                args={"code": "x"},
+                provider_name="anthropic",
+            ),
+            ToolCallPart("shell", {"command": "ls"}, "toolu_1"),
+        ]
+    )
+    tail = spanning_response(with_call=False)
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content="backfill?")]),
+        opening,
+        ModelRequest(parts=[ToolReturnPart("shell", "ok", "toolu_1")]),
+        tail,
+    ]
+    assert drop_orphaned_native_parts(messages) == 0
+    assert len(tail.parts) == 4
+    assert drop_orphaned_native_parts([spanning_response(with_call=True)]) == 0
+
+
+def test_a_history_with_orphaned_native_parts_is_repaired_and_sent_again():
+    rejection = {
+        "type": "error",
+        "error": {
+            "type": "invalid_request_error",
+            "message": "source tool `srvtoolu_exec` not found for tool use block `srvtoolu_fetch`",
+        },
+    }
+    bodies = []
+    notices = []
+
+    def handle(request):
+        bodies.append(json.loads(request.content))
+        if len(bodies) == 1:
+            return httpx2.Response(400, json=rejection)
+        return httpx2.Response(
+            200, headers={"content-type": "text/event-stream"}, content=reply("Recovered.")
+        )
+
+    runtime = runtime_with(handle)
+    runtime.retry_notice = notices.append
+    runtime.history = [
+        ModelRequest(parts=[UserPromptPart(content="backfill?")]),
+        spanning_response(with_call=False),
+    ]
+    try:
+        asyncio.run(drain(runtime)())
+    finally:
+        runtime.close()
+
+    assert len(bodies) == 2
+    assert "srvtoolu_fetch" not in json.dumps(bodies[1])
+    assert "srvtoolu_exec" not in json.dumps(bodies[1])
+    assert notices and "compacted away" in notices[0]
+
+
+def test_a_response_left_empty_keeps_a_note():
+    response = ModelResponse(parts=spanning_response(with_call=False).parts[:3])
+    assert drop_orphaned_native_parts([response]) == 3
+    assert [type(part).__name__ for part in response.parts] == ["TextPart"]
+    assert "compacted" in response.parts[0].content
+
+
+def test_another_providers_unmatched_ids_are_left_alone():
+    # Gemini invents an id for a call and its result separately when it sends none.
+    response = ModelResponse(
+        parts=[
+            NativeToolCallPart(
+                tool_name="code_execution", tool_call_id="a", provider_name="google"
+            ),
+            NativeToolReturnPart(
+                tool_name="code_execution", tool_call_id="b", provider_name="google", content={}
+            ),
+        ]
+    )
+    assert drop_orphaned_native_parts([response]) == 0
+    assert len(response.parts) == 2
+
+
+def test_an_unrelated_rejection_of_a_sound_history_is_not_resent():
+    bodies = []
+
+    def handle(request):
+        bodies.append(request)
+        return httpx2.Response(400, json={"type": "error", "error": {"message": "bad"}})
+
+    runtime = runtime_with(handle)
+    runtime.history = [
+        ModelRequest(parts=[UserPromptPart(content="backfill?")]),
+        spanning_response(with_call=True),
+    ]
+    try:
+        with pytest.raises(ModelHTTPError):
+            asyncio.run(drain(runtime)())
+    finally:
+        runtime.close()
+    assert len(bodies) == 1

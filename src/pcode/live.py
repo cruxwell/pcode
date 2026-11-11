@@ -24,7 +24,7 @@ from pydantic_ai import (
     ToolReturn,
 )
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
-from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -68,7 +68,11 @@ from pcode.mcp import (
     find_cause,
 )
 from pcode.mcp_notice import enabled_servers
-from pcode.native_results import drop_unreadable_results, unreadable_native_results
+from pcode.native_results import (
+    drop_orphaned_native_parts,
+    drop_unreadable_results,
+    unreadable_native_results,
+)
 from pcode.plan_preview import StreamingPlanPreview
 from pcode.planning import SizedPlanItem
 from pcode.preferences import SETTINGS, load_preferences, parse_token_count
@@ -937,6 +941,7 @@ class AgentRuntime:
                     self.history = self.history[:-1]
         attempt = 0
         repaired = False
+        orphans_checked = False
         undeferred = False
         self._images_reported.clear()
         chosen = None
@@ -984,6 +989,24 @@ class AgentRuntime:
                             f"Dropped {dropped} unreadable web search "
                             f"{'result' if dropped == 1 else 'results'} from an earlier "
                             "sign-in, and retrying…"
+                        )
+                        continue
+                # A history compacted before the cut learned about native
+                # calls spanning responses still holds the orphans. Checking
+                # the history rather than the wording also covers a 400 that
+                # names an orphaned result instead of a caller.
+                if (
+                    not orphans_checked
+                    and isinstance(error, ModelHTTPError)
+                    and error.status_code == 400
+                ):
+                    orphans_checked = True
+                    if dropped := drop_orphaned_native_parts(self.context.history):
+                        send = None
+                        self.retry_notice(
+                            f"Dropped {dropped} server tool "
+                            f"{'block' if dropped == 1 else 'blocks'} whose originating "
+                            "call was compacted away, and retrying…"
                         )
                         continue
                 if attempt == self.retry_attempts or not transient(error):

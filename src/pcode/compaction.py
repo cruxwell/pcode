@@ -38,6 +38,7 @@ from pydantic_ai_harness.compaction._shared import find_token_cutoff
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, is_provider_valid
 
 from pcode.context_usage import compact_tokens
+from pcode.native_results import drop_orphaned_native_parts
 from pcode.output_limits import ModelOutputLimits
 
 # Caps for the summary request. The first attempt keeps evidence readable; the
@@ -259,6 +260,9 @@ async def summarize(messages, *, model, focus=None, usage=None, window=None, par
     )
     if candidate == messages:
         return CompactionResult(messages, before, before, False)
+    # Harness pairs only client tool calls across the cut, so a kept response
+    # can hold native results of a call it summarized away.
+    drop_orphaned_native_parts(candidate)
     if not is_provider_valid(candidate):
         raise CompactionError("Compaction produced invalid tool-call pairs; history unchanged.")
     # Harness retries an empty summary itself; this guards a strategy that

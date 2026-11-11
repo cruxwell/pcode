@@ -693,3 +693,58 @@ def test_override_display_and_safe_compaction_errors(monkeypatch):
     assert context_label("anthropic:claude-sonnet-4-6", []) == " · 0/32k"
     error = CompactionError("Not enough room. Use /compact with a focus or /new.")
     assert error_message(error) == str(error)
+
+
+def test_a_cut_through_a_spanning_native_call_drops_its_orphans(monkeypatch):
+    """A `code_execution` call can open in one response and finish in a later
+    one; summarizing the first must not leave the second's results behind."""
+    from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart
+
+    monkeypatch.setenv("PCODE_CONTEXT_WINDOW", "100000")
+    caller = {"anthropic_caller": {"tool_id": "srvtoolu_exec", "type": "code_execution_20260120"}}
+    source = [
+        ModelRequest(parts=[UserPromptPart("Backfill the metrics")]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    "code_execution", {"code": "x"}, "srvtoolu_exec", provider_name="anthropic"
+                ),
+                TextPart("Investigating " * 6000),
+                ToolCallPart("shell", {"command": "ls"}, "toolu_1"),
+            ]
+        ),
+        ModelRequest(parts=[ToolReturnPart("shell", "listing", "toolu_1")]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    "web_fetch",
+                    {"url": "https://example.com"},
+                    "srvtoolu_fetch",
+                    provider_name="anthropic",
+                    provider_details=caller,
+                ),
+                NativeToolReturnPart(
+                    "web_fetch", {"type": "x"}, "srvtoolu_fetch", provider_name="anthropic"
+                ),
+                NativeToolReturnPart(
+                    "code_execution", {"stdout": ""}, "srvtoolu_exec", provider_name="anthropic"
+                ),
+                TextPart("Fetched. " * 6000),
+                ToolCallPart("shell", {"command": "pwd"}, "toolu_2"),
+            ]
+        ),
+        ModelRequest(parts=[ToolReturnPart("shell", "/repo", "toolu_2")]),
+        ModelResponse(parts=[TextPart("Done")], usage=RequestUsage(input_tokens=50000)),
+    ]
+
+    async def run():
+        result = await summarize(source, model=summary_model([]))
+        assert result.changed
+        parts = [part for message in result.messages for part in message.parts]
+        ids = {getattr(part, "tool_call_id", None) for part in parts}
+        # The cut fell between the two responses, or this test proves nothing.
+        assert "toolu_2" in ids and "toolu_1" not in ids
+        assert not ids & {"srvtoolu_exec", "srvtoolu_fetch"}
+        assert "Fetched." in str(result.messages)
+
+    asyncio.run(run())
