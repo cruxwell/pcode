@@ -8,11 +8,8 @@ put there: the written content, or the same replacements applied to the snapshot
 A `grep` too large to return inline comes back as match counts per file instead
 of a spilled transcript; see `grep_summary`.
 
-It also lets `read_file` show an image. Harness 0.56 answers every binary file
-with a note; its next release returns a PNG, JPEG, GIF or WebP as the file
-(pydantic/pydantic-ai#9596), and `_viewed` steps aside for that, so delete it
-when the pin moves past it. Whether the model can see the picture is not decided
-here: `pcode.images.ImageGate` does that on each request.
+`read_file` returns an image as the file only within what every provider
+accepts; see `viewable`.
 """
 
 import posixpath
@@ -22,21 +19,17 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 from pydantic_ai import CapabilityEvent
-from pydantic_ai.messages import BinaryImage
-from pydantic_ai_harness.filesystem._toolset import (
-    FileSystemToolset,
-    _apply_replacements,
-    _is_binary,
-)
+from pydantic_ai.messages import BinaryContent, BinaryImage
+from pydantic_ai_harness.filesystem import FileSystemToolset
+
+# Private, but the edit preview must apply replacements exactly as the edit did.
+from pydantic_ai_harness.filesystem._content import apply_replacements
 
 from pcode.edits import MAX_SOURCE, completed_change
-from pcode.images import IMAGE_SUFFIXES, MAX_IMAGE_BYTES, image_type, unsendable
+from pcode.images import unsendable
 from pcode.runtime import EditCompleted
 from pcode.tool_output_limits import inline_result_limit
 from pcode.workspace_filesystem import WorkspaceFileSystem
-
-# What Harness 0.56 returns for a file its null-byte check calls binary.
-BINARY_NOTE = "[Binary file: "
 
 # Matching lines a grep needs before an oversized result is summarized. Fewer
 # are left to the output limits: they are long lines or wide context, which
@@ -91,6 +84,10 @@ def grep_summary(
     if rest := ranked[len(rows) :]:
         rows.append(f"… {len(rest):,} more files with {sum(n for _, n in rest):,} matches")
     return "\n".join([head, *rows, *tail])
+
+
+# Harness's whole note, after its header line, for an image or PDF over its cap.
+HARNESS_TOO_LARGE = re.compile(r"\]\nToo large to view: the limit is \d+ bytes\.\n\Z")
 
 
 def too_large(why: str) -> str:
@@ -173,7 +170,7 @@ class DisplayFileSystemToolset(FileSystemToolset):
     @staticmethod
     def _display_path(scope, resolved: str) -> str:
         """Workspace-relative inside the workspace, absolute outside it."""
-        relative = posixpath.relpath(resolved, scope.cwd)
+        relative = posixpath.relpath(resolved, scope.bounds.cwd)
         return resolved if relative == ".." or relative.startswith("../") else relative
 
     async def _request(self, scope, ctx, change, *, path, resolved):
@@ -202,7 +199,7 @@ class DisplayFileSystemToolset(FileSystemToolset):
             return
         if len(raw) > MAX_SOURCE * 4:
             snapshot.omitted = "File exceeds preview size limit"
-        elif _is_binary(raw):
+        elif b"\x00" in raw[:8192]:  # Harness's own binary check
             snapshot.omitted = "Binary content"
         else:
             try:
@@ -232,43 +229,12 @@ class DisplayFileSystemToolset(FileSystemToolset):
 
     async def _read_file(self, scope, ctx, path, *, offset=0, limit=None):
         result = await super()._read_file(scope, ctx, path, offset=offset, limit=limit)
-        # A newer Harness returns a list for an image; this only fills the gap
-        # while it answers with text. A name alone catches a GIF the null-byte
-        # check took for text, a note catches an image with another name.
-        if isinstance(result, str) and (
-            result.startswith(BINARY_NOTE) or posixpath.splitext(path)[1].lower() in IMAGE_SUFFIXES
-        ):
-            return await self._viewed(scope, path, result)
+        if isinstance(result, list):
+            return viewable(result)
+        if isinstance(result, str) and HARNESS_TOO_LARGE.search(result):
+            # Harness's own note for a file over its 5 MB cap; say how to see it.
+            return result.removesuffix("\n") + " Make a smaller copy (shell) and read that.\n"
         return result
-
-    async def _viewed(self, scope, path, text: str):
-        """The image at `path` as the file, or `text` when it is not one.
-
-        The file is read again: Harness has already judged it and kept only its
-        verdict. One over the limit is not, so a huge file named like an image
-        costs no second read. A file that vanishes in between is whatever `text`
-        said.
-        """
-        try:
-            resolved = await self._safe_resolve(scope, path)
-            size = (await scope.workspace.stat(resolved)).size
-            if size is not None and size > MAX_IMAGE_BYTES:
-                if posixpath.splitext(path)[1].lower() not in IMAGE_SUFFIXES:
-                    return text
-                return (
-                    f"[{path} | {size} bytes]\n{too_large(f'the limit is {MAX_IMAGE_BYTES} bytes')}"
-                )
-            raw = await scope.workspace.read_bytes(resolved)
-        except OSError:
-            return text
-        media_type = image_type(raw)
-        if media_type is None:
-            return text
-        header = f"[{path} | {media_type} | {len(raw)} bytes]\n"
-        if why := unsendable(raw):
-            return header + too_large(why)
-        # The type a saved history comes back as, so reopening a session finds it equal.
-        return [header, BinaryImage(data=raw, media_type=media_type)]
 
     async def _write_file(self, scope, ctx, path, content, *, expected_hash=None):
         return await self._recorded(
@@ -285,5 +251,27 @@ class DisplayFileSystemToolset(FileSystemToolset):
             lambda: super(DisplayFileSystemToolset, self)._edit_file(
                 scope, ctx, path, replacements, expected_hash=expected_hash
             ),
-            lambda before: _apply_replacements(before, replacements, path),
+            lambda before: apply_replacements(before, replacements, path),
         )
+
+
+def viewable(result: list):
+    """Harness's file content for `read_file`, held to what every provider accepts.
+
+    Harness returns an image or PDF up to 5,000,000 bytes as a `BinaryContent`
+    after its header. A larger or wider image than Anthropic takes is described
+    instead (see `MAX_IMAGE_BYTES`), since history keeps it and every later
+    request would fail. So is a PDF, which not every model reads. Whether the
+    model can see a picture is `ImageGate`'s call on each request.
+    """
+    match result:
+        case [str() as header, BinaryContent(data=raw, media_type=media_type)]:
+            pass
+        case _:
+            return result
+    if not media_type.startswith("image/"):
+        return f"{header}{media_type} files are not shown; read their text another way.\n"
+    if why := unsendable(raw):
+        return header + too_large(why)
+    # The type a saved history comes back as, so reopening a session finds it equal.
+    return [header, BinaryImage(data=raw, media_type=media_type)]

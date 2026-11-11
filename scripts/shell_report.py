@@ -151,9 +151,9 @@ def _messages(database: Path):
     """
     connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
     try:
-        query = "SELECT messages FROM snapshots WHERE parent_run_id IS NULL ORDER BY seq"
-        for (raw,) in connection.execute(query):
-            yield json.loads(snapshot_messages_json(connection, raw))
+        query = "SELECT seq, messages FROM snapshots WHERE parent_run_id IS NULL ORDER BY seq"
+        for seq, raw in connection.execute(query):
+            yield json.loads(snapshot_messages_json(connection, seq, raw))
     except sqlite3.DatabaseError as error:
         raise SessionError(f"Unreadable step store: {error}") from None
     finally:

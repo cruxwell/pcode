@@ -484,6 +484,19 @@ def read_image(content: object) -> "BinaryContent | None":
     return next((i for i in content if isinstance(i, BinaryContent) and i.is_image), None)
 
 
+def tool_outcome(part) -> str:
+    """A tool result's outcome, with a retry as "retry" however Pydantic AI sent it.
+
+    A retry is a `RetryPromptPart`, or since Pydantic AI 2.66 usually a
+    `ToolReturnPart` whose `outcome` is "retried".
+    """
+    from pydantic_ai.messages import RetryPromptPart
+
+    if isinstance(part, RetryPromptPart) or part.outcome == "retried":
+        return "retry"
+    return part.outcome
+
+
 def result_detail(
     name: str, args: dict, content: object, outcome: str, source: str = ""
 ) -> tuple[str, bool]:

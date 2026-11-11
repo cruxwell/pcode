@@ -42,6 +42,19 @@ from pcode.sessions import SavedSession, SessionError, first_prompt, session_tur
 from pcode.ui import create_prompt
 
 
+def sent(messages) -> list:
+    """Messages as a request carries them, for comparing a request with stored history.
+
+    Core keeps instruction bookkeeping parts in history and sends the
+    instructions themselves framed, so neither is compared.
+    """
+    bookkeeping = ("InstructionBaselinePart", "InstructionDeltaPart")
+    return [
+        (type(m).__name__, [p for p in m.parts if type(p).__name__ not in bookkeeping])
+        for m in messages
+    ]
+
+
 def prompts(messages) -> list[str]:
     return [
         str(part.content)
@@ -201,7 +214,7 @@ def test_a_thread_that_extends_the_conversation_becomes_its_continuation(tmp_pat
 
         # The next turn continues from the thread's last answer.
         await turn(runtime, "Next")
-        assert requests[-1][: len(reply.messages)] == reply.messages
+        assert sent(requests[-1][: len(reply.messages)]) == sent(reply.messages)
 
         # Each exchange is a checkpoint of its own.
         await runtime.navigate(first.id)
@@ -345,7 +358,7 @@ def test_a_summary_joins_the_active_branch_as_one_exchange(tmp_path):
         assert summary == "Summary: the parser is LL(1)."
         # Asked in the thread, after its answer, where the cache is warm.
         asked = requests[-1]
-        assert asked[: len(reply.messages)] == reply.messages
+        assert sent(asked[: len(reply.messages)]) == sent(reply.messages)
         assert prompts(asked[-1:]) == [framed_summary("keep decisions")]
         # Recorded on the conversation as one exchange after what it had.
         assert runtime.history[: len(before)] == before
@@ -359,7 +372,7 @@ def test_a_summary_joins_the_active_branch_as_one_exchange(tmp_path):
             summary,
         )
         await turn(runtime, "Next")
-        assert requests[-1][: len(runtime.history) - 2] == runtime.history[:-2]
+        assert sent(requests[-1][: len(runtime.history) - 2]) == sent(runtime.history[:-2])
 
         # A history ending mid-turn would put two requests in a row.
         runtime.history = [ModelRequest([UserPromptPart("interrupted")])]

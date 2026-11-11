@@ -27,14 +27,16 @@ from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai_harness.shell import Shell
-from pydantic_ai_harness.shell._events import (
+from pydantic_ai_harness.shell import (
     CommandFinishedEvent,
     CommandOutputEvent,
     CommandStartedEvent,
+    Shell,
+    ShellToolset,
 )
+
+# Private: pcode's job tools turn errors into retries exactly as Harness's do.
 from pydantic_ai_harness.shell._policy import recoverable
-from pydantic_ai_harness.shell._toolset import ShellToolset
 
 from pcode.jobs import OUTPUT_TAIL_BYTES, Job, JobRegistry, format_duration, registry
 from pcode.steering import steering_pending

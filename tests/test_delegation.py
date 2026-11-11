@@ -6,10 +6,11 @@ from copy import deepcopy
 import pytest
 from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from retry_parts import is_retry
 
 from pcode.agent import create_coder
 from pcode.claude_sdk import ClaudeConnectionError
@@ -112,9 +113,7 @@ def worker_runtime(tmp_path, child):
 
     async def model(messages, info):
         if "delegate_task" in {t.name for t in info.function_tools}:
-            if returns(messages) or any(
-                isinstance(p, RetryPromptPart) for m in messages for p in m.parts
-            ):
+            if returns(messages) or any(is_retry(p) for m in messages for p in m.parts):
                 yield "Parent answer"
             else:
                 yield {0: delegate(0, "worker"), 1: delegate(1, "worker")}

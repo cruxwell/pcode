@@ -113,13 +113,13 @@ def _snapshots(database: Path, *, delegated: bool | None = None) -> Iterator[lis
     Their history is a different conversation, so mixing the two would report a
     prefix rewrite on every hand-off.
     """
-    query = "SELECT messages FROM snapshots"
+    query = "SELECT seq, messages FROM snapshots"
     if delegated is not None:
         query += f" WHERE parent_run_id IS {'NOT NULL' if delegated else 'NULL'}"
     connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
     try:
-        for (raw,) in connection.execute(f"{query} ORDER BY seq"):
-            yield json.loads(snapshot_messages_json(connection, raw))
+        for seq, raw in connection.execute(f"{query} ORDER BY seq"):
+            yield json.loads(snapshot_messages_json(connection, seq, raw))
     except sqlite3.DatabaseError as error:
         raise SessionError(f"Unreadable step store: {error}") from None
     finally:

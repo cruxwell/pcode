@@ -3,11 +3,12 @@ import json
 
 import pytest
 from pydantic_ai import Agent
-from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.coder._capability import MAX_READ_CHARS
 from pydantic_ai_harness.filesystem import FileSystem
+from retry_parts import is_retry
 
 from pcode.agent import create_coder
 from pcode.live import AgentRuntime
@@ -154,7 +155,7 @@ def test_real_coder_batch_edits_are_atomic_and_emit_one_completed_diff(tmp_path,
             }
         else:
             parts = [part for msg in messages for part in msg.parts]
-            assert any(isinstance(p, RetryPromptPart) for p in parts) is not valid
+            assert any(is_retry(p) for p in parts) is not valid
             if valid:
                 result = next(p for p in parts if isinstance(p, ToolReturnPart))
                 assert result.content == "Edited sample.txt."

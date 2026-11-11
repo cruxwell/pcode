@@ -5,12 +5,31 @@ from unittest.mock import patch
 
 import pytest
 from pydantic_ai import Agent
-from pydantic_ai.messages import UserPromptPart
+from pydantic_ai.messages import ModelRequest, SystemPromptPart, TextContent, UserPromptPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
 from pcode.agent import create_agent, create_coder
 from pcode.preferences import save_preferences
 from pcode.repo_context import AutomaticRepoContext, create_repo_context
+
+
+def _notes(messages) -> list[str]:
+    """Each request's injected text: user parts as text or `TextContent`, and system notes."""
+    notes = []
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            continue
+        texts = []
+        for part in message.parts:
+            if isinstance(part, SystemPromptPart):
+                texts.append(part.content)
+            elif isinstance(part, UserPromptPart):
+                items = [part.content] if isinstance(part.content, str) else part.content
+                texts += [i.content if isinstance(i, TextContent) else i for i in items]
+        text = "\n".join(t for t in texts if isinstance(t, str))
+        if text:
+            notes.append(text)
+    return notes
 
 
 @pytest.fixture(autouse=True)
@@ -209,8 +228,8 @@ def test_walk_up_loads_both_filenames_in_ancestor_first_order(tmp_path, monkeypa
     assert positions == sorted(positions)
     assert "must not load" not in instructions
     assert context.startup_summary() == [
-        "Loaded repository instructions: "
-        f"{home / 'AGENTS.md'}, {repo / 'CLAUDE.md'}, {repo / 'AGENTS.md'}, AGENTS.md"
+        # Ancestors relative to the workspace, so no host path is shown.
+        "Loaded repository instructions: ../../AGENTS.md, ../CLAUDE.md, ../AGENTS.md, AGENTS.md"
     ]
 
 
@@ -264,9 +283,7 @@ def test_walk_up_deduplicates_contents_and_symlink_targets(tmp_path):
     (workspace / "AGENTS.md").write_text("Shared guidance")
     context = create_repo_context(workspace)
     assert context.preload().instructions_text().count("Shared guidance") == 1
-    assert context.startup_summary() == [
-        f"Loaded repository instructions: {tmp_path / 'CLAUDE.md'}"
-    ]
+    assert context.startup_summary() == ["Loaded repository instructions: ../CLAUDE.md"]
 
 
 def test_ancestor_instructions_refresh_between_runs_not_within_run(tmp_path):
@@ -325,14 +342,7 @@ def test_discovery_settings_work_together_in_real_agents(
         if initial_instructions is None:
             initial_instructions = instructions
         assert instructions == initial_instructions  # Traversal leaves the prefix stable.
-        notes = [
-            part.content
-            for message in messages
-            for part in message.parts
-            if isinstance(part, UserPromptPart)
-            and isinstance(part.content, str)
-            and "backend/AGENTS.md" in part.content
-        ]
+        notes = [note for note in _notes(messages) if "backend/AGENTS.md" in note]
         if calls == 0 or nested == "off":
             assert notes == []
         else:
@@ -340,7 +350,7 @@ def test_discovery_settings_work_together_in_real_agents(
             assert len(notes) == 1
             assert ("NESTED_GUIDANCE" in notes[0]) == (nested == "contents")
             if nested == "pointer":
-                assert "Read it if relevant" in notes[0]
+                assert "Read the file if it is relevant" in notes[0]
         calls += 1
         if calls <= 2:
             path = "backend/api.py" if tool == "read_file" else "backend"
@@ -412,12 +422,7 @@ def test_external_traversal_does_not_load_external_instructions(
 
     async def respond(messages, info):
         nonlocal calls
-        notes = [
-            p.content
-            for msg in messages
-            for p in msg.parts
-            if isinstance(p, UserPromptPart) and isinstance(p.content, str)
-        ]
+        notes = _notes(messages)
         assert "EXTERNAL_GUIDANCE" not in info.instructions
         assert not any("EXTERNAL_GUIDANCE" in note for note in notes)
         assert any("INTERNAL_GUIDANCE" in note for note in notes) == (calls == 2)

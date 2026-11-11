@@ -113,6 +113,19 @@ def test_an_image_over_the_limit_is_described_not_sent(tmp_path):
     assert "Too large" in content and str(len(big)) in content
 
 
+def test_an_image_over_harness_cap_says_how_to_see_it(tmp_path):
+    (tmp_path / "giant.png").write_bytes(PNG + b"\x01" * 5_000_000)
+    content = shown(tmp_path, "giant.png")
+    assert isinstance(content, str)
+    assert "Too large to view" in content and "Make a smaller copy" in content
+
+
+def test_a_pdf_is_described_rather_than_sent(tmp_path):
+    (tmp_path / "doc.pdf").write_bytes(b"%PDF-1.7\n" + b"x" * 100)
+    content = shown(tmp_path, "doc.pdf")
+    assert isinstance(content, str) and "application/pdf files are not shown" in content
+
+
 @pytest.mark.parametrize(
     ("size", "sent"),
     [

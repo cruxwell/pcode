@@ -5,9 +5,11 @@ import warnings
 
 from anthropic._models import construct_type
 from anthropic.types.beta import BetaRawMessageStreamEvent
-from pydantic_ai.models.anthropic import (
-    _map_web_fetch_tool_result_block,
-    _map_web_search_tool_result_block,
+
+# Private, and moved before: this test exists to pin how Pydantic AI maps them.
+from pydantic_ai.models.anthropic._native_tools import (
+    map_web_fetch_tool_result_block,
+    map_web_search_tool_result_block,
 )
 
 from pcode.claude_sdk.web import result_block
@@ -26,9 +28,9 @@ def parsed(block: dict) -> object:
     event = {"type": "content_block_start", "index": 0, "content_block": block}
     item = construct_type(type_=BetaRawMessageStreamEvent, value=event).content_block
     mapper = (
-        _map_web_search_tool_result_block
+        map_web_search_tool_result_block
         if block["type"] == "web_search_tool_result"
-        else _map_web_fetch_tool_result_block
+        else map_web_fetch_tool_result_block
     )
     with warnings.catch_warnings():
         warnings.simplefilter("error")

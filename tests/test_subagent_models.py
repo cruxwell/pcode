@@ -9,6 +9,7 @@ from prompt_toolkit.document import Document
 from pydantic_ai import Agent
 from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from retry_parts import is_retry
 from rich.console import Console
 
 from pcode import agent as agent_module
@@ -141,8 +142,9 @@ def test_a_delegation_runs_on_a_model_off_the_menu(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_module, "side_model", counting)
 
     async def parent(messages, info):
-        returns = [p for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
-        retries = [p for m in messages for p in m.parts if type(p).__name__ == "RetryPromptPart"]
+        parts = [p for m in messages for p in m.parts]
+        retries = [p for p in parts if is_retry(p)]
+        returns = [p for p in parts if isinstance(p, ToolReturnPart) and not is_retry(p)]
         if len(returns) == 2:
             seen["returned"] = [r.content for r in returns]
             yield "done"

@@ -352,14 +352,16 @@ def _toolset_class():
     from playwright.async_api import Error as PlaywrightError
     from pydantic_ai import BinaryContent, ToolReturn
     from pydantic_ai_harness.playwright import EgressRequest, PlaywrightBrowserToolset
-    from pydantic_ai_harness.playwright._toolset import _truncate, _without_credentials
+
+    # Private: frame URLs are redacted exactly as Harness redacts its own.
+    from pydantic_ai_harness.playwright._toolset import _without_credentials
 
     whole = _WHOLE_OUTPUT
 
     class PcodeBrowserToolset(PlaywrightBrowserToolset):
         def _truncate_output(self, text: str) -> str:
             if whole.get():
-                return _truncate(text, _MAX_WHOLE_CHARS)
+                return _head(text, _MAX_WHOLE_CHARS)
             return super()._truncate_output(text)
 
         async def _frame_text(self, page, budget_ms: int) -> list[str]:
@@ -772,3 +774,13 @@ class BrowserState:
 
 
 STATE = BrowserState()
+
+
+def _head(text: str, max_chars: int) -> str:
+    """`text` capped at `max_chars`, keeping the head and marking the cut as Harness does."""
+    if len(text) <= max_chars:
+        return text
+    marker = f"\n[... tool output truncated at {max_chars} characters]"
+    if len(marker) >= max_chars:
+        return text[:max_chars]
+    return f"{text[: max_chars - len(marker)]}{marker}"

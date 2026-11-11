@@ -13,8 +13,8 @@ a snapshot, not a second set of pins: update them when dependencies change.
 | --- | --- | --- | --- |
 | prompt_toolkit (`prompt-toolkit`) | 3.0.53 | [Docs](https://python-prompt-toolkit.readthedocs.io/en/stable/) | [python-prompt-toolkit](https://github.com/prompt-toolkit/python-prompt-toolkit) |
 | Rich (`rich`) | 15.0.0 | [Docs](https://rich.readthedocs.io/en/stable/) | [rich](https://github.com/Textualize/rich) |
-| Pydantic AI (`pydantic-ai-slim`) | 2.56.0 | [Docs](https://ai.pydantic.dev/) | [pydantic-ai](https://github.com/pydantic/pydantic-ai) (package: `pydantic_ai_slim/`) |
-| Pydantic AI Harness (`pydantic-ai-harness`) | 0.56.0 (released with Pydantic AI 2.56.0) | [Docs](https://pydantic.dev/docs/ai/harness/) | [pydantic-ai](https://github.com/pydantic/pydantic-ai) (package: `src/pydantic_ai_harness/`) |
+| Pydantic AI (`pydantic-ai-slim`) | 2.66.0 | [Docs](https://ai.pydantic.dev/) | [pydantic-ai](https://github.com/pydantic/pydantic-ai) (package: `pydantic_ai_slim/`) |
+| Pydantic AI Harness (`pydantic-ai-harness`) | 0.66.0 (released with Pydantic AI 2.66.0) | [Docs](https://pydantic.dev/docs/ai/harness/) | [pydantic-ai](https://github.com/pydantic/pydantic-ai) (package: `src/pydantic_ai_harness/`) |
 | Playwright (`playwright`, via the Harness `playwright` extra; Chromium downloaded on first `/browser` use) | 1.64.0 | [Docs](https://playwright.dev/python/) | [playwright-python](https://github.com/microsoft/playwright-python) |
 | Claude Agent SDK (`claude-agent-sdk`, bundles the Claude Code CLI) | 0.2.180 (CLI 2.1.321) | [Docs](https://code.claude.com/docs/en/agent-sdk/python) | [claude-agent-sdk-python](https://github.com/anthropics/claude-agent-sdk-python) |
 
@@ -40,6 +40,23 @@ This requires an existing project environment. Typical source locations are
 `.venv/lib/pythonX.Y/site-packages/<module>/`; do not hard-code the Python minor
 version. Installed packages contain implementation and docstrings, but may omit
 upstream tests, examples, and documentation sources.
+
+### Upgrading Pydantic AI and Harness
+
+Harness pins `pydantic-ai-slim` to its own minor, and a provider SDK major can
+need a newer Pydantic AI, so one bump moves all three. Take every minor rather
+than skipping several: 0.56 to 0.66 was a 44k-line diff. Start with
+`tests/test_upstream_internals.py`, which lists every private upstream name pcode
+uses and fails by name on one that moved, and on an override whose upstream
+method is gone (which otherwise just stops being called). Behavior changes
+then show up in the rest of the suite; 0.66's were retries arriving as
+`ToolReturnPart(outcome="retried")`, summaries as `CompactionPart`,
+`keep_tokens` becoming a floor, and messages stored once per session.
+
+Session stores only migrate forward. Opening a session moves pcode's old
+`pcode_messages` rows into Harness's `snapshot_messages` tables
+(`sessions.adopt_legacy_messages`), and a pcode on Harness 0.56 cannot read
+those rows back, so a session opened by a newer pcode stays with it.
 
 ### Local Harness checkout
 

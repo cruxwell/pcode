@@ -22,7 +22,7 @@ def anthropic_model(model: str, key: str, *, http_client=None):
     )
 
 
-# Pydantic AI 2.56 resolves these through the `claude-fable-5` and
+# Pydantic AI 2.66 resolves these through the `claude-fable-5` and
 # `claude-mythos-5` prefixes to the 5.0 profiles. Unlike those, they reject a
 # forced tool choice with a 400 and bind thinking blocks to the conversation
 # prefix on every account; without the binding flag, an edited prefix fails the
