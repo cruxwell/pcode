@@ -34,7 +34,10 @@ class TurnNode:
     status: str = "interrupted"
     continuation: bool = False
     resend_blocked: bool = False
+    # The turn's last text block. One that runs tools writes a block between
+    # calls, and `earlier` keeps the ones before it, oldest first, for /copy.
     response: str = ""
+    earlier: list[str] = field(default_factory=list)
     plan: list[dict] = field(default_factory=list)
     # "turn", "compaction", or "aside": a /btw side question or a side
     # thread's summary, recorded like a turn that ran no tools.
@@ -122,8 +125,14 @@ class ConversationTree:
         # `SessionJournal.active_records`).
         elif (node := self.nodes.get(record.get("run_id") or self.recording)) is not None:
             if kind == "Message":
-                node.response = record["markdown"]
-                node.add_links(node.response, "assistant")
+                markdown = record["markdown"]
+                # A blank block would hide the turn's text; a retried request
+                # can rewrite the block it had already finished.
+                if markdown.strip() and markdown != node.response:
+                    if node.response:
+                        node.earlier.append(node.response)
+                    node.response = markdown
+                    node.add_links(node.response, "assistant")
             elif kind in {"ToolStarted", "ToolSummary"}:
                 # Keep only URLs, not another copy of potentially large payloads.
                 # The same journal events rebuild these on session resume.
