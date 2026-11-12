@@ -41,6 +41,7 @@ from pcode.controller import (
     mcp_enable,
     runs_in_terminal,
 )
+from pcode.drafts import Drafts, default_dir
 from pcode.error_report import error_message
 from pcode.preferences import (
     ANTHROPIC_THINKS_BY_DEFAULT,
@@ -1199,7 +1200,7 @@ class PreviewApp:
 
     async def choose_copy(self, output: TerminalOutput, session) -> None:
         from pcode.clipboard import copy as copy_to_clipboard
-        from pcode.copy_ui import answers, snippets
+        from pcode.copy_ui import answers
         from pcode.tree_ui import copy_dialog
 
         self.copy_requested = False
@@ -1213,7 +1214,7 @@ class PreviewApp:
         if not history:
             self.transcript.note("No response to copy yet.")
             return
-        choices = snippets(history[0].text)
+        choices = history[0].snippets()
         choice = choices[0]
         if len(history) > 1 or len(choices) > 1:
             async with self.popup(output, session) as modal_input:
@@ -2782,6 +2783,7 @@ class PreviewApp:
                 self.controller.submit(text, mode)
 
         self._submit_typed = submit
+        drafts = Drafts(default_dir())
         session = create_prompt(
             self.registry,
             activity=self.activity,
@@ -2806,6 +2808,7 @@ class PreviewApp:
             bottom_toolbar=self.toolbar,
             # Whichever controller is on screen: /attach replaces it.
             session_title=lambda: self.controller.session_title(),
+            drafts=drafts,
             vi_mode=load_preferences().get("editing_mode", "emacs") == "vi",
         )
         # A thread on screen is read: a host's other terminals stop calling it ready.
@@ -2875,6 +2878,7 @@ class PreviewApp:
             session.app.create_background_task(watch_branch())
             session.app.create_background_task(output.run())
             session.app.create_background_task(run_local_commands())
+            session.app.create_background_task(drafts.run())
             if self._progress is not None:
                 session.app.create_background_task(self._progress.run())
             if self._title is not None:
@@ -2896,6 +2900,8 @@ class PreviewApp:
             # Before `leave_controller` closes the connection the stop goes out on.
             self.stop_host_on_exit()
         finally:
+            # Whatever is still unsent, without waiting for the next save.
+            drafts.save()
             if stalls is not None:
                 stalls.stop()
             if self._progress is not None:

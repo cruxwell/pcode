@@ -17,6 +17,7 @@ from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout.processors import DynamicProcessor
 
 from pcode.clipboard import copy as copy_to_clipboard
+from pcode.drafts import Drafts, edited
 from pcode.preferences import SETTINGS, load_preferences
 from pcode.prefix_keys import Choice, PrefixKeys
 from pcode.word_wrap import WordWrapProcessor, display_row_step
@@ -51,11 +52,13 @@ def prompt_key_bindings(
     callbacks: PromptCallbacks,
     key_prefix: str | None,
     default_buffer: Callable[[], Buffer],
+    drafts: Drafts | None = None,
 ) -> tuple[KeyBindings, PrefixKeys]:
     """The editor's own keys and its shortcuts.
 
     ``default_buffer`` is asked for at keypress time, since the session that
-    owns the buffer is built from these bindings.
+    owns the buffer is built from these bindings. ``drafts`` keeps the text a
+    reset would drop.
     """
     # The prompt and popups share one contextual keybinding overlay.
     shortcuts = PrefixKeys(
@@ -77,7 +80,7 @@ def prompt_key_bindings(
         ],
         title="Keybindings · Prompt",
     )
-    keys = _editing_keys(activity, transcript, callbacks, default_buffer)
+    keys = _editing_keys(activity, transcript, callbacks, default_buffer, drafts or Drafts())
     return keys, shortcuts
 
 
@@ -316,6 +319,7 @@ def _editing_keys(
     transcript,
     callbacks: PromptCallbacks,
     default_buffer: Callable[[], Buffer],
+    drafts: Drafts,
 ) -> KeyBindings:
     keys = KeyBindings()
 
@@ -333,8 +337,8 @@ def _editing_keys(
             accept_handler = buffer.accept_handler
             if interrupt and callbacks.on_interrupt_submit is not None:
                 # Keep validation, history, and buffer reset identical to Enter.
-                def accept_interrupt(buffer: Buffer) -> None:
-                    callbacks.on_interrupt_submit(buffer.text)
+                def accept_interrupt(buffer: Buffer) -> bool:
+                    return drafts.accept(buffer, callbacks.on_interrupt_submit)
 
                 buffer.accept_handler = accept_interrupt
             try:
@@ -433,11 +437,13 @@ def _editing_keys(
         if activity.busy and not buffer.text:
             on_cancel()
             return
+        discarded = "Input discarded. ↑ brings it back." if edited(buffer) else "Input discarded."
+        drafts.keep(buffer)
         buffer.reset()
         transcript.note(
-            "Input discarded. Ctrl+C again interrupts."
+            f"{discarded} Ctrl+C again interrupts."
             if activity.busy
-            else "Input discarded. Ctrl+D on an empty prompt exits."
+            else f"{discarded} Ctrl+D on an empty prompt exits."
         )
 
     @keys.add("c-d", filter=Condition(lambda: not activity.busy))

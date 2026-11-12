@@ -205,6 +205,52 @@ def test_copy_browser_highlights_exactly_what_it_copies():
         assert pane.selection.span() is None
 
 
+def mid_turn_tree() -> ConversationTree:
+    """One turn that wrote a draft between tool calls, then kept going."""
+    tree = ConversationTree()
+    tree.consume({"kind": "turn_started", "run_id": "t0", "parent_id": None, "prompt": "ask"})
+    for markdown in ("Checking first:", "Draft:\n\n> Thanks Kade.\n", "", "Deploying it now:"):
+        tree.consume({"kind": "Message", "markdown": markdown})
+    return tree
+
+
+def test_a_turn_keeps_its_earlier_text_blocks():
+    node = mid_turn_tree().nodes["t0"]
+    assert node.response == "Deploying it now:"
+    assert node.earlier == ["Checking first:", "Draft:\n\n> Thanks Kade.\n"]
+
+
+def test_copy_offers_a_quote_from_earlier_in_the_turn():
+    from pcode.copy_ui import answers
+
+    [answer] = answers(mid_turn_tree())
+    assert answer.snippets() == [
+        Snippet("response", "Deploying it now:"),
+        Snippet("quote", "Thanks Kade."),
+    ]
+    assert answer.snippets()[1].block == 1
+
+
+def test_copy_browser_highlights_a_quote_from_earlier_in_the_turn():
+    from pcode.tree_ui import CopyBrowser
+
+    with create_pipe_input() as pipe:
+        browser = CopyBrowser(mid_turn_tree(), input=pipe, output=DummyOutput())
+        pane = browser.detail
+
+        def highlighted(width=60):
+            first, last = pane.span(pane.mark, width)
+            return "\n".join(row.text.rstrip() for row in pane.rows(width)[first : last + 1])
+
+        # The whole response is still the turn's last block, though all are drawn.
+        assert browser.selected == ("t0", False, 0)
+        assert highlighted().strip() == "Deploying it now:"
+        assert [label for _, label in browser.rows][-1] == "  └─ Quote: Thanks Kade."
+        browser.list.buffer.cursor_down(1)
+        assert browser.chosen() == Snippet("quote", "Thanks Kade.")
+        assert highlighted().strip() == "▌ Thanks Kade."
+
+
 def test_tree_copy_opens_a_picker_for_quotes(monkeypatch):
     import pcode.tree_ui as tree_ui
     from pcode.tree_ui import TreeBrowser

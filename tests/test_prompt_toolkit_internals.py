@@ -93,3 +93,11 @@ def test_vt100_prefix_cache_cleared_by_input_keys():
     cache = vt100_parser._IS_PREFIX_OF_LONGER_MATCH_CACHE
     cache.clear()
     assert isinstance(cache["\x1b["], bool)
+
+
+def test_buffer_state_used_to_find_unsent_text(app):
+    # `drafts.edited` compares the working lines against the history they
+    # were copied from, once the background copy is done.
+    buffer = Buffer()
+    assert list(buffer._working_lines) == [""]
+    assert buffer._load_history_task is None

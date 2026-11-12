@@ -19,6 +19,7 @@ from prompt_toolkit.completion import merge_completers
 from prompt_toolkit.enums import EditingMode
 from prompt_toolkit.filters import Always, Condition, has_focus
 from prompt_toolkit.formatted_text import ANSI, StyleAndTextTuples
+from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding.vi_state import InputMode
 from prompt_toolkit.layout import (
     ConditionalContainer,
@@ -51,6 +52,7 @@ from pcode.command_transcript import CommandTranscript
 from pcode.commands import CommandRegistry, SlashCompleter
 from pcode.delta import Delta
 from pcode.delta import from_preferences as delta_from_preferences
+from pcode.drafts import Drafts
 from pcode.edit_transcript import (
     EditTranscript,
     LiveDeltaPreview,
@@ -3552,6 +3554,7 @@ def create_prompt(
     on_btw_close=None,
     key_prefix: str | None = None,
     session_title: Callable[[], str] = lambda: "",
+    drafts: Drafts | None = None,
     **kwargs,
 ) -> PromptSession:
     configure_newline_keys()
@@ -3573,8 +3576,12 @@ def create_prompt(
         on_btw_next=on_btw_next,
         on_btw_close=on_btw_close,
     )
+    # Unsent text survives a reset as a history entry and, given `drafts` with
+    # a directory, a session that ends: what earlier ones left starts the history.
+    drafts = drafts or Drafts()
+    kwargs.setdefault("history", InMemoryHistory(drafts.load()))
     keys, shortcuts = prompt_key_bindings(
-        activity, transcript, callbacks, key_prefix, lambda: session.default_buffer
+        activity, transcript, callbacks, key_prefix, lambda: session.default_buffer, drafts
     )
 
     def thread_commands() -> tuple[tuple[str, str], ...]:
@@ -3609,6 +3616,8 @@ def create_prompt(
         **kwargs,
     )
     session.shortcuts = shortcuts
+    drafts.buffer = session.default_buffer
+    session.drafts = drafts
     session.command_bindings = (
         PromptKeymap(
             shortcuts,
@@ -3624,10 +3633,8 @@ def create_prompt(
     if transcript is not None:
 
         def accept(buffer):
-            text = buffer.text
-            buffer.append_to_history()
             # True keeps the draft: something refused it with a reason shown.
-            return bool(on_submit(text))
+            return drafts.accept(buffer, on_submit)
 
         session.default_buffer.accept_handler = accept
     session.btw_view = prompt_layout.btw

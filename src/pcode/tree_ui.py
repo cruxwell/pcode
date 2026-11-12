@@ -18,6 +18,7 @@ from prompt_toolkit.layout import (
 )
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.widgets import Label, TextArea
+from rich.console import Group
 from rich.markdown import Markdown
 from rich.padding import Padding
 from rich.text import Text
@@ -25,7 +26,7 @@ from rich.theme import Theme
 
 from pcode.clipboard import copy as copy_to_clipboard
 from pcode.conversation_tree import ConversationTree, TurnNode, excerpt
-from pcode.copy_ui import Snippet, SnippetMarkdown, SnippetPicker, snippets
+from pcode.copy_ui import Snippet, SnippetMarkdown, SnippetPicker, snippets, turn_snippets
 from pcode.frame import Frame
 from pcode.popup_ui import (
     RichPane,
@@ -365,6 +366,7 @@ class CopyBrowser(TreeBrowser):
     def __init__(self, tree: ConversationTree, **options) -> None:
         # Filled by `list_rows`, which the base constructor calls.
         self._snippets: dict[str, list[Snippet]] = {}
+        self._blocks: dict[str, list[str]] = {}
         self._values: set[CopyChoice] = set()
         super().__init__(tree, navigable=False, **options)
 
@@ -377,7 +379,8 @@ class CopyBrowser(TreeBrowser):
             if prompt := literal(node.prompt):
                 who = "btw: " if node.kind == "aside" else "user: "
                 rows.append(((identity, True, 0), who + excerpt(prompt)))
-            found = self._snippets[identity] = snippets(literal(node.response))
+            blocks = self._blocks[identity] = [literal(t) for t in (*node.earlier, node.response)]
+            found = self._snippets[identity] = turn_snippets(blocks[-1], blocks[:-1])
             if not found:
                 continue
             rows.append(((identity, False, 0), "assistant: " + excerpt(found[0].text)))
@@ -441,15 +444,26 @@ class CopyBrowser(TreeBrowser):
         return tuple(self.tree.path(self.tree.active))
 
     def block(self, value, renderable):
-        return marked(renderable, _mark((*value, 0)))
+        # A response marks its own last block (see `response`): earlier ones are
+        # drawn too, for their quotes and code, but the whole response is the last.
+        _, prompt = value
+        return marked(renderable, _mark((*value, 0))) if prompt else renderable
 
     def response(self, node: TurnNode, text: str):
-        marks = {
-            snippet.lines: _mark((node.id, False, part))
-            for part, snippet in enumerate(self._snippets.get(node.id, ()))
-            if snippet.lines is not None
-        }
-        return SnippetMarkdown(text, marks, code_theme=self.code_theme)
+        blocks = self._blocks.get(node.id) or [text]
+        found = self._snippets.get(node.id, ())
+        rendered = []
+        for index, block in enumerate(blocks):
+            marks = {
+                snippet.lines: _mark((node.id, False, part))
+                for part, snippet in enumerate(found)
+                if snippet.lines is not None and snippet.block == index
+            }
+            if index:
+                rendered.append(Text(""))
+            rendered.append(SnippetMarkdown(block, marks, code_theme=self.code_theme))
+        rendered[-1] = marked(rendered[-1], _mark((node.id, False, 0)))
+        return Group(*rendered)
 
 
 def copy_dialog(tree, **options) -> Application:

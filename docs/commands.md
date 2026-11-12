@@ -307,7 +307,7 @@ it is open. Enter, the arrows, Ctrl+J, Ctrl+C, and Ctrl+D never change.
 | Ctrl+V | Paste an image from the system clipboard (`/paste-image`): see [images in a prompt](#images-in-a-prompt) |
 | Ctrl+Z | Show/hide edit diffs in scrollback (`/show-edits`, saves the default) |
 | Ctrl+] | Group/ungroup runs of tool calls (`/group-tools`, saves the default) |
-| Ctrl+C | Discard input; cancels the running turn only when the prompt is empty |
+| Ctrl+C | Discard input (↑ brings it back); cancels the running turn only when the prompt is empty |
 | Ctrl+D | Exit on empty idle input (stopping a background session's host); cancel during generation |
 
 Terminal flow control is off while the prompt is active. There is no
@@ -346,7 +346,20 @@ word wider than the pane still has to split.
 The editor stays usable while the model works, including multiline input,
 history, slash completion, and `@` references. See
 [Sending while the agent is working](#sending-while-the-agent-is-working).
-Editor history is kept in memory only.
+
+Editor history is the prompts you sent in this session, plus anything you typed
+and did not send:
+
+- Ctrl+C keeps the text it discards as a history entry, so ↑ brings it back.
+- Editing a recalled prompt and then moving off it with ↑ or ↓ keeps the edit
+  as its own entry when you next send something or press Ctrl+C.
+- Unsent text is saved every 10 seconds, and when pcode exits, to
+  `~/.local/state/pcode/drafts/` (under `$XDG_STATE_HOME` if set). The next
+  session, in any directory, starts with the newest 50 of those in its
+  history; sending one, as it is or edited, deletes its file.
+
+Sent prompts are not carried over, and text you discard on purpose is saved
+like any other draft: delete its file if it held something sensitive.
 
 ## Activity panel
 
@@ -721,7 +734,8 @@ Cancelling:
 - Ctrl+D cancels the current turn and clears queued messages, keeping your
   unsent draft and cursor.
 - Ctrl+C discards the draft first, so cancelling with it takes a second press
-  when the prompt has text. It also clears queued messages.
+  when the prompt has text. It also clears queued messages. The discarded
+  draft stays in the editor history.
 - A failed turn clears queued messages too, rather than running more requests.
   Queued slash commands are kept.
 - The queue lives in memory until each message is sent.
