@@ -104,8 +104,8 @@ from pcode.tool_display import label, target
 from pcode.turn import TurnContext
 
 # Pydantic AI already recovered (it resent without the stale thinking) and
-# recorded the drop on the response; printed, the warning lands on top of the
-# terminal UI as a wall of stderr.
+# recorded the drop on the response, so the warning is noise even in the
+# library log, and a wall of stderr where that log is not installed.
 warnings.filterwarnings("ignore", category=AnthropicStaleThinkingBlockWarning)
 
 

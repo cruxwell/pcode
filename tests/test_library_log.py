@@ -94,6 +94,29 @@ def test_log_that_cannot_be_written_stays_silent(capfd):
     assert capfd.readouterr().err == ""
 
 
+def test_python_warning_goes_to_the_file_not_stderr(tmp_path):
+    """pytest swaps the warnings hooks around every test, so use a fresh interpreter."""
+    script = (
+        "import warnings\n"
+        "from pcode import library_log\n"
+        "library_log.install()\n"
+        "warnings.warn('old spelling', DeprecationWarning)\n"
+        "warnings.warn('shaky input', UserWarning)\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-W", "default", "-c", script],
+        env={**os.environ, "XDG_STATE_HOME": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert done.stderr == ""
+    text = (tmp_path / "pcode" / "library.log").read_text()
+    assert "WARNING py.warnings: " in text
+    assert "DeprecationWarning: old spelling" in text
+    assert "UserWarning: shaky input" in text
+
+
 def test_fastmcp_logs_to_the_file_not_its_own_stderr_handlers(tmp_path):
     """fastmcp configures logging on import, so this needs a fresh interpreter."""
     script = (
