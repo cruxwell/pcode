@@ -8,8 +8,7 @@ highlights them for) and for the small picker in `/tree`.
 """
 
 import re
-from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 from markdown_it import MarkdownIt
 from prompt_toolkit.application import Application
@@ -42,18 +41,12 @@ class Answer:
 
     prompt: str
     text: str
-    # The turn's text blocks before `text`, whose quotes and code it also offers.
-    earlier: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         from pcode.session_ui import literal
 
         object.__setattr__(self, "prompt", literal(self.prompt))
         object.__setattr__(self, "text", literal(self.text))
-        object.__setattr__(self, "earlier", tuple(literal(block) for block in self.earlier))
-
-    def snippets(self) -> "list[Snippet]":
-        return turn_snippets(self.text, self.earlier)
 
 
 def answers(tree) -> list[Answer]:
@@ -62,7 +55,7 @@ def answers(tree) -> list[Answer]:
     for identity in reversed(tree.path(tree.active)):
         node = tree.nodes[identity]
         if node.kind != "compaction" and node.response.strip():
-            answer = Answer(node.prompt, node.response, tuple(node.earlier))
+            answer = Answer(node.prompt, node.response)
             if answer.text.strip():
                 found.append(answer)
     return found
@@ -75,8 +68,6 @@ class Snippet:
     language: str = ""
     # Source lines [start, end) of a quote or code block, for `SnippetMarkdown`.
     lines: tuple[int, int] | None = field(default=None, compare=False)
-    # Which of the turn's text blocks `lines` is in (see `turn_snippets`).
-    block: int = field(default=0, compare=False)
 
     @property
     def label(self) -> str:
@@ -159,26 +150,6 @@ def snippets(markdown: str) -> list[Snippet]:
             text = token.content.rstrip("\n")
             found.append(Snippet("code", text, language, tuple(token.map) if token.map else None))
     return found
-
-
-def turn_snippets(response: str, earlier: Sequence[str] = ()) -> list[Snippet]:
-    """A turn's last text block, then the quotes and code in all its blocks, oldest first.
-
-    A turn that runs tools writes text between calls, and what the user wants
-    to paste can sit in any of it (a draft answered mid-turn, say). The whole
-    response stays the last block: that is the turn's answer. Each snippet's
-    `block` indexes ``[*earlier, response]``.
-    """
-    found = snippets(response)
-    if not found:
-        return []
-    parts = [
-        replace(snippet, block=index)
-        for index, block in enumerate(earlier)
-        for snippet in snippets(block)[1:]
-    ]
-    last = [replace(snippet, block=len(earlier)) for snippet in found[1:]]
-    return [found[0], *parts, *last]
 
 
 class _Marked:

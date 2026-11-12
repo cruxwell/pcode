@@ -34,10 +34,7 @@ class TurnNode:
     status: str = "interrupted"
     continuation: bool = False
     resend_blocked: bool = False
-    # The turn's last text block. One that runs tools writes a block between
-    # calls, and `earlier` keeps the ones before it, oldest first, for /copy.
     response: str = ""
-    earlier: list[str] = field(default_factory=list)
     plan: list[dict] = field(default_factory=list)
     # "turn", "compaction", or "aside": a /btw side question or a side
     # thread's summary, recorded like a turn that ran no tools.
@@ -125,8 +122,6 @@ class ConversationTree:
         # `SessionJournal.active_records`).
         elif (node := self.nodes.get(record.get("run_id") or self.recording)) is not None:
             if kind == "Message":
-                if node.response.strip():
-                    node.earlier.append(node.response)
                 node.response = record["markdown"]
                 node.add_links(node.response, "assistant")
             elif kind in {"ToolStarted", "ToolSummary"}:
