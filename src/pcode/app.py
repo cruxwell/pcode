@@ -43,6 +43,7 @@ from pcode.controller import (
 )
 from pcode.drafts import Drafts, default_dir
 from pcode.error_report import error_message
+from pcode.library_log import install as install_library_log
 from pcode.preferences import (
     ANTHROPIC_THINKS_BY_DEFAULT,
     COMMAND_MODES,
@@ -3091,6 +3092,7 @@ def _profile_capture(args) -> tuple[Path, bool, bool] | None:
 
 
 def main() -> None:
+    install_library_log()
     parser = argparse.ArgumentParser(
         description="Streaming terminal with a Coder agent",
         epilog=f"Global defaults, without starting a session: pcode {CONFIG_USAGE}",
