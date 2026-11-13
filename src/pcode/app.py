@@ -2428,8 +2428,8 @@ class PreviewApp:
         width = get_app().output.get_size().columns
         location = plain(location_label(self.workspace, self.branch), limit=None)
         model = self.model if self.model else "preview"
-        if self.model:
-            model += f" ({self.current_effort()})"
+        if self.model and (effort := self.current_effort()) != "n/a":
+            model += f" ({effort})"
         # Read left to right and cut from the right: the path leads, then send
         # mode and live activity, then metadata, with the help hint last.
         once = " (once)" if self.send_mode_once else ""

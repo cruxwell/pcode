@@ -147,10 +147,11 @@ model remembers its own level. The footer shows the selected effort.
   accepts every level; the provider still validates it.
 - On Anthropic and Claude Code, only models that support effort accept
   it (Opus 4.5+ and Sonnet 4.6+, among others). For any other model, `/effort`
-  refuses a level and the footer shows `n/a`; `/effort default` still clears a
+  refuses a level and the footer shows no effort; `/effort default` still clears a
   saved level. `xhigh` becomes Anthropic's `max` where the model has no native
   `xhigh`.
-- The offline preview and other providers show `n/a`.
+- The offline preview and other providers show no effort in the footer, and
+  `n/a` in `/effort` and `/status`.
 
 ## Claude Code provider
 

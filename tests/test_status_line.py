@@ -229,8 +229,8 @@ def test_footer_segments_highlight_context_and_activity(tmp_path, monkeypatch):
     app.activity.queued = 2
     fragments = app.toolbar()
     assert ("class:bottom-toolbar.location", str(tmp_path)) in fragments
-    # A model with no effort control says so rather than showing a level.
-    assert ("class:bottom-toolbar.model", "test:local (n/a)") in fragments
+    # A model with no effort control shows no effort slot at all.
+    assert ("class:bottom-toolbar.model", "test:local") in fragments
     assert "working" not in fragment_list_to_text(fragments)
     assert ("class:bottom-toolbar.activity", "2 queued") in fragments
 

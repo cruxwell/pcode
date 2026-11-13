@@ -196,7 +196,13 @@ def catalog_routes(data) -> dict[str, str]:
 
 
 def catalog_key(model: str | Model, routes: dict[str, str] | None = None) -> str | None:
-    """Exact provider/model match, never guess from a model's family name."""
+    """Exact provider/model match, never guess from a model's family name.
+
+    An endpoint that is checked and found elsewhere (a proxy, a custom base
+    URL) gets no public limits: it may serve different ones. One that cannot
+    be checked, because the catalog lists no URL for it or its client hides
+    its own (Gemini's), defaults to the catalog's entry for its name.
+    """
     identity = model if isinstance(model, str) else model.model_id
     provider, sep, name = identity.partition(":")
     if not sep:
@@ -208,30 +214,29 @@ def catalog_key(model: str | Model, routes: dict[str, str] | None = None) -> str
         endpoint = model.provider
         if endpoint is None:
             return None
+        provider = endpoint.name
         # Some catalogs omit `api` for native SDK providers. These are verified
         # canonical endpoints, not model limits. Other routes come from the feed.
         canonical = {
             "anthropic": "https://api.anthropic.com",
             "openai": "https://api.openai.com/v1",
             "openai-codex": "https://chatgpt.com/backend-api/codex",
-        }.get(endpoint.name) or (routes or {}).get(endpoint.name)
-        if canonical is None:
-            return None
+        }.get(provider) or (routes or {}).get(provider)
         # Use the client's actual URL, not an SDK default that may hide an
         # injected client/proxy. Require scheme, port and path to match too.
-        actual = str(getattr(endpoint.client, "base_url", ""))
-        try:
-            url, expected = urlsplit(actual), urlsplit(canonical)
-            if (
-                (url.scheme, url.netloc, url.path.rstrip("/"))
-                != (expected.scheme, expected.netloc, expected.path.rstrip("/"))
-                or url.query
-                or url.fragment
-            ):
+        actual = getattr(getattr(endpoint, "client", None), "base_url", None)
+        if canonical is not None and actual is not None:
+            try:
+                url, expected = urlsplit(str(actual)), urlsplit(canonical)
+                if (
+                    (url.scheme, url.netloc, url.path.rstrip("/"))
+                    != (expected.scheme, expected.netloc, expected.path.rstrip("/"))
+                    or url.query
+                    or url.fragment
+                ):
+                    return None
+            except ValueError:
                 return None
-        except ValueError:
-            return None
-        provider = endpoint.name
     provider = {"openai-responses": "openai", "openai-chat": "openai"}.get(provider, provider)
     # In particular, openai-codex NEVER maps to openai.
     return f"{provider}:{name}"

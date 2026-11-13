@@ -523,6 +523,38 @@ def test_catalog_specific_provider_route_without_guessing(monkeypatch, tmp_path)
     assert service.window(model) is None
 
 
+def test_unverifiable_endpoint_defaults_to_the_catalog(tmp_path):
+    """No listed URL, or a client that hides its own, is unknown rather than a proxy."""
+    from types import SimpleNamespace
+
+    from pydantic_ai.models.test import TestModel
+
+    data = {"google": {"models": {"example": {"limit": {"context": 1_048_576}}}}}
+    service = ContextCatalog(tmp_path / "cache.json")
+    service.public = parse_catalog(data, time.time())
+
+    class RoutedModel(TestModel):
+        @property
+        def provider(self):
+            return self._provider
+
+    model = RoutedModel(model_name="example")
+    # Gemini's genai client has no `base_url`, and models.dev lists no `api` for it.
+    model._provider = SimpleNamespace(name="google", client=object())
+    assert service.window(model) == 1_048_576
+    model._provider = SimpleNamespace(
+        name="google", client=SimpleNamespace(base_url="https://elsewhere.example")
+    )
+    assert service.window(model) == 1_048_576
+    # A Codex client hiding its URL still keys as Codex, never as OpenAI.
+    service.public = parse_catalog(
+        {"openai": {"models": {"example": {"limit": {"context": 400_000}}}}}, time.time()
+    )
+    model._provider = SimpleNamespace(name="openai-codex", client=object())
+    assert catalog_key(model) == "openai-codex:example"
+    assert service.window(model) is None
+
+
 def test_runtime_refreshes_the_current_model_before_streaming(monkeypatch):
     from pydantic_ai import Agent
     from pydantic_ai.models.test import TestModel
