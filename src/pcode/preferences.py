@@ -366,6 +366,11 @@ SETTINGS = {
         name_list=True,
         description="Models delegate_task lists for sub-agents, comma-separated (/subagents)",
     ),
+    "advisor_model": Setting(
+        None,
+        description="Model the session's model may consult for hard decisions, e.g. "
+        "anthropic:claude-fable-5-2; unset for none (/advisor)",
+    ),
     # An untouched worktree is always removed; uncommitted changes are always kept.
     # Off by default: one process starts faster and leaves nothing behind.
     # `/detach` moves a session into a host when it should outlive the terminal.

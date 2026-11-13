@@ -153,6 +153,55 @@ model remembers its own level. The footer shows the selected effort.
 - The offline preview and other providers show no effort in the footer, and
   `n/a` in `/effort` and `/status`.
 
+## Advisor
+
+An advisor is a stronger model the session's model can consult before it commits
+to an approach, when it's stuck, or before it calls complex work done. Most of the
+work stays on the cheaper, faster model, and the expensive one only weighs in at
+the moments that matter. A good pairing is Opus 5.5 doing the work with Claude
+Fable 5.2 advising:
+
+```text
+❯ /advisor anthropic:claude-fable-5-2
+Advisor: anthropic:claude-fable-5-2 (next turn).
+```
+
+- `/advisor` alone opens the model picker. `/advisor off` removes the advisor.
+- The choice lasts until you quit pcode, including across `/new` and `/resume`. Add
+  `--save` to make it the default for later launches too (`/advisor anthropic:claude-fable-5-2 --save`), or set it from the
+  shell with `pcode config set advisor_model anthropic:claude-fable-5-2`.
+  `/advisor off --save` clears the default.
+- Changes apply from the next turn. Adding or removing the advisor changes the
+  model's tool list, so that turn starts without the prompt cache.
+- The model decides when to consult. Ask for it in your prompt ("check with the
+  advisor before you start") when you want it at a particular point.
+- `/status` shows the advisor while one is set. Only the session's own model gets
+  one; sub-agents and workflow workers don't. A [`/btw`](side-questions.md) side
+  question sees the same tools, to keep sharing the prompt cache, but is refused
+  when it calls a separately run advisor. It can't be stopped from using
+  Anthropic's built-in one.
+
+How the advice is produced depends on the pairing:
+
+- **Anthropic API model advised by a Claude model** (`anthropic:` or `claude:`
+  name): Anthropic's own advisor tool runs inside the same request. The advisor
+  reads the whole conversation, and its tokens are billed at its own rates. The
+  newest advisors, Fable 5.2 among them, return their advice encrypted, so pcode
+  can't show what it said. A Fable 5.2 or Mythos 5.2 session only accepts a 5.2
+  advisor this way; any other advisor uses the separate request below.
+- **Every other pairing**, including a Claude Code (`claude:`) session: the
+  advisor runs as a separate request on pcode's own login for that model, the way
+  a [`/btw` question on another model](side-questions.md#choosing-the-model) does.
+  It sees only the question and context the session's model sends it, not the
+  conversation.
+
+`/advisor` refuses a name pcode can't use (an unknown provider, or one you aren't
+signed in to) before anything changes, and a Claude name missing from the `/model`
+catalog too, since Anthropic would fail every request over a name it doesn't know.
+`pcode config set advisor_model` saves the name without checking it. A separately
+run advisor is looked up again each turn, so after a `/logout` it's left out of
+the turn instead of failing it.
+
 ## Claude Code provider
 
 A `claude:` model uses your Claude subscription through Claude Code's own login,

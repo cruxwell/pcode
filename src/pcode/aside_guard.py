@@ -23,7 +23,9 @@ PLAN_READS = frozenset({"read_plan", "get_available_tasks"})
 DELEGATION_TOOLS = frozenset({"delegate_task"})
 # Tools with read and write actions: listing stays available, like the plan reads.
 ACTION_TOOLS = frozenset({"task_worktree", "manage_worker"})
-REFUSED_TOOLS = (PLAN_TOOLS - PLAN_READS) | DELEGATION_TOOLS
+# The local advisor tool: a consultation is the turn's to spend, not a side question's.
+ADVISOR_TOOLS = frozenset({"advisor"})
+REFUSED_TOOLS = (PLAN_TOOLS - PLAN_READS) | DELEGATION_TOOLS | ADVISOR_TOOLS
 
 
 class AsideGuard(AbstractCapability):
@@ -37,7 +39,8 @@ class AsideGuard(AbstractCapability):
             # A failed result rather than `ModelRetry`: nothing about the call
             # can be corrected, and a retry would spend the tool's retry budget.
             raise ToolFailed(
-                f"{call.tool_name} is unavailable in a side question: the plan and "
-                "delegated tasks belong to the main conversation. Answer without it."
+                f"{call.tool_name} is unavailable in a side question: the plan, "
+                "delegated tasks and the advisor belong to the main conversation. "
+                "Answer without it."
             )
         return await handler(args)

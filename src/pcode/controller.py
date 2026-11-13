@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
+from pcode.advisor import AdvisorChoice
 from pcode.aside import (
     EFFORT_MARK,
     MODEL_MARK,
@@ -212,6 +213,8 @@ FRONTEND_COMMANDS = frozenset(
 # Session commands that can recover from a failed startup: picking a model that
 # builds starts the agent the bad one could not, and signing in is often the fix.
 RECOVERY_COMMANDS = frozenset({"/model", "/login"})
+SAVE_FLAG = "--save"
+ADVISOR_USAGE = "Usage: /advisor [MODEL | off] [--save]"
 
 # One queued command: the queue generation it was sent in, its text, whether
 # the session was idle when it was sent, and the popup generation the terminal
@@ -546,6 +549,8 @@ class SessionController:
         self.borrowed_turn = None
         # User extensions load with the runtime; their commands register once it exists.
         self.extensions = None
+        # The /advisor choice: `advisor_model` until changed, kept across agent rebuilds.
+        self.advisor = AdvisorChoice()
         self.extension_command_names: list[str] = []
         self.skill_command_names: list[str] = []
         self._startup_context_shown: set[str] = set()
@@ -677,6 +682,15 @@ class SessionController:
                 "Set reasoning effort: low / medium / high / xhigh / default",
                 self.effort,
                 ("low", "medium", "high", "xhigh", "default"),
+                group="Model",
+            ),
+            Command(
+                "/advisor",
+                "Model the session's model consults on hard decisions: MODEL / off, "
+                "--save keeps it; bare picks one",
+                self.set_advisor,
+                free_arguments=True,
+                argument_completer=self.advisor_completions,
                 group="Model",
             ),
             Command(
@@ -2231,19 +2245,23 @@ class SessionController:
 
     # --- Preferences the session saves (model, effort, autocompact) ---
 
-    def persist_defaults(self, **updates: str) -> None:
+    def persist_defaults(self, **updates: str) -> bool:
         try:
             save_preferences(**updates)
         except OSError, ValueError:
             self.view.warning("Could not save defaults; this selection applies only here.")
+            return False
+        return True
 
-    def forget_defaults(self, *keys: str) -> None:
+    def forget_defaults(self, *keys: str) -> bool:
         from pcode.preferences import update_preferences
 
         try:
             update_preferences({}, remove=keys)
         except OSError, ValueError:
             self.view.warning("Could not update defaults; this change applies only here.")
+            return False
+        return True
 
     # --- History: compaction and continuing ---
 
@@ -2518,6 +2536,79 @@ class SessionController:
             if model not in words and needle in model.casefold():
                 yield Completion(model, start_position=-len(fragment))
 
+    async def set_advisor(self, argument: str) -> None:
+        """`/advisor` picks the advisor; `MODEL` or `off` sets it; `--save` makes it the default.
+
+        Without `--save` the choice lasts until pcode exits. It reaches the next
+        turn: the agent resolves its advisor once per turn.
+        """
+        from pcode.advisor import SETTING, native_id
+
+        words = argument.split()
+        save = SAVE_FLAG in words
+        words = [word for word in words if word != SAVE_FLAG]
+        if len(words) > 1:
+            raise ValueError(ADVISOR_USAGE)
+        if not self.model:
+            raise ValueError("/advisor requires a live model session.")
+        if words:
+            name = words[0]
+        else:
+            name = await self.pick_model(self.advisor.name)
+            if name is None:
+                self.view.note(f"Advisor: {self.advisor.name or 'off'}. {ADVISOR_USAGE}")
+                return
+        if name == "off":
+            name = None
+        else:
+            from pcode.agent import side_model
+
+            # Resolve now, so an unknown provider or a missing login is refused
+            # here rather than leaving every turn without its advisor.
+            await asyncio.to_thread(side_model, name)
+            known = set(await asyncio.to_thread(self.model_suggestions))
+            if name not in known:
+                # A Claude advisor can run inside the turn's own request, where
+                # Anthropic fails every request over a name it does not know.
+                if native_id(name) is not None:
+                    raise ValueError(f"Not in the /model catalog: {name}. Check the spelling.")
+                self.view.warning(f"Not in the /model catalog, so check the spelling: {name}")
+        self.advisor.name = name
+        saved = ""
+        if save:
+            if name is None:
+                stored = self.forget_defaults(SETTING)
+            else:
+                stored = self.persist_defaults(**{SETTING: name})
+            if stored:
+                saved = " Saved as the default."
+                if from_project(SETTING):
+                    saved += (
+                        " This workspace's .pcode/preferences.json also sets advisor_model, "
+                        "and wins at launch."
+                    )
+        chosen = f"{name} (next turn)" if name else "off"
+        self.view.note(f"Advisor: {chosen}.{saved}")
+
+    def advisor_completions(self, argument: str):
+        """Complete `/advisor`: a model from the /model catalog or `off`, then `--save`."""
+        from prompt_toolkit.completion import Completion
+
+        words = argument.split()
+        fragment = words.pop() if words and not argument[-1].isspace() else ""
+        if SAVE_FLAG not in words and fragment and SAVE_FLAG.startswith(fragment):
+            yield Completion(
+                SAVE_FLAG, start_position=-len(fragment), display_meta="Make it the default"
+            )
+        if [word for word in words if word != SAVE_FLAG] or fragment.startswith("-"):
+            return
+        if "off".startswith(fragment):
+            yield Completion("off", start_position=-len(fragment), display_meta="No advisor")
+        needle = fragment.casefold()
+        for model in self.model_suggestions():
+            if needle in model.casefold():
+                yield Completion(model, start_position=-len(fragment))
+
     def reload(self, argument: str) -> None:
         if argument:
             raise ValueError("/reload takes no arguments.")
@@ -2564,7 +2655,12 @@ class SessionController:
         loaded = await asyncio.to_thread(self._load_extensions)
         # Construct first, so a failure leaves the previous agent in place.
         agent = await asyncio.to_thread(
-            create_agent, self.model, self.workspace, loaded.capabilities, loaded.subagents
+            create_agent,
+            self.model,
+            self.workspace,
+            loaded.capabilities,
+            loaded.subagents,
+            self.advisor,
         )
         apply_effort(agent, self.model, effort_for(self.model))
         apply_thinking(agent, self.model, self.activity.thinking_mode)
@@ -2619,6 +2715,7 @@ class SessionController:
                 self.workspace,
                 self.extensions.capabilities,
                 self.extensions.subagents,
+                self.advisor,
             ),
             self._saved_session,
             session_factory=self._create_session if self.save_sessions else None,
@@ -2673,7 +2770,7 @@ class SessionController:
         capabilities = self.extensions.capabilities if self.extensions else ()
         subagents = self.extensions.subagents if self.extensions else ()
         agent = await asyncio.to_thread(
-            create_agent, model, self.workspace, capabilities, subagents
+            create_agent, model, self.workspace, capabilities, subagents, self.advisor
         )
         apply_effort(agent, model, effort_for(model))
         apply_thinking(agent, model, self.activity.thinking_mode)
@@ -2787,6 +2884,7 @@ class SessionController:
             *([("Title", saved.info.title)] if saved and saved.info.title else []),
             ("Model", self.model),
             ("Effort", self.current_effort()),
+            *([("Advisor", self.advisor.name)] if self.advisor.name else []),
             ("Workspace", str(self.workspace)),
             ("Turns", str(self.runtime.turns)),
             ("Tokens in/out", f"{self.runtime.input_tokens}/{self.runtime.output_tokens}"),
@@ -3249,6 +3347,12 @@ class SessionController:
 
     async def select_model(self, argument: str) -> None:
         """Pick a model in the terminal from the providers this session can reach."""
+        model = await self.pick_model(self.model)
+        if model is not None:
+            await self.switch_model(model)
+
+    async def pick_model(self, current: str | None) -> str | None:
+        """The /model picker over the reachable providers; None when dismissed or none."""
         from pcode.models import active_providers, model_catalog
 
         providers = await asyncio.to_thread(active_providers, self.model)
@@ -3259,11 +3363,9 @@ class SessionController:
                 "provider's API key (see docs/providers.md). "
                 "If model_providers is set, check that it allows an active provider."
             )
-            return
-        values = model_catalog(providers, self.model)
-        model = await self.view.choose_model(values, providers, self.model)
-        if model is not None:
-            await self.switch_model(model)
+            return None
+        values = model_catalog(providers, current)
+        return await self.view.choose_model(values, providers, current)
 
     async def initialize_runtime(self) -> None:
         """Build the agent (off the event loop) and restore a resumed conversation."""
@@ -3335,14 +3437,16 @@ class SessionController:
             subagents = extensions.subagents if extensions else ()
             retired = None
             try:
-                agent = create_agent(saved.info.model, target, capabilities, subagents)
+                agent = create_agent(
+                    saved.info.model, target, capabilities, subagents, self.advisor
+                )
             except UserError as error:
                 # A provider pcode has since dropped (meridian:) leaves the
                 # conversation stranded; carry it on with the model in use now.
                 if not is_unknown_model(error) or not self.model:
                     raise
                 retired = saved.info.model
-                agent = create_agent(self.model, target, capabilities, subagents)
+                agent = create_agent(self.model, target, capabilities, subagents, self.advisor)
                 saved.info.model = self.model
             apply_effort(agent, saved.info.model, effort_for(saved.info.model))
             apply_thinking(agent, saved.info.model, self.activity.thinking_mode)

@@ -378,6 +378,7 @@ class PreviewApp:
             ),
             self.controller.registry.find("/model"),
             self.controller.registry.find("/effort"),
+            self.controller.registry.find("/advisor"),
             self.controller.registry.find("/mcp"),
             self.controller.registry.find("/login"),
             self.controller.registry.find("/logout"),

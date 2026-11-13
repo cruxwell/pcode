@@ -43,6 +43,7 @@ def make_app(width=80, workspace=None):
                 "/agents",
                 "/model",
                 "/effort",
+                "/advisor",
                 "/mcp",
                 "/login",
                 "/logout",

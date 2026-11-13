@@ -58,6 +58,8 @@ from pcode.workspace import WorkspaceGuard
 if TYPE_CHECKING:
     from pydantic_ai.models.openai_codex import OpenAICodexModel
 
+    from pcode.advisor import AdvisorChoice
+
 # Harness gives a child its own usage counter only when its `SubAgent` carries
 # `usage_limits`; without one the child shares the parent's counter and silently
 # gets the library's 50-request default, which a busy session has already spent.
@@ -578,10 +580,22 @@ def with_effort(name: str, model, settings: dict | None, effort: str | None) -> 
 
 
 def create_agent(
-    model: str, workspace: Path, extensions: Sequence = (), subagents: Sequence = ()
+    model: str,
+    workspace: Path,
+    extensions: Sequence = (),
+    subagents: Sequence = (),
+    advisor: AdvisorChoice | None = None,
 ) -> Agent:
-    """Build the terminal's agent; `extensions` and `subagents` come from `pcode.ext`."""
+    """Build the terminal's agent; `extensions` and `subagents` come from `pcode.ext`.
+
+    `advisor` is the session's /advisor choice, read at each turn.
+    """
     resolved = resolve_model(model)
+    extras = []
+    if advisor is not None:
+        from pcode.advisor import advisor_capability
+
+        extras.append(advisor_capability(advisor))
     # Allow the terminal to open so /login is reachable without credentials.
     defer_model_check = model.startswith("anthropic:") and isinstance(resolved, str)
     return Agent(
@@ -591,5 +605,5 @@ def create_agent(
         name="pcode",
         retries=tool_retries(),
         instructions=AGENT_INSTRUCTIONS,
-        capabilities=[create_coder(workspace, subagents, extensions), *extensions],
+        capabilities=[create_coder(workspace, subagents, extensions), *extensions, *extras],
     )

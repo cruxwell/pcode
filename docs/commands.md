@@ -39,6 +39,10 @@ arrow keys to choose. Enter accepts a selected completion; another Enter runs it
   queues as its own. `/continue` of it asks the conversation's model.
 - `/effort [low|medium|high|xhigh|default]`: set reasoning effort; bare shows the current
   level ([details](providers.md#reasoning-effort)).
+- `/advisor [MODEL|off] [--save]`: a stronger model the session's model can consult on hard
+  decisions, such as Claude Fable 5.2 advising Opus 5.5. Bare opens the model picker, `off`
+  removes it, and `--save` makes the choice the `advisor_model` default
+  ([details](providers.md#advisor)).
 - `/mcp [list | enable NAME [--save] | enable-all | disable NAME [--save] | logout NAME]`:
   manage [MCP servers](mcp.md).
 - `/extensions [list | on NAME | off NAME]` and `/reload`: list or toggle extensions, and

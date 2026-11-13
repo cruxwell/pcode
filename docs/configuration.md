@@ -244,6 +244,7 @@ Every key works with `pcode config set KEY VALUE` and `/config set KEY VALUE`.
 | `tool_retries` | `3` | Whole number, corrections the model gets per turn when a tool call has invalid arguments |
 | `strict_tools` | `on` | `on`, `off` (constrain `edit_file` arguments with Anthropic strict tool use) |
 | `subagent_models` | empty | `,`-separated models `delegate_task` lists for running a sub-agent; others can still be named per delegation ([`/subagents`](tools.md#sub-agents-on-other-models)); empty runs every sub-agent on the session's model; `/reload` to apply |
+| `advisor_model` | unset | model the session's model can consult on hard decisions, such as `anthropic:claude-fable-5-2` ([`/advisor`](providers.md#advisor)); unset for none; applies at launch, `/advisor` changes it now |
 | `worker_concurrency` | `0` | `0` means unlimited; a positive integer caps concurrent built-in workers per session; `/reload` to apply |
 | `manager_worker_model` | unset | model that built-in workers run on in [manager mode](manager.md) when the agent doesn't pick one, such as a cheaper model for routine pieces; unset uses the session's model |
 | `manager_token_budget` | `0` | Whole number, worker tokens [manager mode](manager.md) may spend before it refuses new delegations; `0` is unlimited |
