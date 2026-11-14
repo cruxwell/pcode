@@ -88,7 +88,9 @@ workspace has, so it can also read one on its own. See
 
 pcode reads `AGENTS.md` and `CLAUDE.md` from the workspace, and from parent
 directories up to your home folder, so build commands, conventions and known
-traps reach every session without repeating them. See
+traps reach every session without repeating them. An untracked
+`AGENTS.local.md` (or `CLAUDE.local.md`) beside them holds personal notes you
+don't want to commit. See
 [repository instructions](../workspace.md#repository-instructions-agentsmd-claudemd).
 
 ## Settings

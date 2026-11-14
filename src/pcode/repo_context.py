@@ -21,6 +21,13 @@ from pydantic_ai_harness.repo_context._loader import (
 from pcode.context_breakdown import REPO_CONTEXT
 from pcode.preferences import SETTINGS, load_preferences
 
+# Harness's defaults plus their untracked `.local.md` variants (Claude Code's
+# CLAUDE.local.md; AGENTS.local.md as proposed in agentsmd/agents.md#13).
+# Every one present in a directory loads, in this order, so a personal file
+# lands after the shared ones and takes precedence by coming later. Nested discovery takes only
+# the first match per directory, so there a local file shows only on its own.
+INSTRUCTION_FILENAMES = ("CLAUDE.md", "AGENTS.md", "CLAUDE.local.md", "AGENTS.local.md")
+
 
 @dataclass
 class AutomaticRepoContext(RepoContext):
@@ -157,6 +164,7 @@ def create_repo_context(workspace: Path) -> AutomaticRepoContext:
         # inventory to it; the id is metadata and never reaches the model.
         id=REPO_CONTEXT,
         root=workspace,
+        filenames=INSTRUCTION_FILENAMES,
         home_dir=boundary,
         nested_traversal=nested != "off",
         nested_inject="contents" if nested == "contents" else "pointer",

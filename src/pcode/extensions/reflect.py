@@ -26,8 +26,9 @@ import subprocess
 from pathlib import Path
 
 LOG_NAME = "lessons.md"
-# Harness RepoContext's default `filenames`. It loads every one present in a
-# directory (deduplicated by content), not just the first.
+# The shared, committed names RepoContext loads (every one present in a
+# directory, deduplicated by content). Its untracked `.local.md` variants are
+# left out: a lesson worth recording belongs where everyone gets it.
 INSTRUCTION_NAMES = ("CLAUDE.md", "AGENTS.md")
 
 # `/reflect [--project | --all] [focus]`: where the evidence comes from.

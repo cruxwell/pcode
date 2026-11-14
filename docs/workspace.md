@@ -27,13 +27,24 @@ directory does not stop the walk. Instructions load broadest first, workspace
 last, with `CLAUDE.md` before `AGENTS.md` in each directory (both load when they
 differ). The startup banner lists the files loaded without printing them.
 
+**Personal instructions (`AGENTS.local.md` / `CLAUDE.local.md`).** For notes
+that are yours alone (a sandbox URL, a preferred test command, a habit the team
+doesn't share), put them in `AGENTS.local.md` or `CLAUDE.local.md` beside the
+shared file and keep them out of Git, through `.gitignore` or, without touching
+anything tracked, `.git/info/exclude`. They load after `CLAUDE.md` and
+`AGENTS.md` in the same directory, so they come later and take precedence, and
+they work without a shared file. Claude Code reads `CLAUDE.local.md` the same
+way. With `repo_context_walk_up` on, session worktrees pick up the main
+checkout's local file through the parent walk. A symlink to a file outside the
+directory (say, `~/notes/project.md`) is ignored; copy it in instead.
+
 **Subdirectories (`repo_context_nested`).** After the agent reads, lists, or
 greps inside a directory of the workspace, pcode checks that directory for an
 instruction file. `pointer` adds a note telling the agent to read it if
 relevant; `contents` adds the file's text to the conversation. Each directory is
-surfaced at most once per turn, and only its first match (`CLAUDE.md` before
-`AGENTS.md`) is used. Directories skipped over when jumping straight to a deeper
-file are not checked, and shell commands, writes, and edits never trigger it.
+surfaced at most once per turn, and only its first match (`CLAUDE.md`, then
+`AGENTS.md`, then the `.local.md` variants) is used. Directories skipped over
+when jumping straight to a deeper file are not checked, and shell commands, writes, and edits never trigger it.
 This works whether or not the parent walk is on.
 
 The agent is also told which `.claude`, `.agents`, `.codex`, and `.grok` asset

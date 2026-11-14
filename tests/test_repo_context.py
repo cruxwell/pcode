@@ -233,6 +233,34 @@ def test_walk_up_loads_both_filenames_in_ancestor_first_order(tmp_path, monkeypa
     ]
 
 
+def test_local_instruction_files_load_after_shared_ones(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    repo = home / "project"
+    workspace = repo / ".worktrees/session"  # A session worktree inherits them.
+    workspace.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    (repo / "AGENTS.local.md").write_text("Agents local guidance")
+    (repo / "AGENTS.md").write_text("Shared guidance")
+    (repo / "CLAUDE.local.md").write_text("Claude local guidance")
+    (workspace / "AGENTS.md").write_text("Shared guidance")
+
+    context = create_repo_context(workspace)
+    instructions = context.preload().instructions_text()
+    bodies = ["Shared guidance", "Claude local guidance", "Agents local guidance"]
+    positions = [instructions.index(body) for body in bodies]
+    assert positions == sorted(positions)
+    assert context.startup_summary() == [
+        "Loaded repository instructions: "
+        "../../AGENTS.md, ../../CLAUDE.local.md, ../../AGENTS.local.md"
+    ]
+
+
+def test_local_instruction_file_loads_without_shared_one(tmp_path):
+    (tmp_path / "AGENTS.local.md").write_text("Only local guidance")
+    context = create_repo_context(tmp_path)
+    assert "Only local guidance" in context.preload().instructions_text()
+
+
 def test_workspace_at_home_loads_home_only(tmp_path):
     (tmp_path / "AGENTS.md").write_text("Home workspace guidance")
     context = create_repo_context(tmp_path)

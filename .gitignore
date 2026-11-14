@@ -10,3 +10,6 @@ tmp
 .worktrees/
 # built docs site (make docs)
 site/
+# personal, untracked repository instructions
+AGENTS.local.md
+CLAUDE.local.md
