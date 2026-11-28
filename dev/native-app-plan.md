@@ -463,7 +463,7 @@ both exist a pane runs exactly one of them (`PCodeSessionPane.surface` xor
 `composer`).
 
 The `/btw` drawer in native panes: `read_asides` (bare `/btw`) and a fresh
-answer (when the composer is empty) open the newest thread; Ctrl+\\ steps
+answer (when the composer is empty) open the newest thread; Ctrl+\ steps
 threads; Escape closes. While it shows a thread, Enter follows up, and
 `/merge`, `/summarize`, `/close` and `/stop` act on it, as `btw_submit` does.
 
