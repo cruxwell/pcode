@@ -86,11 +86,19 @@ private struct PCodeNativePickerSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-                .padding(.top, 10)
-                .padding(.bottom, 4)
+            ZStack(alignment: .trailing) {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                // The picker takes Esc itself; this is for the mouse.
+                Button("Cancel") { picker.cancel() }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 12))
+                    .padding(.trailing, 8)
+            }
+            .padding(.top, 10)
+            .padding(.bottom, 4)
             PCodePickerView(picker: picker, config: ghostty.config, fonts: nil)
         }
         .padding(4)
@@ -106,7 +114,8 @@ final class PCodeJobsModel: ObservableObject {
     @Published private(set) var jobs: [PCodeNativeCommands.Job] = []
     @Published private(set) var loading = true
     @Published private(set) var error = ""
-    /// The job this sheet last asked the host to watch, to offer Unwatch.
+    /// The job this sheet asked the host to watch. The host's own `watched_job`
+    /// isn't mirrored, so the footer's Unwatch is always offered too.
     @Published private(set) var watched: String?
     private let context: PCodeNativeCommands.Context
 
@@ -178,6 +187,8 @@ struct PCodeJobsSheet: View {
             Divider()
             HStack {
                 Button("Refresh") { model.refresh() }
+                Button("Unwatch") { model.watch(nil) }
+                    .help("Stop pinning a job's output in the status")
                 Spacer()
                 Button("Stop All") { model.stop(nil) }.disabled(model.jobs.isEmpty)
             }

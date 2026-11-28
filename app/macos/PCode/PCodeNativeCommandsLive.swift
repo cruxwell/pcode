@@ -84,10 +84,12 @@ extension PCodeNativeCommands {
             guard let workspace else { return }
             let hosted = workspace.projectGroups.flatMap(\.hostedSessions)
             if let wanted {
-                guard let match = hosted.first(where: { $0.host.hostID == wanted || $0.info.id == wanted })
-                    ?? hosted.first(where: { $0.host.hostID.hasPrefix(wanted) || $0.info.id.hasPrefix(wanted) })
-                else { return toast("No running session \(wanted).") }
-                return workspace.open(match.info)
+                switch attachTarget(wanted, among: hosted.map { (host: $0.host.hostID, session: $0.info.id) }) {
+                case .found(let index): workspace.open(hosted[index].info)
+                case .none: toast("No running session \(wanted).")
+                case .ambiguous: toast("\(wanted) matches several running sessions: use more characters.")
+                }
+                return
             }
             guard !hosted.isEmpty else { return toast("No other session is running in the background.") }
             let picker = PCodePicker()
@@ -100,13 +102,33 @@ extension PCodeNativeCommands {
             guard let workspace else { return }
             workspace.newSession(directory: pane?.projectPath ?? session.directory)
             // The new pane's composer queues it until its host is up.
-            guard let composer = workspace.selectedPane?.composer, composer !== session else { return }
+            guard let composer = workspace.selectedPane?.composer, composer !== session else {
+                return toast("Started a session; send the prompt there.")
+            }
             _ = composer.submit(prompt)
         case .restartHost:
             _ = session.requestRelaunch(isManual: true)
         case .btw:
             // Native panes have no drawer yet (`PCodeDrawer` hangs off a terminal surface).
             toast("The /btw drawer isn't in native panes yet.")
+        }
+    }
+
+    enum AttachTarget: Equatable {
+        case found(Int)
+        case none
+        case ambiguous
+    }
+
+    /// `/attach HOST`, as `find_host` matches: an exact host or session id, else a
+    /// prefix of exactly one of them.
+    static func attachTarget(_ wanted: String, among hosts: [(host: String, session: String)]) -> AttachTarget {
+        if let exact = hosts.firstIndex(where: { $0.host == wanted || $0.session == wanted }) { return .found(exact) }
+        let matches = hosts.indices.filter { hosts[$0].host.hasPrefix(wanted) || hosts[$0].session.hasPrefix(wanted) }
+        switch matches.count {
+        case 0: return .none
+        case 1: return .found(matches[0])
+        default: return .ambiguous
         }
     }
 

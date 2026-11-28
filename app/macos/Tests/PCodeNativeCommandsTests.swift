@@ -145,6 +145,48 @@ struct PCodeNativeCommandsTests {
         #expect(recorder.toasts.last == "No links in this conversation yet.")
     }
 
+    /// `choose_model` must answer exactly once, however the picker ends.
+    @Test func chooseModelAnswersOnce() {
+        func run(_ end: (PCodePicker) -> Void) -> [String?] {
+            var answers: [String?] = []
+            let recorder = Recorder()
+            let picker = PCodeNativeCommands.chooseModel(
+                values: ["anthropic:a", "openai:b"], providers: [], current: "openai:b",
+                context: Self.context(recorder)) { answers.append($0) }
+            #expect(recorder.presented == ["Choose model"])
+            end(picker)
+            picker.cancel()  // As the sheet's own close does afterwards: ignored.
+            return answers
+        }
+        #expect(run { $0.accept() } == ["openai:b"])  // The current model is selected.
+        #expect(run { $0.cancel() } == [nil])
+        #expect(run { $0.escape() } == [nil])
+    }
+
+    @Test func jobIntentShapes() {
+        let recorder = Recorder()
+        let model = PCodeJobsModel(context: Self.context(recorder))
+        model.stop("j1")
+        model.stop(nil)
+        model.watch("j2")
+        model.watch(nil)
+        #expect(recorder.notified.map(\.0) == ["stop_jobs", "stop_jobs", "watch_job", "watch_job"])
+        #expect(recorder.notified[0].1.first as? [String] == ["j1"])
+        #expect(recorder.notified[1].1.first is NSNull)
+        #expect(recorder.notified[2].1.first as? String == "j2")
+        #expect(recorder.notified[3].1.first is NSNull)
+        #expect(model.watched == nil)
+    }
+
+    @Test func attachTargets() {
+        let hosts = [(host: "ab12cd34", session: "s-one"), (host: "ab99ff00", session: "s-two")]
+        #expect(PCodeNativeCommands.attachTarget("ab99ff00", among: hosts) == .found(1))
+        #expect(PCodeNativeCommands.attachTarget("s-one", among: hosts) == .found(0))
+        #expect(PCodeNativeCommands.attachTarget("ab1", among: hosts) == .found(0))
+        #expect(PCodeNativeCommands.attachTarget("ab", among: hosts) == .ambiguous)
+        #expect(PCodeNativeCommands.attachTarget("zz", among: hosts) == .none)
+    }
+
     @Test func readAsidesOpensTheDrawer() {
         let recorder = Recorder()
         PCodeNativeCommands.readAsides(context: Self.context(recorder))

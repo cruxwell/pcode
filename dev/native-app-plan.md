@@ -412,7 +412,8 @@ are enough to judge the native text view before building the rest.
 command, and `run(_:context:)` does it through a `Context` (built for a real
 pane by `Context.live(session:client:)`). Host popup requests have their own
 entry points on the same type. Sheets go over the window as AppKit sheets
-(`PCodeNativeSheetPresenter`), so the pane's views don't change.
+(`PCodeNativeSheetPresenter`), so the pane's views don't change. Not wired yet:
+`PCodeHostRequests` still answers with the phase 1 toasts until it calls these.
 
 | Command / request | Native route | Entry point |
 | --- | --- | --- |
@@ -426,14 +427,14 @@ entry points on the same type. Sheets go over the window as AppKit sheets
 | `/status` | Session sheet: mirrored state at once, then the host's `query("session_overview")` rows | `PCodeSessionInfoSheet` |
 | `/tools`, `/tools failed` | Inspector Commands tab (shell calls and jobs; other tools are in the transcript) | `pane.inspectorState` |
 | `/tools edits`, `/diffs` | Inspector Changes tab | `pane.inspectorState` |
-| `/links` | Picker of URLs from the transcript's prompts and answers (newest first); Enter opens | `PCodePicker.showLocal`, `NSWorkspace.open` |
+| `/links` | Picker of URLs from the transcript's prompts and answers (newest first); Enter opens, `file://` links in the editor at their line | `PCodePicker.showLocal`, `PCodeExternalEditor.open(fileURL:)`, `NSWorkspace.open` |
 | `/copy` | Picker of answers, their code blocks nested; Enter copies | `PCodePicker.showLocal`, `NSPasteboard` |
 | `/paste-image` | Composer image paste | `session.pasteImage(from:)` |
 | `/tree` | Inspector Tree tab | `pane.inspectorState` |
 | `/agents` | Inspector Agents tab | `pane.inspectorState` |
 | `/resume` | Picker of saved sessions; Enter opens one in a pane | `workspace.history`, `workspace.open(_:)` |
 | `/attach`, `/switch` (bare) | Picker of background hosts | `workspace.projectGroups[].hostedSessions` |
-| `/attach HOST` | Opens that host's session (id or prefix) | `workspace.open(_:)` |
+| `/attach HOST` | Opens that host's session: exact id, else a prefix of exactly one, as `find_host` | `attachTarget`, `workspace.open(_:)` |
 | `/attach -` | Not supported, toast: use the sidebar | |
 | `/fork` | Not supported, toast: needs the terminal's fork-into-worktree flow | |
 | `/new PROMPT` | New pane in this folder; the prompt waits in its outbox | `workspace.newSession(directory:)`, `composer.submit` |

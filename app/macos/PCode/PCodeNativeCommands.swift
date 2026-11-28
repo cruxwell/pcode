@@ -284,11 +284,13 @@ enum PCodeNativeCommands {
     // MARK: Host requests
 
     /// `choose_model(values, providers, current)`: the model picker. `completion`
-    /// gets the chosen id, or nil when the picker closes without one.
+    /// gets the chosen id, or nil when the picker closes without one, exactly once.
+    /// Returns the picker so the caller can `cancel()` it if the pane closes first.
+    @discardableResult
     static func chooseModel(
         values: [String], providers: [String], current: String?, context: Context,
         completion: @escaping (String?) -> Void
-    ) {
+    ) -> PCodePicker {
         let picker = PCodePicker()
         var answered = false
         let finish: (String?) -> Void = { choice in
@@ -299,7 +301,13 @@ enum PCodeNativeCommands {
         // A pick calls `onPick` then `onClosed`; a cancel only `onClosed`.
         picker.onClosed = { finish(nil) }
         picker.showLocal(modelList(values, providers: providers, current: current)) { id, _ in finish(id) }
+        // A list the picker couldn't read would leave nothing to cancel: answer now.
+        guard picker.payload != nil else {
+            finish(nil)
+            return picker
+        }
         context.present(.picker(title: "Choose model", picker))
+        return picker
     }
 
     /// `browse_jobs()`: the Jobs sheet. The host's command doesn't wait on it.
@@ -345,7 +353,9 @@ enum PCodeNativeCommands {
         let picker = PCodePicker()
         picker.showLocal(linkList(links)) { id, _ in
             guard let id, let url = URL(string: id) else { return }
-            if !NSWorkspace.shared.open(url) { context.toast("Could not open \(id).") }
+            // `file://` links (with a line, `#L12` or `:12`) open as pcode's do: text in the editor.
+            let opened = url.isFileURL ? PCodeExternalEditor.open(fileURL: url) : NSWorkspace.shared.open(url)
+            if !opened { context.toast("Could not open \(id).") }
         }
         context.present(.picker(title: "Links", picker))
     }
@@ -382,8 +392,8 @@ enum PCodeNativeCommands {
     }
 
     /// Run `pcode ARGS` as the workspace launches it (login-shell env, direnv) and
-    /// collect stdout and stderr. For short commands only.
-    static func runPcode(_ arguments: [String], directory: String) -> (status: Int32, output: String) {
+    /// collect stdout and stderr. For short commands only: past `timeout` it is stopped.
+    static func runPcode(_ arguments: [String], directory: String, timeout: TimeInterval = 20) -> (status: Int32, output: String) {
         PCodeWorkspaceMode.awaitLoginShellCache(timeout: 3)
         let launch = PCodeWorkspaceMode.launchConfig(arguments, directory: directory)
         let process = Process()
@@ -400,9 +410,37 @@ enum PCodeNativeCommands {
         process.standardOutput = pipe
         process.standardError = pipe
         process.standardInput = FileHandle.nullDevice
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
+        let output = OutputBuffer()
+        pipe.fileHandleForReading.readabilityHandler = { handle in output.append(handle.availableData) }
         do { try process.run() } catch { return (-1, "Could not run pcode: \(error.localizedDescription)") }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+        defer { pipe.fileHandleForReading.readabilityHandler = nil }
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            return (-1, "pcode \(arguments.joined(separator: " ")) took over \(Int(timeout)) seconds and was stopped.")
+        }
+        // Not to EOF (a child the login shell left behind can hold the pipe open):
+        // a moment for the handler to drain what pcode wrote before it exited.
+        usleep(100_000)
+        return (process.terminationStatus, output.text)
+    }
+
+    /// Output collected from a pipe's handler thread.
+    private final class OutputBuffer: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+
+        func append(_ chunk: Data) {
+            lock.lock()
+            data.append(chunk)
+            lock.unlock()
+        }
+
+        var text: String {
+            lock.lock()
+            defer { lock.unlock() }
+            return String(decoding: data, as: UTF8.self)
+        }
     }
 }
