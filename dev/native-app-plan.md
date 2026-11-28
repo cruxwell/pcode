@@ -396,6 +396,13 @@ are enough to judge the native text view before building the rest.
   and `caretScreenRect()` (completion anchor); `PCodeComposerSession.onHistory`
   for Up/Down history, `onSessionState` for the catalog snapshot, and `state.plan`
   for the task strip.
+- Phases 2 and 3 (same flag): `PCodeComposerSession+Input.swift` wires
+  `PCodePromptHistory` (Up/Down, drafts every `PCodeDraftStore.interval`, on
+  Ctrl+C, pane switch and close), `PCodePastedImage` (Cmd+V without text, drop,
+  `/paste-image`), and `PCodeComposerCompletion` (the `/` and `@` menu, drawn
+  with the terminal menu's `PCodeCompletionList`). The catalog snapshot is saved
+  on every `session_state` and loaded on the first frame. Cmd+Shift+A, or the
+  strip's `@ file` button, opens the workspace in `PCodePicker.showLocal`.
 - Known gap: attaching counts as a terminal, so opening a session another
   client holds marks it seen and routes its popups to the app.
 
