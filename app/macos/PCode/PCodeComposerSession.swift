@@ -160,6 +160,9 @@ final class PCodeComposerSession: ObservableObject {
     private var successor: String?
     private var connectDeadline = Date.distantFuture
     private var spawnAttempts = 0
+    /// Bumped per spawn, so a spawn a newer one replaced (Reopen while starting) can't
+    /// take the pane over when it finishes late.
+    private var spawnGeneration = 0
     private var stopped = false
     private var toastWork: DispatchWorkItem?
     private var lastStatus: PCodeComposerStatus?
@@ -306,6 +309,8 @@ final class PCodeComposerSession: ObservableObject {
     private func spawn(trust: String?, hostID: String, stopping: (id: String?, pid: Int32?)? = nil) {
         connection = .starting
         spawnAttempts += 1
+        spawnGeneration += 1
+        let generation = spawnGeneration
         // Reported before the host exists, so closing the pane now still stops it.
         self.hostID = hostID
         onSessionReported?(resumeSessionID, hostID)
@@ -317,7 +322,10 @@ final class PCodeComposerSession: ObservableObject {
             PCodeWorkspaceMode.awaitLoginShellCache(timeout: 3)
             let launch = PCodeWorkspaceMode.launchConfig(args, directory: directory)
             let result = Self.runSpawn(command: launch.command, env: launch.env, directory: directory, hostID: hostID)
-            DispatchQueue.main.async { self?.spawned(result) }
+            DispatchQueue.main.async {
+                guard let self else { return Self.abandon(result) }
+                self.spawned(result, generation: generation)
+            }
         }
     }
 
@@ -390,14 +398,17 @@ final class PCodeComposerSession: ObservableObject {
             }
     }
 
-    private func spawned(_ result: SpawnResult) {
-        guard !stopped else {
-            // The pane closed while its host was starting: that host is nobody's now.
-            if case .host(let id, _, _, let pid, let existing) = result, !existing {
-                DispatchQueue.global(qos: .utility).async { Self.stopHost(id: id, pid: pid, wait: 0) }
-            }
-            return
+    /// A host nobody will attach to: stop it, unless it was already running before.
+    private static func abandon(_ result: SpawnResult) {
+        if case .host(let id, _, _, let pid, let existing) = result, !existing {
+            DispatchQueue.global(qos: .utility).async { stopHost(id: id, pid: pid, wait: 0) }
         }
+    }
+
+    private func spawned(_ result: SpawnResult, generation: Int) {
+        // The pane closed while its host was starting, or a newer spawn replaced this
+        // one: that host is nobody's now.
+        guard !stopped, generation == spawnGeneration else { return Self.abandon(result) }
         switch result {
         case .error(let message):
             connection = .failed(message)
@@ -419,6 +430,8 @@ final class PCodeComposerSession: ObservableObject {
     private func connect() {
         guard !stopped, let socketPath else { return }
         guard FileManager.default.fileExists(atPath: socketPath) else { return retryConnect() }
+        // Never two connections: a leftover one would keep its host attached forever.
+        self.client?.close()
         let client = PCodeHostRPCClient()
         self.client = client
         client.onAttached = { [weak self, weak client] welcome in
@@ -919,6 +932,9 @@ final class SpawnedChild {
     init?(argv: [String], environment: [String: String], directory: String, stderrPath: String) {
         var pipeFDs: [Int32] = [-1, -1]
         guard pipe(&pipeFDs) == 0 else { return nil }
+        // So a terminal or tool another thread forks meanwhile can't inherit either end.
+        // (The child's own stdout is a `dup2`, which clears the flag.)
+        for fd in pipeFDs { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
         var actions: posix_spawn_file_actions_t?
         var attributes: posix_spawnattr_t?
         posix_spawn_file_actions_init(&actions)
