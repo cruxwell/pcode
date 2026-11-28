@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import signal
+from collections.abc import Callable
 from contextvars import ContextVar
 from copy import copy
 from dataclasses import asdict, dataclass, field, replace
@@ -28,6 +29,7 @@ from pydantic_ai_harness.sub_agents import SubAgents, SubAgentToolset
 from pydantic_ai_harness.sub_agents._toolset import _Ended, at_max_depth
 
 from pcode.delegation import ResumableAgent
+from pcode.diagnostics import provider_context
 from pcode.error_report import error_message
 from pcode.preferences import SETTINGS, load_preferences
 from pcode.steering import run_request
@@ -38,6 +40,7 @@ from pcode.worker_channel import (
     QUEUED,
     SETTING_UP,
     WorkerHub,
+    _number,
     bind_worker,
     current_worker,
     interrupted_note,
@@ -58,6 +61,17 @@ _outcome: ContextVar[str | None] = ContextVar("isolated_delegation_outcome", def
 _inherited_shared: ContextVar[tuple[Any, ...]] = ContextVar(
     "delegation_inherited_shared", default=()
 )
+_inherited_error_recorder: ContextVar[Callable[..., Any] | None] = ContextVar(
+    "delegation_inherited_error_recorder", default=None
+)
+_worker_model: ContextVar[Any] = ContextVar("delegation_worker_model", default=None)
+
+
+def _model_label(model: Any) -> str:
+    if isinstance(model, str):
+        return model
+    return str(getattr(model, "model_id", "") or getattr(model, "model_name", "") or "")
+
 
 # Setup hooks run with no model watching and their output discarded, so a hang
 # is invisible until the user gives up. Room for a cold dependency install.
@@ -196,6 +210,8 @@ class WorkspaceSubAgents(SubAgents):
     )
     # The parent's workers; found by `worker_channel.hub_for(ctx)`.
     hub: WorkerHub = field(default_factory=WorkerHub, repr=False, compare=False)
+    # Records contained worker crashes into `<session>/errors.log`.
+    record_error: Callable[..., Any] | None = field(default=None, repr=False, compare=False)
 
     async def for_run(self, ctx):
         if at_max_depth(self.max_depth):
@@ -209,6 +225,8 @@ class WorkspaceSubAgents(SubAgents):
         run = copy(self)
         run.hub = WorkerHub(prefix=prefix)
         run.worker_slots = _worker_slots()
+        if run.record_error is None:
+            run.record_error = _inherited_error_recorder.get()
         if extra := _inherited_shared.get():
             extra_types = tuple(type(cap) for cap in extra)
             run.shared_capabilities = [
@@ -253,6 +271,7 @@ class WorkspaceSubAgents(SubAgents):
             worker_factory=self.worker_factory,
             worker_slots=self.worker_slots,
             hub=self.hub,
+            record_error=self.record_error,
             allow_isolation=not self.nested,
             agents=self._by_name,
             forward_usage=self.forward_usage,
@@ -315,6 +334,7 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
         worker_factory,
         worker_slots,
         hub=None,
+        record_error: Callable[..., Any] | None = None,
         allow_isolation: bool = True,
         **kwargs,
     ):
@@ -322,6 +342,7 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
         self.worker_factory = worker_factory
         self.worker_slots = worker_slots
         self.hub = hub if hub is not None else WorkerHub()
+        self.record_error = record_error
         self.allow_isolation = allow_isolation
         super().__init__(**kwargs)
         if allow_isolation:
@@ -461,6 +482,11 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
             if isinstance(cap, (StepPersistence, TokenAccounting))
         )
         shared_token = _inherited_shared.set(runtime_shared) if runtime_shared else None
+        error_token = (
+            _inherited_error_recorder.set(self.record_error)
+            if self.record_error is not None
+            else None
+        )
         handle.status = "running"
         handle.started = True
         handle.previous = None
@@ -484,10 +510,13 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
                 raise ModelRetry(f"{error}{hint}") from error
             raise
         except BaseException as error:
-            handle.status = "stopped" if handle.stop_requested else "failed"
+            cancelled = isinstance(error, asyncio.CancelledError)
+            handle.status = "stopped" if (handle.stop_requested or cancelled) else "failed"
             handle.report = (
                 "Stopped before it reported."
                 if handle.stop_requested
+                else "Interrupted before it reported."
+                if cancelled
                 else f"Failed before it reported ({type(error).__name__})."
             )
             raise
@@ -500,6 +529,8 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
             if failed and isinstance(result, str):
                 result += resume_hint(handle)
         finally:
+            if error_token is not None:
+                _inherited_error_recorder.reset(error_token)
             if shared_token is not None:
                 _inherited_shared.reset(shared_token)
             _outcome.reset(outcome)
@@ -542,8 +573,20 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
                 workspace_mode == "auto" and agent_name == "worker" and isolation_enabled()
             )
         handle = current_worker()
-        if handle is not None and model:
-            handle.model = model  # As run, not as typed.
+        if handle is not None:
+            if model:
+                handle.model = model  # As run, not as typed.
+            elif not handle.model:
+                sub_agent = self._agents.get(agent_name)
+                if sub_agent is not None and sub_agent.models:
+                    handle.model = str(sub_agent.models[0])
+                else:
+                    resolved = (
+                        sub_agent.agent.model
+                        if sub_agent is not None and sub_agent.agent.model is not None
+                        else getattr(ctx, "model", None)
+                    )
+                    handle.model = _model_label(resolved)
         if handle is not None and handle.resume_from is not None:
             # A resumed worker carries on in the workspace it worked in: shared.
             isolated = False
@@ -570,13 +613,18 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
                 record = await _joined(creation)
             except asyncio.CancelledError:
                 if not creation.cancelled() and creation.exception() is None:
+                    created = creation.result()
+                    if handle is not None:
+                        handle.worktree_task_id = created.task_id
                     await _finish(
                         store,
-                        creation.result().task_id,
+                        created.task_id,
                         "cancelled",
                         "Delegation cancelled during creation; checkout preserved.",
                     )
                 raise
+            if handle is not None:
+                handle.worktree_task_id = record.task_id
         except WorktreeError as error:
             raise ModelRetry(str(error)) from error
         token = _outcome.set(None)
@@ -603,7 +651,7 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
                 # Harness hands a delegate the parent's workspace; this one
                 # works in its own checkout instead.
                 workspace = Workspace(LocalWorkspaceBackend(record.worktree))
-                output = await self._run_delegation(
+                ended = await self._run_delegation(
                     replace(ctx, workspace=workspace),
                     agent_name,
                     replace(self._agents[agent_name], agent=worker),
@@ -611,8 +659,13 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
                     key=key,
                     workspace=workspace,
                 )
-            status = "completed" if _outcome.get() == "ok" else "failed"
-            record = await _finish(store, record.task_id, status, output)
+            summary = ended.output if isinstance(ended, _Ended) else str(ended)
+            status = (
+                "completed"
+                if (ended.outcome == "ok" if isinstance(ended, _Ended) else _outcome.get() == "ok")
+                else "failed"
+            )
+            record = await _finish(store, record.task_id, status, summary)
         except asyncio.CancelledError:
             await _finish(
                 store, record.task_id, "cancelled", "Delegation cancelled; partial work preserved."
@@ -663,9 +716,11 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
             handle.worker_model.retire()
             handle.worker_model = None
         resumable = replace(sub_agent, agent=ResumableAgent(sub_agent.agent, model=override_model))
+        model_token = _worker_model.set(override_model or effective)
         try:
             return await super()._run_delegation(ctx, agent_name, resumable, **kwargs)
         finally:
+            _worker_model.reset(model_token)
             if override_model is not None and handle is None:
                 override_model.retire()
 
@@ -681,6 +736,20 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
         if not (self._contain_errors if contain is None else contain):
             raise exc
         logger.debug("Contained crash from sub-agent %r", agent_name, exc_info=exc)
+        recorder = getattr(self, "record_error", None) or _inherited_error_recorder.get()
+        if callable(recorder):
+            handle = current_worker()
+            run_id = f"worker:{handle.id}" if handle is not None and handle.id else "worker"
+            model = _worker_model.get()
+            if model is None:
+                model = (handle.model if handle is not None and handle.model else None) or (
+                    sub_agent.agent.model
+                )
+            context = provider_context(model) if model is not None else None
+            try:
+                recorder(exc, run_id=run_id, provider_context=context or None)
+            except Exception:
+                logger.debug("Could not record worker crash to session diagnostics", exc_info=True)
         return _Ended(
             outcome="contained",
             output=(
@@ -748,7 +817,13 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
             text: The answer or message.
         """
         if action == "list":
-            return [handle.summary() for handle in self.hub.handles()]
+            by_id = {handle.id: handle.summary() for handle in self.hub.handles()}
+            for worker_id in self.hub._saved_ids():
+                if worker_id in by_id:
+                    continue
+                if (saved := self.hub.saved_summary(worker_id)) is not None:
+                    by_id[worker_id] = saved
+            return [by_id[worker_id] for worker_id in sorted(by_id, key=_number)]
         if not worker_id.strip():
             raise ModelRetry(f"manage_worker action={action!r} needs a worker_id.")
         if action == "stop":

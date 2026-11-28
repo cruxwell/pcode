@@ -662,3 +662,123 @@ def test_a_worker_stopped_while_waiting_out_a_rate_limit_keeps_its_history(tmp_p
 
     run(runtime(tmp_path, parent, child))
     assert "continue_worker='w1'" in seen[-1]
+
+
+def test_contained_crash_writes_to_errors_log_and_records_inherited_model(tmp_path):
+    from pcode.sessions import SavedSession
+
+    root = tmp_path / "sessions"
+    work = tmp_path / "work"
+    work.mkdir()
+
+    async def parent(messages, info):
+        if "continue_worker='w1'" in request_text(messages) or "crashed:" in request_text(messages):
+            yield "Done"
+        else:
+            yield call("delegate_task", "first", agent_name="worker", task="Survey it")
+
+    async def child(messages, info):
+        raise rate_limited(retry_after=3600)
+        yield "unreachable"  # pragma: no cover
+
+    saved = SavedSession.create("test:local", work, root)
+    rt = runtime(work, parent, child)
+    rt.session = saved
+    try:
+        run(rt)
+    finally:
+        saved.close()
+
+    errors_log = (saved.directory / "errors.log").read_text()
+    assert "run worker:w1" in errors_log
+    assert "ModelHTTPError" in errors_log
+    worker = json.loads((saved.directory / "workers" / "w1.json").read_text())
+    assert worker["status"] == "failed"
+    assert worker["model"]
+
+
+def test_manage_worker_list_includes_saved_workers_after_restart(tmp_path):
+    from pcode.sessions import SavedSession
+
+    root = tmp_path / "sessions"
+    work = tmp_path / "work"
+    work.mkdir()
+
+    async def first_parent(messages, info):
+        if "REPORT ONE" in request_text(messages):
+            yield "Done"
+        else:
+            yield call(
+                "delegate_task",
+                "first",
+                agent_name="worker",
+                task="Survey it",
+                purpose="initial survey",
+            )
+
+    seen_listings: list[str] = []
+
+    async def second_parent(messages, info):
+        text = request_text(messages)
+        if "REPORT TWO" in text:
+            yield call("manage_worker", "list2", action="list")
+        elif "initial survey" in text and "second pass" in text:
+            seen_listings.append(text)
+            yield "Final"
+        elif "initial survey" in text:
+            seen_listings.append(text)
+            yield call(
+                "delegate_task",
+                "second",
+                agent_name="worker",
+                task="Follow up",
+                purpose="second pass",
+            )
+        else:
+            yield call("manage_worker", "list1", action="list")
+
+    async def child(messages, info):
+        if "Follow up" in all_text(messages):
+            yield "REPORT TWO"
+        else:
+            yield "REPORT ONE"
+
+    saved = SavedSession.create("test:local", work, root)
+    identity = saved.info.id
+    rt = runtime(work, first_parent, child)
+    rt.session = saved
+    try:
+        run(rt)
+    finally:
+        saved.close()
+
+    reopened = SavedSession.open(identity, root)
+    rt2 = runtime(work, second_parent, child)
+    rt2.session = reopened
+    try:
+        run(rt2, "Check workers")
+    finally:
+        reopened.close()
+
+    assert len(seen_listings) == 2
+    assert "'worker_id': 'w1'" in seen_listings[0]
+    assert "'status': 'done'" in seen_listings[0]
+    assert "'worker_id': 'w1'" in seen_listings[1]
+    assert "'worker_id': 'w2'" in seen_listings[1]
+    assert seen_listings[1].index("'worker_id': 'w1'") < seen_listings[1].index("'worker_id': 'w2'")
+
+
+def test_resume_hint_for_isolated_worker_names_worktree_task_id():
+    from pcode.worker_channel import WorkerHandle, resume_hint
+
+    with_task = WorkerHandle(
+        id="w3", call_id="c3", workspace_mode="isolated", worktree_task_id="abc123"
+    )
+    hint = resume_hint(with_task)
+    assert "w3" in hint
+    assert "abc123" in hint
+    assert "task-abc123" in hint
+    assert "task_worktree(action='list')" in hint
+
+    without_task = WorkerHandle(id="w4", call_id="c4", workspace_mode="isolated")
+    assert resume_hint(without_task) == ""

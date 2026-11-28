@@ -1427,3 +1427,79 @@ def test_cli_thinking_is_not_replayed_signed_to_the_api():
     assert not api.accepts_stateless_artifacts(*saved)
     assert cli.accepts_stateless_artifacts(*saved)
     assert direct[0].canonical_system == "anthropic"
+
+
+def test_rejected_rate_limit_event_sets_retry_after_on_429(world, monkeypatch):
+    from pcode.delegation import rate_limit_wait
+
+    now = 1_700_000_000.0
+    monkeypatch.setattr(claude_session.time, "time", lambda: now)
+    agent, _ = make_agent()
+    world.rate_limits = [
+        RateLimitInfo(status="rejected", rate_limit_type="five_hour", resets_at=int(now + 3600))
+    ]
+    world.replies = [("error", "rate_limit", 429, "Too many requests")]
+    with pytest.raises(claude.ClaudeHTTPError) as caught:
+        run(lambda: agent.run("hi"))
+    assert caught.value.status_code == 429
+    assert caught.value.retry_after == 3600.0
+    assert rate_limit_wait(caught.value, 0) is None
+
+
+def test_rejected_rate_limit_event_clamps_past_reset_and_ignores_allowed(world, monkeypatch):
+    now = 1_700_000_000.0
+    monkeypatch.setattr(claude_session.time, "time", lambda: now)
+    agent, _ = make_agent()
+
+    # A reset timestamp already in the past clamps retry_after to 0.0.
+    world.rate_limits = [
+        RateLimitInfo(status="rejected", rate_limit_type="five_hour", resets_at=int(now - 30))
+    ]
+    world.replies = [("error", "rate_limit", 429, "Too many requests")]
+    with pytest.raises(claude.ClaudeHTTPError) as caught:
+        run(lambda: agent.run("hi"))
+    assert caught.value.retry_after == 0.0
+
+    # Non-rejected events and rejected windows using allowed overage do not set retry_after.
+    for info in (
+        RateLimitInfo(status="allowed_warning", resets_at=int(now + 3600)),
+        RateLimitInfo(status="rejected", resets_at=int(now + 3600), overage_status="allowed"),
+    ):
+        world.rate_limits = [info]
+        world.replies = [("error", "rate_limit", 429, "Too many requests")]
+        with pytest.raises(claude.ClaudeHTTPError) as caught:
+            run(lambda: agent.run("hi"))
+        assert caught.value.retry_after is None
+
+
+def test_rejected_rate_limit_resets_at_does_not_leak_past_a_successful_message(world, monkeypatch):
+    now = 1_700_000_000.0
+    monkeypatch.setattr(claude_session.time, "time", lambda: now)
+    agent, _ = make_agent()
+    world.rate_limits = [
+        RateLimitInfo(status="rejected", rate_limit_type="five_hour", resets_at=int(now + 3600))
+    ]
+    world.replies = [
+        [("tool", "lookup", {"key": "a"})],
+        ("error", "rate_limit", 429, "Too many requests"),
+    ]
+    with pytest.raises(claude.ClaudeHTTPError) as caught:
+        run(lambda: agent.run("look up a"))
+    assert caught.value.status_code == 429
+    assert caught.value.retry_after is None
+
+
+def test_result_error_clears_captured_resets_at_after_use(monkeypatch):
+    now = 1_700_000_000.0
+    monkeypatch.setattr(claude_session.time, "time", lambda: now)
+    config = claude_session.SessionConfig(MODEL, ".", "Be terse.", "[]")
+    session = claude_session.ClaudeSession(config)
+    session._rate_limit_resets_at = int(now + 120)
+    result = ResultMessage("success", 1, 1, True, 1, "s1", api_error_status=429)
+
+    first = session._result_error(result)
+    assert isinstance(first, claude.ClaudeHTTPError) and first.retry_after == 120.0
+    assert session._rate_limit_resets_at is None
+
+    second = session._result_error(result)
+    assert isinstance(second, claude.ClaudeHTTPError) and second.retry_after is None

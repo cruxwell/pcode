@@ -55,6 +55,8 @@ class TurnNode:
     side: dict = field(default_factory=dict)
     # Unsaved turns and durable compaction checkpoints carry message history.
     history: list | None = None
+    # Delegations killed when this turn was cancelled or failed, for /continue or resume.
+    abandoned_delegations: list = field(default_factory=list)
     links: dict[str, Link] = field(default_factory=dict)
     message_links: dict[str, Link] = field(default_factory=dict)
 
@@ -178,6 +180,12 @@ class ConversationTree:
             elif kind in {"turn_completed", "turn_failed", "turn_cancelled"}:
                 node.status = kind.removeprefix("turn_")
                 node.resend_blocked = record.get("resend_blocked", False)
+                if kind in {"turn_failed", "turn_cancelled"} and isinstance(
+                    abandoned := record.get("abandoned_delegations"), list
+                ):
+                    node.abandoned_delegations = deepcopy(
+                        [item for item in abandoned if isinstance(item, (str, dict))]
+                    )
                 if node.side:
                     # The side question's own words for it: "timed out" is a failure.
                     node.side["status"] = record.get("side_status", "")

@@ -1,6 +1,7 @@
 """What one turn owns while it runs, separate from what the session owns."""
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.usage import RunUsage
@@ -30,8 +31,9 @@ class TurnContext:
     # Finished `!command` exchanges riding on the next request; see `record_shell`.
     pending_shell: list[ModelMessage] = field(default_factory=list)
     plan_store: InMemoryPlanStore = field(default_factory=InMemoryPlanStore)
-    # Detached delegations killed before they reported (`pcode.background_delegation`).
-    abandoned_delegations: list[str] = field(default_factory=list)
+    # Delegations killed before they reported (`pcode.background_delegation`).
+    # Holds structured dicts for `WorkerHub` workers or plain task-id strings.
+    abandoned_delegations: list[str | dict[str, Any]] = field(default_factory=list)
     # The last request as actually sent, for retry and for resend safety.
     checkpoint: RequestCheckpoint = field(default_factory=RequestCheckpoint)
     # What the request in flight carries, published for the footer and /status.

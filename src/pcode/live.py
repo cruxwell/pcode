@@ -353,6 +353,10 @@ class AgentRuntime:
             # Finished workers are saved with the session, for follow-ups after a restart.
             if isinstance(hub := getattr(capability, "hub", None), WorkerHub):
                 hub.attach(self.session.directory if self.session is not None else None)
+            if hasattr(capability, "record_error"):
+                capability.record_error = (
+                    self.session.record_error if self.session is not None else None
+                )
 
     async def refresh_context(self) -> None:
         """Refresh optional metadata outside rendering and before model requests."""
@@ -473,6 +477,12 @@ class AgentRuntime:
             await self.plan_store.set_items(
                 [SizedPlanItem.model_validate(item) for item in self.session.latest_plan()]
             )
+            active = self.tree.nodes.get(self.tree.active) if self.tree.active else None
+            self.context.abandoned_delegations = (
+                deepcopy(active.abandoned_delegations)
+                if active is not None and active.abandoned_delegations
+                else []
+            )
 
     async def navigate(self, identity: str | None, *, edit: bool = False) -> str:
         """Restore a safe checkpoint without running a model or replaying tools."""
@@ -503,6 +513,12 @@ class AgentRuntime:
             self.tree.active = target
         self.history = history
         self.plan_store = plan
+        target_node = self.tree.nodes.get(target) if target else None
+        self.context.abandoned_delegations = (
+            deepcopy(target_node.abandoned_delegations)
+            if target_node is not None and target_node.abandoned_delegations
+            else []
+        )
         from pcode.antigravity import unwrap
 
         ag_model = unwrap(self.agent.model)
@@ -1349,6 +1365,11 @@ class AgentRuntime:
                 cancelled = isinstance(
                     error, (asyncio.CancelledError, KeyboardInterrupt, GeneratorExit)
                 )
+                abandoned = (
+                    {"abandoned_delegations": deepcopy(context.abandoned_delegations)}
+                    if context.abandoned_delegations
+                    else {}
+                )
                 saved.append(
                     "turn_cancelled" if cancelled else "turn_failed",
                     run_id=run_id,
@@ -1356,6 +1377,7 @@ class AgentRuntime:
                     provider_context=provider_context(ran_on),
                     resend_blocked=resend_blocked,
                     sync=True,
+                    **abandoned,
                 )
                 if not cancelled:
                     # A bug reaches the user as a type and a message; the frames
@@ -1402,11 +1424,17 @@ class AgentRuntime:
                     # Untouched since: nothing was sent. Failed auto-compaction
                     # instead leaves the settled tool results it recovered.
                     context.history = unmarked
+                abandoned = (
+                    {"abandoned_delegations": deepcopy(context.abandoned_delegations)}
+                    if context.abandoned_delegations
+                    else {}
+                )
                 self.tree.consume(
                     {
                         "kind": "turn_cancelled" if cancelled else "turn_failed",
                         "run_id": run_id,
                         "resend_blocked": resend_blocked,
+                        **abandoned,
                     }
                 )
                 self.tree.nodes[run_id].history = deepcopy(context.history)
