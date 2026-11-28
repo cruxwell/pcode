@@ -41,15 +41,17 @@ enum PCodeHostControlRPC {
     /// is idle, keeping the worktree (`SessionHost.release`). False when the
     /// host is unreachable or too old to know `release`: then the pane must
     /// not be torn down, since a plain idle stop tidies the session away.
+    /// With `cancel`, take a release back (the pane was shown again before it let go).
     static func release(
         sessionID: String,
         hostID: String?,
+        cancel: Bool = false,
         completion: @escaping @MainActor (Bool) -> Void
     ) {
         queue.async {
             var ok = false
             if let socketPath = PCodeSessionInfo.hostSocketPath(forSessionID: sessionID, hostID: hostID),
-               case .success(let value) = sendRequestWithReply(socketPath: socketPath, method: "release", args: []) {
+               case .success(let value) = sendRequestWithReply(socketPath: socketPath, method: "release", args: cancel ? [true] : []) {
                 ok = (value as? Bool) == true
             }
             Task { @MainActor in completion(ok) }

@@ -973,6 +973,26 @@ def test_a_terminal_attaching_calls_a_release_off(tmp_path, host_dir):
     asyncio.run(run())
 
 
+def test_pcode_app_can_take_a_release_back(tmp_path, host_dir):
+    """The pane was shown again while its release was on the way: it stays as before."""
+
+    async def run():
+        host = await start_host("aaaa1111", tmp_path, Script())
+        try:
+            terminal, _, _ = await attach(host)
+            await request_host(host.entry, "release")
+            assert host.keep_worktree
+            assert await request_host(host.entry, "release", True) is True
+            assert host._release.done() and not host.keep_worktree
+            terminal.close()
+            await asyncio.sleep(0.4)
+            assert not host.stopped.is_set(), "nothing stops it now but the idle clock"
+        finally:
+            await stop_host(host)
+
+    asyncio.run(run())
+
+
 def test_a_host_says_what_it_is_busy_with(tmp_path, host_dir):
     async def run():
         host = await start_host("aaaa1111", tmp_path, Script())

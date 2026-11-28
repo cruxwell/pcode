@@ -440,9 +440,15 @@ class _Client:
             require_detached=require_detached, keep_worktree=keep_worktree
         )
 
-    def release(self) -> bool:
-        """Pcode.app hibernated this session's pane (see `SessionHost.release`)."""
-        self.host.release()
+    def release(self, cancel: bool = False) -> bool:
+        """Pcode.app hibernated this session's pane (see `SessionHost.release`).
+
+        `cancel` takes it back: the pane was shown again before it let go.
+        """
+        if cancel:
+            self.host.cancel_release()
+        else:
+            self.host.release()
         return True
 
     def restart(self, interrupt: bool = False) -> dict:
@@ -1536,6 +1542,14 @@ class SessionHost:
         self._keep_worktree_before_release = self.keep_worktree
         self.keep_worktree = True
         self._release = asyncio.create_task(self._stop_when_released(set(self.clients)))
+
+    def cancel_release(self) -> None:
+        """Call off a pending `release`, as a terminal attaching would."""
+        if self._release is None or self._release.done():
+            return
+        self._release.cancel()
+        self.keep_worktree = self._keep_worktree_before_release
+        print("release called off by Pcode.app", file=sys.stderr, flush=True)
 
     async def _stop_when_released(self, attached: set[int], every: float = 0.25) -> None:
         # The pane's terminal is on its way out as this arrives; anyone else is new.

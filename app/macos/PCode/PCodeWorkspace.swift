@@ -1544,6 +1544,14 @@ final class PCodeWorkspace: ObservableObject {
             }
         peek.onTargetChange = { [weak self] in
             guard let self else { return }
+            // A peeked pane was on screen too (stamped as the peek starts and ends).
+            if let previous = self.lastPeekedPaneID, let pane = self.panes.first(where: { $0.id == previous }) {
+                pane.lastShownAt = Date()
+            }
+            self.lastPeekedPaneID = self.peek.target?.paneID
+            if let id = self.lastPeekedPaneID, let pane = self.panes.first(where: { $0.id == id }) {
+                pane.lastShownAt = Date()
+            }
             self.syncOcclusion()
             if !self.peek.isShowing {
                 self.scheduleSidebarHideIfPointerOutside()
@@ -1732,14 +1740,28 @@ final class PCodeWorkspace: ObservableObject {
         guard let sessionID = pane.sessionID, let info = info(for: pane) else { return }
         pane.hibernating = true
         let hostID = pane.hostID ?? pane.hostStatus?.hostID
+        let hostPID = pane.hostStatus?.pid
+        let after = Self.hibernateMinutes * 60
         PCodeHostControlRPC.release(sessionID: sessionID, hostID: hostID) { [weak self, weak pane] ok in
             guard let self, let pane else { return }
             pane.hibernating = false
-            // Shown meanwhile: keep it. Its host stays up while the pane is
-            // attached; a later close stops it as usual, keeping the worktree.
-            guard ok, !self.restarting, pane.id != self.selected, pane.id != self.peek.target?.paneID,
-                  pane.sessionID == sessionID,
-                  let index = self.panes.firstIndex(where: { $0 === pane }) else { return }
+            guard ok else {
+                // A host too old for `release`, or unreachable: try again a full period on.
+                pane.lastShownAt = Date()
+                return
+            }
+            // Still out of sight, still quiet, and still this session: nothing
+            // changed while the request was out.
+            let stillIdle = !self.restarting && pane.id != self.selected && pane.id != self.peek.target?.paneID
+                && Date().timeIntervalSince(pane.lastShownAt) >= after
+                && pane.shell == nil && pane.work?.isQuiet == true && pane.sessionID == sessionID
+            guard stillIdle, let index = self.panes.firstIndex(where: { $0 === pane }) else {
+                // Shown or busy again: take the release back, so the host neither
+                // stops when this pane later lets go nor keeps its worktree then.
+                PCodeHostControlRPC.release(sessionID: sessionID, hostID: hostID, cancel: true) { _ in }
+                return
+            }
+            if let hostPID { self.releasing[sessionID] = hostPID }
             // Listed as dormant first, so the session is never briefly a detached host.
             self.dormant.append(info)
             self.peek.clearHover(paneID: pane.id)
@@ -2886,8 +2908,6 @@ final class PCodeWorkspace: ObservableObject {
             return
         }
         guard PCode.valid(info.id, length: 1...64) else { return }
-        // Opened some other way (peek, a hosted row) while dormant: it's live now.
-        dormant.removeAll { $0.id == info.id }
         let project = info.normalizedProjectPath
         hiddenFolders.remove(project)
         collapsedFolders.remove(project)
@@ -2899,6 +2919,10 @@ final class PCodeWorkspace: ObservableObject {
         ) else { return }
         pane.openedLabel = info.label
         adopt(pane)
+        // Opened some other way (peek, a hosted row) while dormant: it's live now.
+        // Only once its pane exists, so a failed open leaves it listed.
+        if dormant.contains(where: { $0.id == info.id }) { dormant.removeAll { $0.id == info.id } }
+        releasing[info.id] = nil
         panes.append(pane)
         schedulePresize()
         saveOpen()
@@ -2991,9 +3015,36 @@ final class PCodeWorkspace: ObservableObject {
 
     /// Start a dormant session in a pane and show it.
     func wake(_ sessionID: String) {
-        guard let info = dormant.first(where: { $0.id == sessionID }) else { return }
-        open(historyByID[sessionID] ?? info)
+        guard let info = dormant.first(where: { $0.id == sessionID }), !waking.contains(sessionID) else { return }
+        // Hibernated moments ago, its host may still be on its way out: a pane
+        // would attach to it just before it goes. Wait for it, briefly, first.
+        guard let pid = releasing[sessionID], kill(pid, 0) == 0 else {
+            releasing[sessionID] = nil
+            open(historyByID[sessionID] ?? info)
+            return
+        }
+        waking.insert(sessionID)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let deadline = Date().addingTimeInterval(Self.releaseWait)
+            while Date() < deadline, kill(pid, 0) == 0 { usleep(50_000) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.waking.remove(sessionID)
+                self.releasing[sessionID] = nil
+                guard let info = self.dormant.first(where: { $0.id == sessionID }) else { return }
+                self.open(self.historyByID[sessionID] ?? info)
+            }
+        }
     }
+
+    /// Sessions this app hibernated, by the pid of the host still letting go of each.
+    private var releasing: [String: Int32] = [:]
+    /// Dormant sessions waiting for that host to go before they start (`wake`).
+    private var waking: Set<String> = []
+    /// The pane the peek last showed, stamped as shown when the peek moves off it.
+    private var lastPeekedPaneID: UUID?
+    /// How long `wake` waits for a releasing host; a released host closes in a second or two.
+    private static let releaseWait: TimeInterval = 10
 
     /// Close a dormant session: it drops back to the recent list. Its host, if
     /// one is still letting go after hibernating, is stopped as `close` would.
@@ -3228,6 +3279,10 @@ final class PCodeWorkspace: ObservableObject {
         peek.dismiss(restoreFocus: false)
         // The composer being left keeps its unsent text as a draft (`drafts.py`).
         if selected != pane.id { selectedPane?.composer?.saveDrafts() }
+        // Hibernation counts from when a pane was last on screen, the one left included.
+        let now = Date()
+        selectedPane?.lastShownAt = now
+        pane.lastShownAt = now
         selected = pane.id
         saveSelected()
         if isViewed(pane) { markSeen(pane) }
