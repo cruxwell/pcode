@@ -880,6 +880,10 @@ final class PCodeSessionPane: ObservableObject, Identifiable {
     /// Whether the previous automatic recovery check saw `.lock` held without a host entry
     /// (requiring two consecutive sightings avoids misclassifying a host's own startup/shutdown).
     var sawOpenElsewhere = false
+    /// When this pane was last on screen (shown or peeked); hibernation counts from here.
+    var lastShownAt = Date()
+    /// A `release` request for hibernating this pane is in flight.
+    var hibernating = false
     /// True once pcode has painted its ready UI (dock ready, or fallback timeout).
     @Published private(set) var isReady = false
     @Published private(set) var shell: Ghostty.SurfaceView?
@@ -1162,10 +1166,36 @@ struct PCodeHostedSession: Identifiable, Equatable {
     }
 }
 
+/// One row of a folder's open sessions: a live pane, or a dormant session that
+/// is listed as open but has no process until it is selected (lazy restore,
+/// hibernation). The two sort together so hibernating a pane doesn't move it.
+enum PCodeOpenRow: Identifiable {
+    case pane(PCodeSessionPane)
+    case dormant(PCodeSessionInfo)
+
+    var id: String {
+        switch self {
+        case .pane(let pane): return "pane-\(pane.id.uuidString)"
+        case .dormant(let info): return "dormant-\(info.id)"
+        }
+    }
+
+    var sessionID: String? {
+        switch self {
+        case .pane(let pane): return pane.sessionID
+        case .dormant(let info): return info.id
+        }
+    }
+}
+
 /// One folder group in the sidebar: starred sessions float to the top, followed by open panes, detached hosts, and recent saved sessions.
 struct PCodeProjectGroup: Identifiable {
     let path: String
     let openPanes: [PCodeSessionPane]
+    /// Sessions listed as open with no process yet (`PCodeOpenRow.dormant`).
+    let dormantSessions: [PCodeSessionInfo]
+    /// `openPanes` and `dormantSessions`, in display order.
+    let openRows: [PCodeOpenRow]
     let hostedSessions: [PCodeHostedSession]
     let recentSessions: [PCodeSessionInfo]
     /// Recent saved sessions in the folder beyond `recentSessions` ("Show more…").
@@ -1175,6 +1205,8 @@ struct PCodeProjectGroup: Identifiable {
     init(
         path: String,
         openPanes: [PCodeSessionPane],
+        dormantSessions: [PCodeSessionInfo] = [],
+        openRows: [PCodeOpenRow]? = nil,
         hostedSessions: [PCodeHostedSession] = [],
         recentSessions: [PCodeSessionInfo],
         remainingRecentCount: Int = 0,
@@ -1182,6 +1214,8 @@ struct PCodeProjectGroup: Identifiable {
     ) {
         self.path = path
         self.openPanes = openPanes
+        self.dormantSessions = dormantSessions
+        self.openRows = openRows ?? (openPanes.map(PCodeOpenRow.pane) + dormantSessions.map(PCodeOpenRow.dormant))
         self.hostedSessions = hostedSessions
         self.recentSessions = recentSessions
         self.remainingRecentCount = remainingRecentCount
@@ -1207,6 +1241,14 @@ struct PCodeProjectGroup: Identifiable {
 
     var unstarredOpenPanes: [PCodeSessionPane] {
         openPanes.filter { pane in pane.sessionID.map(starredSessionIDs.contains) != true }
+    }
+
+    var starredOpenRows: [PCodeOpenRow] {
+        openRows.filter { $0.sessionID.map(starredSessionIDs.contains) == true }
+    }
+
+    var unstarredOpenRows: [PCodeOpenRow] {
+        openRows.filter { $0.sessionID.map(starredSessionIDs.contains) != true }
     }
 
     var starredHostedSessions: [PCodeHostedSession] {
@@ -1239,13 +1281,14 @@ struct PCodeProjectGroup: Identifiable {
     var activity: PCodeSessionPane.Activity? {
         if hasRunning { return .running }
         if hasFailed { return .failed }
-        if !openPanes.isEmpty || !hostedSessions.isEmpty { return .idle }
+        if !openRows.isEmpty || !hostedSessions.isEmpty { return .idle }
         return nil
     }
 
     /// Whether any session in the folder, open, hosted, or saved, has an unseen response.
     func hasUnseen(_ unseenIDs: Set<String>) -> Bool {
         openPanes.contains(where: \.unseen)
+            || dormantSessions.contains { unseenIDs.contains($0.id) }
             || hostedSessions.contains { $0.host.unseen || unseenIDs.contains($0.id) }
             || recentSessions.contains { unseenIDs.contains($0.id) }
     }
@@ -1271,6 +1314,19 @@ final class PCodeWorkspace: ObservableObject {
             syncDetachedHostStatuses()
             publishHistory()
         }
+    }
+    /// Sessions listed as open with no pcode running for them: not yet shown
+    /// since launch (lazy restore) or hibernated while idle in the background.
+    /// Selecting one starts it in a pane (`wake`).
+    @Published private(set) var dormant: [PCodeSessionInfo] = [] {
+        didSet {
+            syncDetachedHostStatuses()
+            publishHistory()
+        }
+    }
+    /// Sessions open here, live or dormant.
+    var openSessionIDs: Set<String> {
+        Set(panes.compactMap(\.sessionID)).union(dormant.map(\.id))
     }
     @Published var selected: UUID?
     /// What the sidebar shows of `allHistory`, newest first: every starred,
@@ -1466,10 +1522,98 @@ final class PCodeWorkspace: ObservableObject {
             now.timeIntervalSince(pane.createdAt) > Self.reconcileGrace && Self.processGone(pane.surface)
         }
         dead.forEach(close)
+        hibernateIdlePanes(now: now)
         // Nobody sees the sidebar while the window is hidden; `syncOcclusion`
         // reloads when it shows again.
         if windowVisibility.onScreen, now.timeIntervalSince(lastHistoryReload) >= Self.historyReconcileInterval {
             reloadHistory()
+        }
+    }
+
+    // MARK: Hibernation
+
+    /// `defaults write <app id> PCodeHibernateMinutes -float <n>`: how long a
+    /// pane may sit idle out of sight before its pcode is stopped (0: never).
+    static var hibernateMinutes: Double {
+        UserDefaults.standard.object(forKey: "PCodeHibernateMinutes") as? Double ?? 10
+    }
+
+    /// `defaults write <app id> PCodeLazyRestore -bool false` starts every
+    /// reopened session at launch, as before, instead of when first selected.
+    static var lazyRestore: Bool {
+        UserDefaults.standard.object(forKey: "PCodeLazyRestore") as? Bool ?? true
+    }
+
+    /// Whether a pane out of sight should be hibernated: nothing it shows or
+    /// runs would be lost. Pure, for tests.
+    static func shouldHibernate(
+        hiddenFor: TimeInterval,
+        after: TimeInterval,
+        ready: Bool,
+        activity: PCodeSessionPane.Activity,
+        hostState: String?,
+        composer: PCodeComposerStatus?,
+        hasShell: Bool,
+        turns: Int
+    ) -> Bool {
+        guard after > 0, hiddenFor >= after, ready, activity == .idle, !hasShell else { return false }
+        // A session with no turn would be deleted by its host on the way out.
+        guard turns > 0, hostState == "idle" else { return false }
+        // No status, or one from a pcode too old to report a draft: can't tell.
+        guard let composer, composer.draft != nil else { return false }
+        return !composer.busy && !composer.starting && !composer.hasDraft
+            && composer.queued == 0 && composer.steeringPending == 0 && composer.jobs == 0
+            && composer.btwRunning == 0 && composer.btwReady == 0
+    }
+
+    /// Stop pcode in panes left idle out of sight, keeping them listed as open.
+    @MainActor
+    private func hibernateIdlePanes(now: Date) {
+        guard !restarting, hasRestored else { return }
+        let after = Self.hibernateMinutes * 60
+        let peeked = peek.target?.paneID
+        for pane in panes {
+            if pane.id == selected || pane.id == peeked {
+                pane.lastShownAt = now
+                continue
+            }
+            guard !pane.hibernating,
+                  Self.shouldHibernate(
+                    hiddenFor: now.timeIntervalSince(pane.lastShownAt),
+                    after: after,
+                    ready: pane.isReady,
+                    activity: pane.activity,
+                    hostState: pane.hostStatus?.state,
+                    composer: pane.surface.pcodeDock.composerStatus,
+                    hasShell: pane.shell != nil,
+                    turns: info(for: pane)?.turns ?? 0)
+            else { continue }
+            hibernate(pane)
+        }
+    }
+
+    /// Have the host stop once this pane lets go (`release`), then let go:
+    /// the pane becomes a dormant row that `wake` starts again.
+    @MainActor
+    private func hibernate(_ pane: PCodeSessionPane) {
+        guard let sessionID = pane.sessionID, let info = info(for: pane) else { return }
+        pane.hibernating = true
+        let hostID = pane.hostID ?? pane.hostStatus?.hostID
+        PCodeHostControlRPC.release(sessionID: sessionID, hostID: hostID) { [weak self, weak pane] ok in
+            guard let self, let pane else { return }
+            pane.hibernating = false
+            // Shown meanwhile: keep it. Its host stays up while the pane is
+            // attached; a later close stops it as usual, keeping the worktree.
+            guard ok, !self.restarting, pane.id != self.selected, pane.id != self.peek.target?.paneID,
+                  pane.sessionID == sessionID,
+                  let index = self.panes.firstIndex(where: { $0 === pane }) else { return }
+            // Listed as dormant first, so the session is never briefly a detached host.
+            self.dormant.append(info)
+            self.peek.clearHover(paneID: pane.id)
+            self.panes.remove(at: index)
+            // Out of `panes` first: its terminal's close notification finds no pane.
+            PCode.retire(pane.surface)
+            self.saveOpen()
         }
     }
 
@@ -1502,7 +1646,7 @@ final class PCodeWorkspace: ObservableObject {
     }
 
     private func syncDetachedHostStatuses() {
-        let openIDs = Set(panes.compactMap(\.sessionID))
+        let openIDs = openSessionIDs
         let detached = allHostStatuses.filter { !openIDs.contains($0.key) }
         if detached != detachedHostStatuses {
             detachedHostStatuses = detached
@@ -1512,7 +1656,7 @@ final class PCodeWorkspace: ObservableObject {
     private func handleHostStatusesUpdate(_ statuses: [String: PCodeHostStatus]) {
         let previous = allHostStatuses
         allHostStatuses = statuses
-        let openIDs = Set(panes.compactMap(\.sessionID))
+        let openIDs = openSessionIDs
         let prevDetached = previous.filter { !openIDs.contains($0.key) }
         let newDetached = statuses.filter { !openIDs.contains($0.key) }
 
@@ -1524,6 +1668,15 @@ final class PCodeWorkspace: ObservableObject {
         // and non-selected pane opens (`reopen()`).
         for (id, host) in newDetached where host.unseen && !unseenIDs.contains(id) {
             unseenIDs.insert(id)
+        }
+        // A dormant row shows its host's state while one runs (still letting go
+        // after hibernating, or a terminal attached to it elsewhere).
+        let dormantIDs = dormant.map(\.id)
+        for id in dormantIDs where statuses[id]?.unseen == true && !unseenIDs.contains(id) {
+            unseenIDs.insert(id)
+        }
+        if dormantIDs.contains(where: { previous[$0] != statuses[$0] }) {
+            objectWillChange.send()
         }
 
         // Reload history when a newly-seen detached host isn't in history yet, a detached host
@@ -1647,6 +1800,7 @@ final class PCodeWorkspace: ObservableObject {
         // Any session a host holds (`hosted`), even one a terminal is attached
         // to as well: `pcode -c` attaches to the host, and the window shows them all.
         let extra = all.map(\.id).filter { hosted.contains($0) && !saved.contains($0) }
+        var asleep: [PCodeSessionInfo] = []
         for id in saved + extra {
             guard let info = infos[id] else { continue }
             // Not one open in another process (a terminal, another window)
@@ -1654,12 +1808,22 @@ final class PCodeWorkspace: ObservableObject {
             // A restarted one may have been seen ready before its host
             // registered.
             let openable = hosted.contains(id) || (marked.contains(id) ? ready.contains(id) : !openElsewhere.contains(id))
-            if openable { open(info, select: false) }
+            guard openable else { continue }
+            // Lazy restore: only the shown session, and those whose host is
+            // running anyway, start now; the rest wait to be selected.
+            if Self.lazyRestore, id != selectedID, !hosted.contains(id), !marked.contains(id) {
+                if !openSessionIDs.contains(id) { asleep.append(info) }
+            } else {
+                open(info, select: false)
+            }
         }
+        if !asleep.isEmpty { dormant += asleep }
         if openedMeanwhile {
             return
         } else if !panes.isEmpty {
             select(panes.first { $0.sessionID != nil && $0.sessionID == selectedID } ?? panes[0])
+        } else if let first = dormant.first {
+            wake(first.id)
         } else {
             // Nothing reopened: stay on the inline project launcher instead of spawning a blank session.
             launcherFocusTrigger += 1
@@ -1675,11 +1839,12 @@ final class PCodeWorkspace: ObservableObject {
         let generation = historyGeneration
         let unseen = unseenIDs
         let starred = starredSessionIDs
+        let asleep = Set(dormant.map(\.id))
         DispatchQueue.global(qos: .userInitiated).async {
             let hosted = PCodeSessionInfo.hosted()
             let all = PCodeSessionInfo.load(hosted: hosted)
             // Sessions deleted outside the app (no directory left at all).
-            let gone = unseen.union(starred).filter {
+            let gone = unseen.union(starred).union(asleep).filter {
                 !FileManager.default.fileExists(atPath: PCodeSessionInfo.root.appendingPathComponent($0).path)
             }
             DispatchQueue.main.async { [weak self] in
@@ -1689,6 +1854,10 @@ final class PCodeWorkspace: ObservableObject {
                 if !gone.isEmpty {
                     self.unseenIDs.subtract(gone)
                     self.starredSessionIDs.subtract(gone)
+                    if self.dormant.contains(where: { gone.contains($0.id) }) {
+                        self.dormant.removeAll { gone.contains($0.id) }
+                        self.saveOpen()
+                    }
                 }
                 self.publishHistory()
                 PCodeStartupTrace.mark("sidebar history set", once: true)
@@ -1732,7 +1901,7 @@ final class PCodeWorkspace: ObservableObject {
         let hostedOnly = allHistory.lazy.filter { $0.turns == 0 && self.hostedAtLastLoad.contains($0.id) }.map(\.id)
         let keep = starredSessionIDs
             .union(unseenIDs)
-            .union(panes.compactMap(\.sessionID))
+            .union(openSessionIDs)
             .union(detachedHostStatuses.keys)
             .union(hostedOnly)
         let slice = Self.sliceHistory(
@@ -2131,9 +2300,10 @@ final class PCodeWorkspace: ObservableObject {
         hiddenFolders: Set<String>,
         starredSessionIDs: Set<String> = [],
         remainingRecentCounts: [String: Int] = [:],
-        sortDateForPane: ((PCodeSessionPane) -> Date)? = nil
+        sortDateForPane: ((PCodeSessionPane) -> Date)? = nil,
+        dormant: [PCodeSessionInfo] = []
     ) -> [PCodeProjectGroup] {
-        let openIDs = Set(panes.compactMap(\.sessionID))
+        let openIDs = Set(panes.compactMap(\.sessionID)).union(dormant.map(\.id))
         var order: [String] = []
         var seen: Set<String> = []
         func register(_ path: String) {
@@ -2145,6 +2315,12 @@ final class PCodeWorkspace: ObservableObject {
             let project = projectPathForPane(pane)
             register(project)
             openByProject[project, default: []].append(pane)
+        }
+        var dormantByProject: [String: [PCodeSessionInfo]] = [:]
+        for info in dormant {
+            let project = info.normalizedProjectPath
+            register(project)
+            dormantByProject[project, default: []].append(info)
         }
         var hostedByProject: [String: [PCodeHostedSession]] = [:]
         for info in history where !openIDs.contains(info.id) {
@@ -2160,7 +2336,8 @@ final class PCodeWorkspace: ObservableObject {
         for info in history where !openIDs.contains(info.id) && detachedHostStatuses[info.id] == nil {
             let project = info.normalizedProjectPath
             let hasStarred = starredSessionIDs.contains(info.id)
-            guard hasStarred || !hiddenFolders.contains(project) || openByProject[project] != nil || hostedByProject[project] != nil else { continue }
+            guard hasStarred || !hiddenFolders.contains(project) || openByProject[project] != nil
+                || dormantByProject[project] != nil || hostedByProject[project] != nil else { continue }
             register(project)
             recentByProject[project, default: []].append(info)
         }
@@ -2173,6 +2350,24 @@ final class PCodeWorkspace: ObservableObject {
                 let rhsDate = sortDateForPane?(rhs) ?? rhs.createdAt
                 if lhsDate != rhsDate { return lhsDate > rhsDate }
                 return lhs.id.uuidString < rhs.id.uuidString
+            }
+            // Open rows, live or dormant, by the same key: starred, then newest session first.
+            let rows = (openByProject[path] ?? []).map(PCodeOpenRow.pane)
+                + (dormantByProject[path] ?? []).map(PCodeOpenRow.dormant)
+            func rowDate(_ row: PCodeOpenRow) -> Date {
+                switch row {
+                case .pane(let pane): return sortDateForPane?(pane) ?? pane.createdAt
+                case .dormant(let info): return info.createdDate ?? .distantPast
+                }
+            }
+            let sortedRows = rows.sorted { lhs, rhs in
+                let lhsStarred = lhs.sessionID.map(starredSessionIDs.contains) == true
+                let rhsStarred = rhs.sessionID.map(starredSessionIDs.contains) == true
+                if lhsStarred != rhsStarred { return lhsStarred }
+                let lhsDate = rowDate(lhs)
+                let rhsDate = rowDate(rhs)
+                if lhsDate != rhsDate { return lhsDate > rhsDate }
+                return lhs.id < rhs.id
             }
             let sortedHosted = (hostedByProject[path] ?? []).sorted { lhs, rhs in
                 let lhsStarred = starredSessionIDs.contains(lhs.id)
@@ -2194,10 +2389,12 @@ final class PCodeWorkspace: ObservableObject {
             }
             // A hidden folder shown only for a starred session lists no others.
             let showsUnstarred = !hiddenFolders.contains(path)
-                || openByProject[path] != nil || hostedByProject[path] != nil
+                || openByProject[path] != nil || dormantByProject[path] != nil || hostedByProject[path] != nil
             return PCodeProjectGroup(
                 path: path,
                 openPanes: sortedOpen,
+                dormantSessions: dormantByProject[path] ?? [],
+                openRows: sortedRows,
                 hostedSessions: sortedHosted,
                 recentSessions: sortedRecent,
                 remainingRecentCount: showsUnstarred ? remainingRecentCounts[path] ?? 0 : 0,
@@ -2216,7 +2413,8 @@ final class PCodeWorkspace: ObservableObject {
             hiddenFolders: hiddenFolders,
             starredSessionIDs: starredSessionIDs,
             remainingRecentCounts: remainingRecentCounts,
-            sortDateForPane: { [self] pane in pane.sortDate(saved: info(for: pane)) })
+            sortDateForPane: { [self] pane in pane.sortDate(saved: info(for: pane)) },
+            dormant: dormant.map { historyByID[$0.id] ?? $0 })
     }
 
     /// Projects offered by the Command Center: current project first, then all known projects.
@@ -2227,7 +2425,7 @@ final class PCodeWorkspace: ObservableObject {
         var seen: Set<String> = []
         var result: [PCodeDirectoryCandidate] = []
         // Saved sessions per project from the full index (the sidebar shows a slice).
-        let openIDs = Set(panes.compactMap(\.sessionID))
+        let openIDs = openSessionIDs
         var recentCounts: [String: Int] = [:]
         var recentOrder: [String] = []
         for info in allHistory where !openIDs.contains(info.id) && detachedHostStatuses[info.id] == nil {
@@ -2242,7 +2440,7 @@ final class PCodeWorkspace: ObservableObject {
                 path: group.path,
                 name: group.name,
                 abbreviatedPath: group.abbreviatedPath,
-                openCount: group.openPanes.count + group.hostedSessions.count,
+                openCount: group.openRows.count + group.hostedSessions.count,
                 recentCount: recentCounts[group.path] ?? 0,
                 isCurrent: isCurrent,
                 isPinned: pinnedSet.contains(group.path),
@@ -2504,6 +2702,8 @@ final class PCodeWorkspace: ObservableObject {
             return
         }
         guard PCode.valid(info.id, length: 1...64) else { return }
+        // Opened some other way (peek, a hosted row) while dormant: it's live now.
+        dormant.removeAll { $0.id == info.id }
         let project = info.normalizedProjectPath
         hiddenFolders.remove(project)
         collapsedFolders.remove(project)
@@ -2589,7 +2789,37 @@ final class PCodeWorkspace: ObservableObject {
     }
 
     func confirmDelete(info: PCodeSessionInfo) {
-        confirm("Delete “\(info.label)”?") { [weak self] in self?.delete(id: info.id) }
+        confirm("Delete “\(info.label)”?") { [weak self] in
+            guard let self else { return }
+            let wasDormant = self.dormant.contains { $0.id == info.id }
+            if wasDormant { self.closeDormant(info.id) }
+            // A hibernating host may still be letting go of it.
+            self.delete(id: info.id, retries: wasDormant ? 10 : 0)
+        }
+    }
+
+    // MARK: Dormant sessions (lazy restore, hibernation)
+
+    /// The live host entry for `sessionID`, if any (a dormant session's host may still be stopping).
+    func hostStatus(forSession sessionID: String) -> PCodeHostStatus? {
+        allHostStatuses[sessionID]
+    }
+
+    /// Start a dormant session in a pane and show it.
+    func wake(_ sessionID: String) {
+        guard let info = dormant.first(where: { $0.id == sessionID }) else { return }
+        open(historyByID[sessionID] ?? info)
+    }
+
+    /// Close a dormant session: it drops back to the recent list. Its host, if
+    /// one is still letting go after hibernating, is stopped as `close` would.
+    func closeDormant(_ sessionID: String) {
+        guard dormant.contains(where: { $0.id == sessionID }) else { return }
+        dormant.removeAll { $0.id == sessionID }
+        peek.clearHover(sessionID: sessionID)
+        Self.stopHost(hostID: nil, sessionID: sessionID)
+        saveOpen()
+        reloadHistory()
     }
 
     func confirmDelete(pane: PCodeSessionPane) {
@@ -3244,7 +3474,7 @@ final class PCodeWorkspace: ObservableObject {
 
     private func saveOpen() {
         guard !restarting else { return }
-        UserDefaults.standard.set(panes.compactMap(\.sessionID), forKey: Self.openKey)
+        UserDefaults.standard.set(panes.compactMap(\.sessionID) + dormant.map(\.id), forKey: Self.openKey)
     }
 
     /// Remember the shown session, for `restore` to show again.
@@ -3615,6 +3845,7 @@ struct PCodeWorkspaceView: View {
                             dividerColor: ghostty.config.splitDividerColor,
                             folderMenu: { folderMenu(group) },
                             openMenu: { openMenu($0) },
+                            dormantMenu: { dormantMenu($0) },
                             hostedMenu: { hostedMenu($0) },
                             recentMenu: { recentMenu($0) }
                         )
@@ -3662,7 +3893,7 @@ struct PCodeWorkspaceView: View {
         Button("Reveal in Finder") { PCodeWorkspace.reveal(group.path) }
         Button("Copy Path") { PCodeWorkspace.copy(group.path) }
         // Starred sessions keep a folder listed, so removing it would do nothing.
-        if group.openPanes.isEmpty && group.hostedSessions.isEmpty && group.starredRecentSessions.isEmpty {
+        if group.openRows.isEmpty && group.hostedSessions.isEmpty && group.starredRecentSessions.isEmpty {
             Divider()
             Button("Remove from Sidebar") { workspace.removeFolder(group.path) }
         }
@@ -3695,6 +3926,27 @@ struct PCodeWorkspaceView: View {
         if let id = pane.sessionID {
             Button("Copy Session ID") { PCodeWorkspace.copy(id) }
         }
+    }
+
+    @ViewBuilder private func dormantMenu(_ info: PCodeSessionInfo) -> some View {
+        Button {
+            workspace.peek.peekFromMenu(workspace.peekTarget(for: info))
+        } label: {
+            Label("Peek (⌥ Hover)", systemImage: "eye")
+        }
+        Divider()
+        let starred = workspace.isStarred(info.id)
+        Button {
+            workspace.toggleStar(info.id)
+        } label: {
+            Label(starred ? "Unstar Session" : "Star Session", systemImage: starred ? "star.slash" : "star")
+        }
+        Divider()
+        Button("Close Session") { workspace.closeDormant(info.id) }
+        Button("Delete Session…", role: .destructive) { workspace.confirmDelete(info: info) }
+        Divider()
+        Button("Reveal Directory in Finder") { PCodeWorkspace.reveal(info.workspace) }
+        Button("Copy Session ID") { PCodeWorkspace.copy(info.id) }
     }
 
     @ViewBuilder private func hostedMenu(_ hosted: PCodeHostedSession) -> some View {
@@ -3736,13 +3988,14 @@ struct PCodeWorkspaceView: View {
 }
 
 /// One project folder section in the sidebar: auto-fits its sessions until the user drags its bottom divider.
-private struct PCodeFolderSectionView<FolderMenu: View, OpenMenu: View, HostedMenu: View, RecentMenu: View>: View {
+private struct PCodeFolderSectionView<FolderMenu: View, OpenMenu: View, DormantMenu: View, HostedMenu: View, RecentMenu: View>: View {
     @ObservedObject var workspace: PCodeWorkspace
     let group: PCodeProjectGroup
     let now: Date
     let dividerColor: Color
     @ViewBuilder var folderMenu: () -> FolderMenu
     @ViewBuilder var openMenu: (PCodeSessionPane) -> OpenMenu
+    @ViewBuilder var dormantMenu: (PCodeSessionInfo) -> DormantMenu
     @ViewBuilder var hostedMenu: (PCodeHostedSession) -> HostedMenu
     @ViewBuilder var recentMenu: (PCodeSessionInfo) -> RecentMenu
 
@@ -3789,8 +4042,8 @@ private struct PCodeFolderSectionView<FolderMenu: View, OpenMenu: View, HostedMe
     private var rowsContent: some View {
         VStack(alignment: .leading, spacing: 2) {
             // Starred sessions always float to the top of their folder.
-            ForEach(group.starredOpenPanes) { pane in
-                openPaneRow(pane)
+            ForEach(group.starredOpenRows) { row in
+                openRow(row)
             }
             ForEach(group.starredHostedSessions) { hosted in
                 hostedSessionRow(hosted)
@@ -3800,8 +4053,8 @@ private struct PCodeFolderSectionView<FolderMenu: View, OpenMenu: View, HostedMe
             }
 
             // Unstarred sessions: open (sorted by creation time), detached hosts, then recent saved.
-            ForEach(group.unstarredOpenPanes) { pane in
-                openPaneRow(pane)
+            ForEach(group.unstarredOpenRows) { row in
+                openRow(row)
             }
             ForEach(group.unstarredHostedSessions) { hosted in
                 hostedSessionRow(hosted)
@@ -3827,7 +4080,7 @@ private struct PCodeFolderSectionView<FolderMenu: View, OpenMenu: View, HostedMe
                 .buttonStyle(.plain)
             }
 
-            if group.openPanes.isEmpty && group.hostedSessions.isEmpty && group.recentSessions.isEmpty {
+            if group.openRows.isEmpty && group.hostedSessions.isEmpty && group.recentSessions.isEmpty {
                 Button {
                     workspace.newSession(directory: group.path)
                 } label: {
@@ -3847,6 +4100,41 @@ private struct PCodeFolderSectionView<FolderMenu: View, OpenMenu: View, HostedMe
         // Stay leading-aligned once a dragged section switches into a ScrollView.
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private func openRow(_ row: PCodeOpenRow) -> some View {
+        switch row {
+        case .pane(let pane): openPaneRow(pane)
+        case .dormant(let info): dormantSessionRow(info)
+        }
+    }
+
+    /// An open session with no pcode running yet: drawn as an open idle row,
+    /// started in a pane when selected.
+    @ViewBuilder
+    private func dormantSessionRow(_ info: PCodeSessionInfo) -> some View {
+        let host = workspace.hostStatus(forSession: info.id)
+        PCodeSessionRow(
+            title: PCodeWorkspace.displayTitle(paneTitle: host?.title ?? "", savedLabel: info.label),
+            subtitle: PCodeWorkspace.sessionSubtitle(
+                worktreeName: info.worktreeName,
+                updatedDate: info.updatedDate,
+                now: now
+            ),
+            activity: host.map { PCodeHostedSession(info: info, host: $0).activity } ?? .idle,
+            unseen: workspace.unseenIDs.contains(info.id) || host?.unseen == true,
+            isSelected: false,
+            isStarred: workspace.isStarred(info.id),
+            onSelect: { workspace.wake(info.id) },
+            onToggleStar: { workspace.toggleStar(info.id) },
+            onHoverChange: { hovering in
+                workspace.peek.rowHoverChanged(workspace.peekTarget(for: info), hovering: hovering)
+            }
+        ) {
+            dormantMenu(info)
+        }
+        .contextMenu { dormantMenu(info) }
     }
 
     @ViewBuilder
