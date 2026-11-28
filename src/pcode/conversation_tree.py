@@ -183,7 +183,9 @@ class ConversationTree:
                 if kind in {"turn_failed", "turn_cancelled"} and isinstance(
                     abandoned := record.get("abandoned_delegations"), list
                 ):
-                    node.abandoned_delegations = deepcopy(abandoned)
+                    node.abandoned_delegations = deepcopy(
+                        [item for item in abandoned if isinstance(item, (str, dict))]
+                    )
                 if node.side:
                     # The side question's own words for it: "timed out" is a failure.
                     node.side["status"] = record.get("side_status", "")

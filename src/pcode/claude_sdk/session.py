@@ -405,6 +405,7 @@ class ClaudeSession:
             raise _Diverged(self.config.model, "Claude Code continued on its own.")
         self._expecting = True
         self.complete = False
+        self._rate_limit_resets_at = None
 
     async def start(self, content: list[dict]) -> None:
         """Begin a turn with a new user message."""

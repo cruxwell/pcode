@@ -578,12 +578,15 @@ class WorkspaceSubAgentToolset(SubAgentToolset):
                 handle.model = model  # As run, not as typed.
             elif not handle.model:
                 sub_agent = self._agents.get(agent_name)
-                resolved = (
-                    sub_agent.agent.model
-                    if sub_agent is not None and sub_agent.agent.model is not None
-                    else getattr(ctx, "model", None)
-                )
-                handle.model = _model_label(resolved)
+                if sub_agent is not None and sub_agent.models:
+                    handle.model = str(sub_agent.models[0])
+                else:
+                    resolved = (
+                        sub_agent.agent.model
+                        if sub_agent is not None and sub_agent.agent.model is not None
+                        else getattr(ctx, "model", None)
+                    )
+                    handle.model = _model_label(resolved)
         if handle is not None and handle.resume_from is not None:
             # A resumed worker carries on in the workspace it worked in: shared.
             isolated = False

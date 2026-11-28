@@ -1669,7 +1669,7 @@ def _spill_replay(text: str) -> Path | None:
     """Write the full unbounded replay transcript to a private file and sweep old ones."""
     try:
         directory = _replay_spill_dir()
-        directory.mkdir(parents=True, exist_ok=True)
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(directory, 0o700)
         cutoff = time.time() - REPLAY_SPILL_TTL_SECONDS
         with contextlib.suppress(OSError):

@@ -173,7 +173,7 @@ def _abandoned_entry(task_id: str, handle: Any, *, detached: bool) -> AbandonedI
 
 
 def _abandoned_line(item: AbandonedItem) -> str:
-    if isinstance(item, str):
+    if not isinstance(item, dict):
         return (
             f"The background delegation {item} was stopped before it reported, because the "
             "run it belonged to ended (interrupted or failed). Its result will not arrive. "
