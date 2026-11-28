@@ -97,6 +97,7 @@ final class PCodeComposerSession: ObservableObject {
         editorMade = true
         editor.textView.onAction = { [weak self] action in self?.perform(action) ?? false }
         editor.textView.onWindowChange = { [weak self] in self?.focusIfWanted() }
+        wireInput(editor.textView)
         return editor
     }()
     /// The text view, once a pane has mounted it (nil before, without making one).
@@ -106,6 +107,23 @@ final class PCodeComposerSession: ObservableObject {
     private var wantsFocus = false
 
     let directory: String
+
+    // Input (`PCodeComposerSession+Input.swift`)
+
+    /// The `/` and `@` menu. Its catalog starts from the saved snapshot so it works
+    /// on the first frame, and the host's live `session_state` replaces it.
+    let completion: PCodeComposerCompletion
+    let catalogStore: PCodeCatalogStore
+    /// Up/Down recall and draft files, shared with the terminal editor's `drafts.py`.
+    let history: PCodePromptHistory
+    /// The `@` file picker while it is open.
+    @Published var filePicker: PCodePicker?
+    var draftTimer: Timer?
+    /// The text the last draft save saw, so an idle composer writes nothing.
+    var lastDraftText = ""
+    /// Set while the text is replaced in code (history), which must not open the menu.
+    var settingText = false
+
     private(set) var resumeSessionID: String?
     /// The id the first host is started with (`PCODE_HOST_ID`); relaunches pick new ones.
     let launchHostID: String
@@ -124,10 +142,19 @@ final class PCodeComposerSession: ObservableObject {
     static let maxRelaunchAttempts = PCodeWorkspace.maxHostRelaunchAttempts
     static let sendModes = ["steering", "queue", "interrupt"]
 
-    init(directory: String, resumeSessionID: String?, launchHostID: String) {
+    init(
+        directory: String, resumeSessionID: String?, launchHostID: String,
+        catalogStore: PCodeCatalogStore = PCodeCatalogStore(),
+        history: PCodePromptHistory? = nil
+    ) {
         self.directory = directory
         self.resumeSessionID = resumeSessionID
         self.launchHostID = launchHostID
+        self.catalogStore = catalogStore
+        self.history = history ?? PCodePromptHistory(drafts: PCodeDraftStore())
+        completion = PCodeComposerCompletion(
+            catalog: catalogStore.catalog(workspace: directory),
+            files: PCodeFileIndex.shared(for: directory))
         let saved = PCodePreferences.load()["send_mode"] as? String
         sendMode = saved.flatMap { Self.sendModes.contains($0) ? $0 : nil } ?? "steering"
     }
@@ -141,6 +168,10 @@ final class PCodeComposerSession: ObservableObject {
 
     /// The pane closed. The workspace stops the host (`PCodeWorkspace.stopHost`).
     func stop() {
+        saveDrafts()
+        draftTimer?.invalidate()
+        draftTimer = nil
+        filePicker?.cancel()
         stopped = true
         client?.close()
         client = nil
@@ -424,6 +455,7 @@ final class PCodeComposerSession: ObservableObject {
         var next = state
         next.applySession(session)
         setState(next)
+        catalogChanged(session)
         onSessionState?(session)
         if next.sessionID != before, !next.sessionID.isEmpty {
             onSessionReported?(next.sessionID, hostID)
@@ -445,10 +477,9 @@ final class PCodeComposerSession: ObservableObject {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return false }
         if text.hasPrefix("/") {
-            if PCodeHostRequests.runsInTerminal(text) {
-                PCodeHostRequests.runTerminalCommand(text, session: self)
-            } else {
-                send(.command(text))
+            switch completion.catalog.handling(for: text) {
+            case .session: send(.command(text))
+            case .terminal, .native: PCodeHostRequests.runTerminalCommand(text, session: self)
             }
             return true
         }
@@ -590,19 +621,33 @@ final class PCodeComposerSession: ObservableObject {
         let textView = editor.textView
         switch action {
         case .submit:
-            if submit(textView.string) { clearDraft() }
+            // First Enter takes a selected completion; the next one sends.
+            if let row = completion.chosen {
+                take(row)
+                return true
+            }
+            let text = textView.string
+            if submit(text) {
+                history.send(text)
+                clearDraft()
+            }
             return true
         case .interruptSubmit:
             let text = textView.string
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, submit(text, interrupt: true) {
+                history.send(text)
                 clearDraft()
             }
             return true
         case .clearOrCancel:
             // As the terminal editor: never discard a draft and interrupt in one keypress.
             if !textView.string.isEmpty {
+                // `drafts.edited`: changed from the entry it was recalled from, so ↑ finds it.
+                let unsent = history.edited(current: textView.string)[history.index] != nil
+                history.clear(current: textView.string)
                 clearDraft()
-                showToast(isBusy ? "Input discarded. Ctrl+C again interrupts." : "Input discarded.")
+                let discarded = unsent ? "Input discarded. ↑ brings it back." : "Input discarded."
+                showToast(isBusy ? "\(discarded) Ctrl+C again interrupts." : discarded)
             } else if isBusy {
                 cancel()
             }
@@ -613,13 +658,21 @@ final class PCodeComposerSession: ObservableObject {
         case .newline:
             return false
         case .historyPrevious, .historyNext:
-            return onHistory?(action == .historyPrevious ? -1 : 1) ?? false
+            return recall(action == .historyPrevious ? -1 : 1)
+        case .menuPrevious, .menuNext:
+            completion.move(action == .menuPrevious ? -1 : 1)
+            return true
+        case .menuAccept:
+            if let row = completion.offered { take(row) }
+            return true
+        case .menuClose:
+            completion.dismiss()
+            return true
+        case .openFilePicker:
+            openFilePicker()
+            return true
         }
     }
-
-    /// Up/Down at the composer's edges (phase 2, `PCodePromptHistory`): -1 older, +1 newer.
-    /// True when it replaced the draft; nil or false leaves the caret to move as usual.
-    var onHistory: ((Int) -> Bool)?
 
     func clearDraft() {
         let textView = editor.textView

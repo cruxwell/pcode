@@ -11,25 +11,10 @@ import Foundation
 /// Phase 1 answers what it can and says plainly what isn't native yet. Later phases
 /// route the commands with native views here (`/tools`, `/diffs`, `/agents`, `/tree`,
 /// `/resume`, `/config`, the model picker...).
+///
+/// Which commands are the session's and which the composer's is the command catalog's
+/// call (`PCodeCommandCatalog.handling(for:)`); this runs the composer's.
 enum PCodeHostRequests {
-    /// `pcode.controller.TERMINAL_COMMANDS`: what a terminal runs itself, never the session.
-    static let terminalCommands: Set<String> = [
-        "/help", "/commands", "/config", "/bind", "/unbind", "/quit", "/exit", "/status",
-        "/tools", "/diffs", "/links", "/copy", "/paste-image", "/tree", "/agents", "/resume",
-        "/attach", "/switch", "/fork", "/restart", "/stop", "/detach", "/show-activity",
-        "/show-tasks", "/autohide-tasks", "/show-thinking", "/show-edits", "/show-commands",
-        "/group-tools", "/theme", "/syntax", "/theme-preview", "/redraw",
-    ]
-
-    /// `pcode.controller.runs_in_terminal`: a terminal command, or `/new PROMPT`
-    /// (which starts a session beside this one).
-    static func runsInTerminal(_ text: String) -> Bool {
-        let parts = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            .split(maxSplits: 1, whereSeparator: \.isWhitespace)
-        guard let name = parts.first.map(String.init) else { return false }
-        return terminalCommands.contains(name) || (name == "/new" && parts.count == 2)
-    }
-
     static func handle(
         id: Int, method: String, args: [Any], kwargs: [String: Any],
         session: PCodeComposerSession, client: PCodeHostRPCClient
@@ -69,6 +54,9 @@ enum PCodeHostRequests {
             session.onCloseRequested?()
         case "/redraw":
             break  // Nothing native to repaint.
+        case "/paste-image":
+            // Unlike ⌘V, an explicit ask: the image wins even beside text.
+            if !session.pasteImage(from: .general) { session.showToast("The clipboard holds no image.") }
         default:
             session.showToast("\(name) isn't in the native composer yet.")
         }

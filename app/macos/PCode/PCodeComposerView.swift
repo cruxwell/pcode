@@ -23,13 +23,22 @@ final class PCodeComposerTextView: NSTextView {
         case newline
         case clearOrCancel
         case cycleSendMode
-        /// Up on the first line or Down on the last: history recall (phase 2).
+        /// Up on the first line or Down on the last: history recall.
         case historyPrevious
         case historyNext
+        /// While the completion menu is open.
+        case menuPrevious
+        case menuNext
+        case menuAccept
+        case menuClose
+        /// Cmd+Shift+A: browse the workspace for a file to name.
+        case openFilePicker
     }
 
     var onAction: ((Action) -> Bool)?
-    /// Paste: an image on the pasteboard (phase 2, `PCodePastedImage`). True when taken.
+    /// Whether the completion menu is open (it takes Tab, arrows, Escape, Ctrl+L/N/P).
+    var isMenuOpen: () -> Bool = { false }
+    /// Paste or drop of an image or files (`PCodePastedImage`). True when taken.
     var onPasteImage: ((NSPasteboard) -> Bool)?
     /// Every edit, with the caret: where `@` and `/` completion (phase 3) will listen.
     var onTextChange: ((_ text: String, _ caret: NSRange) -> Void)?
@@ -41,9 +50,27 @@ final class PCodeComposerTextView: NSTextView {
     /// What `event` does in the composer, or nil for `NSTextView`'s own handling.
     static func action(
         keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags,
-        onFirstLine: Bool, onLastLine: Bool
+        onFirstLine: Bool, onLastLine: Bool, menuOpen: Bool = false
     ) -> Action? {
         let mods = modifiers.intersection([.shift, .control, .option, .command])
+        if menuOpen {
+            switch (keyCode, mods) {
+            case (48, []): return .menuAccept        // Tab
+            case (126, []): return .menuPrevious     // Up
+            case (125, []): return .menuNext         // Down
+            case (53, []): return .menuClose         // Escape
+            default: break
+            }
+            if mods == .control {
+                switch characters?.lowercased() {
+                case "l": return .menuAccept
+                case "p": return .menuPrevious
+                case "n": return .menuNext
+                default: break
+                }
+            }
+        }
+        if mods == [.command, .shift], characters?.lowercased() == "a" { return .openFilePicker }
         let isReturn = keyCode == 36 || keyCode == 76
         if isReturn {
             switch mods {
@@ -76,7 +103,8 @@ final class PCodeComposerTextView: NSTextView {
                characters: event.charactersIgnoringModifiers,
                modifiers: event.modifierFlags,
                onFirstLine: caretOnFirstLine,
-               onLastLine: caretOnLastLine)
+               onLastLine: caretOnLastLine,
+               menuOpen: isMenuOpen())
         {
             if action == .newline {
                 insertNewlineIgnoringFieldEditor(nil)
@@ -92,12 +120,14 @@ final class PCodeComposerTextView: NSTextView {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        // Ctrl+key chords arrive here first when a menu item claims them.
+        // Ctrl+key chords (and Cmd+Shift+A) arrive here first when a menu item claims them.
+        let mods = event.modifierFlags.intersection([.shift, .control, .option, .command])
         if window?.firstResponder === self,
-           event.modifierFlags.intersection([.shift, .control, .option, .command]) == .control,
+           mods == .control || mods == [.command, .shift],
            let action = Self.action(
                keyCode: event.keyCode, characters: event.charactersIgnoringModifiers,
-               modifiers: event.modifierFlags, onFirstLine: false, onLastLine: false),
+               modifiers: event.modifierFlags, onFirstLine: false, onLastLine: false,
+               menuOpen: isMenuOpen()),
            action != .newline
         {
             return onAction?(action) == true
@@ -106,15 +136,60 @@ final class PCodeComposerTextView: NSTextView {
     }
 
     override func paste(_ sender: Any?) {
+        // Text wins whenever there is any (`PCodePastedImage.prefersImage`).
         let board = NSPasteboard.general
-        if board.string(forType: .string) == nil, onPasteImage?(board) == true { return }
+        if PCodePastedImage.prefersImage(board), onPasteImage?(board) == true { return }
         pasteAsPlainText(sender)
+    }
+
+    /// A plain-text view turns Paste off for an image-only pasteboard, and the menu then
+    /// never calls `paste(_:)`: keep it on when the composer can name the image.
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(paste(_:)), PCodePastedImage.prefersImage(.general) { return true }
+        return super.validateUserInterfaceItem(item)
+    }
+
+    /// Images and files can be dropped too (they are named by path).
+    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
+        super.readablePasteboardTypes + [.fileURL, .png, .tiff]
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        // A dropped file or image is named by path, as the terminal types a dropped file.
+        let board = sender.draggingPasteboard
+        if PCodePastedImage.canPaste(board), onPasteImage?(board) == true {
+            window?.makeFirstResponder(self)
+            return true
+        }
+        return super.performDragOperation(sender)
     }
 
     override func didChangeText() {
         super.didChangeText()
         needsDisplay = true
         onTextChange?(string, selectedRange())
+    }
+
+    /// The caret moved without the text changing (a click, an arrow key).
+    var onCaretMove: (() -> Void)?
+
+    override func setSelectedRanges(
+        _ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool
+    ) {
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        if !stillSelecting { onCaretMove?() }
+    }
+
+    /// Where the character at `location` starts, in this view's coordinates: the
+    /// completion menu hangs from the start of the word it completes.
+    func characterOrigin(at location: Int) -> NSPoint? {
+        guard let window else { return nil }
+        let length = (string as NSString).length
+        let range = NSRange(location: max(0, min(location, length)), length: 0)
+        let screen = firstRect(forCharacterRange: range, actualRange: nil)
+        guard screen != .zero else { return nil }
+        let inWindow = window.convertFromScreen(screen)
+        return convert(inWindow, from: nil).origin
     }
 
     override func viewDidMoveToWindow() {
@@ -311,9 +386,15 @@ struct PCodeNativeSessionPaneContent: View {
                     PCodeComposerStatusStrip(
                         status: session.composerStatus,
                         startedAt: session.phaseStartedAt,
-                        onToggleSendMode: interactive ? { session.cycleSendMode() } : nil)
+                        onToggleSendMode: interactive ? { session.cycleSendMode() } : nil,
+                        onOpenFiles: interactive ? { session.openFilePicker() } : nil)
                         .padding(.horizontal, PCodeDock.bottomMargin + 4)
                     card(height: min(maxEditor, contentHeight))
+                        .overlay(alignment: .topLeading) {
+                            if interactive {
+                                PCodeComposerCompletionLayer(session: session, completion: session.completion)
+                            }
+                        }
                 }
                 .padding(.bottom, PCodeDock.bottomMargin)
                 .background(GeometryReader { proxy in
@@ -325,6 +406,11 @@ struct PCodeNativeSessionPaneContent: View {
             .onPreferenceChange(PCodeComposerFootprintKey.self) { footprint = $0 }
             .animation(.easeOut(duration: 0.12), value: contentHeight)
             .animation(.easeOut(duration: 0.15), value: session.toast)
+            .overlay {
+                if interactive, let picker = session.filePicker {
+                    PCodeComposerPickerSheet(picker: picker, size: geometry.size)
+                }
+            }
         }
     }
 
@@ -381,6 +467,86 @@ struct PCodeNativeSessionPaneContent: View {
                     isError: true,
                     actions: [])
             }
+        }
+    }
+}
+
+/// The composer's completion menu, hung above the card from where the completed word
+/// starts, in the same rows as the terminal editor's (`PCodeCompletionList`).
+private struct PCodeComposerCompletionLayer: View {
+    @EnvironmentObject var ghostty: Ghostty.App
+    let session: PCodeComposerSession
+    @ObservedObject var completion: PCodeComposerCompletion
+    @ObservedObject private var typography = PCodeTypography.shared
+
+    var body: some View {
+        if completion.isOpen {
+            let fonts = PCodePickFonts(typography: typography.snapshot)
+            let theme = PCodePickTheme(base: PCodePickTheme.Base(ghostty.config), style: nil, fonts: fonts)
+            let rowHeight = ceil(NSLayoutManager().defaultLineHeight(for: fonts.regular)) + 2 * PCodeCompletionLayer.rowPadding
+            let size = Self.size(completion.rows, advance: fonts.advance, rowHeight: rowHeight)
+            // The card's text starts at its own inset; the list's text lines up with the word.
+            // The overlay's origin is the card's outer edge, `bottomMargin` left of the text.
+            let x = max(0, PCodeDock.bottomMargin + (session.menuAnchorX() ?? 0)
+                - PCodeCompletionLayer.textInset - PCodeCompletionLayer.listPadding)
+            PCodeCompletionList(
+                rows: completion.rows.map { ($0.display, $0.meta) },
+                selected: completion.selected,
+                revision: completion.revision,
+                theme: theme,
+                rowHeight: rowHeight,
+                onAccept: { session.takeRow($0) })
+                .frame(width: size.width, height: size.height)
+                .background(ghostty.config.backgroundColor)
+                .clipShape(RoundedRectangle(cornerRadius: PCodeCompletionLayer.cornerRadius))
+                .overlay(
+                    RoundedRectangle(cornerRadius: PCodeCompletionLayer.cornerRadius)
+                        .strokeBorder(ghostty.config.splitDividerColor, lineWidth: 1))
+                .shadow(color: .black.opacity(0.35), radius: 10, x: 0, y: 4)
+                .environment(\.colorScheme, NSColor(ghostty.config.backgroundColor).isLightColor ? .light : .dark)
+                .offset(x: x, y: -size.height - PCodeCompletionLayer.margin)
+        }
+    }
+
+    /// As `PCodeCompletionLayer.frame`'s width and height, for rows of plain text.
+    static func size(_ rows: [PCodeComposerCompletion.Row], advance: CGFloat, rowHeight: CGFloat) -> CGSize {
+        let text = PCodeCompletionLayer.columns(rows.map(\.display), max: PCodeCompletionLayer.maxTextColumns) * advance
+        let metaColumns = PCodeCompletionLayer.columns(rows.map(\.meta), max: PCodeCompletionLayer.maxMetaColumns)
+        let meta = metaColumns > 0 ? 12 + metaColumns * advance * PCodePickFonts.smallScale : 0
+        let width = max(text + meta + 2 * (PCodeCompletionLayer.textInset + PCodeCompletionLayer.listPadding) + 4, 160)
+        let height = CGFloat(min(rows.count, PCodeCompletionLayer.maxRows)) * rowHeight + 2 * PCodeCompletionLayer.listPadding
+        return CGSize(width: width, height: height)
+    }
+}
+
+/// The `@` file picker, centered over the pane on a dimmed scrim as pcode's popups are.
+private struct PCodeComposerPickerSheet: View {
+    @EnvironmentObject var ghostty: Ghostty.App
+    @ObservedObject var picker: PCodePicker
+    let size: CGSize
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.4)
+                .contentShape(Rectangle())
+                .onTapGesture { picker.cancel() }
+            VStack(spacing: 0) {
+                Text("Insert a file reference")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(ghostty.config.foregroundColor.opacity(PCodePickTheme.mutedOpacity))
+                    .padding(.top, 8)
+                    .padding(.bottom, 4)
+                PCodePickerView(picker: picker, config: ghostty.config, fonts: nil)
+            }
+            .padding(4)
+            .frame(
+                width: min(size.width, max(480, size.width * 0.7)),
+                height: min(size.height, max(280, size.height * 0.7)))
+            .background(ghostty.config.backgroundColor)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(ghostty.config.splitDividerColor, lineWidth: 1))
+            .shadow(color: .black.opacity(0.45), radius: 18, x: 0, y: 6)
+            .environment(\.colorScheme, NSColor(ghostty.config.backgroundColor).isLightColor ? .light : .dark)
         }
     }
 }

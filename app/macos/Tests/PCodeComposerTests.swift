@@ -175,10 +175,133 @@ struct PCodeComposerTests {
         #expect(!PCodeComposerSession.isShellCommand("!"))
         #expect(!PCodeComposerSession.isShellCommand("!!"))
         #expect(!PCodeComposerSession.isShellCommand("hi !there"))
-        #expect(PCodeHostRequests.runsInTerminal("/help"))
-        #expect(PCodeHostRequests.runsInTerminal("/new write the docs"))
-        #expect(!PCodeHostRequests.runsInTerminal("/new"))
-        #expect(!PCodeHostRequests.runsInTerminal("/compact"))
+        let catalog = PCodeCommandCatalog()
+        #expect(catalog.handling(for: "/help") == .terminal)
+        #expect(catalog.handling(for: "/paste-image") == .native)
+        #expect(catalog.handling(for: "/new write the docs") == .terminal)
+        #expect(catalog.handling(for: "/new") == .session)
+        #expect(catalog.handling(for: "/compact") == .session)
+    }
+
+    // MARK: Completion menu
+
+    private func catalog() -> PCodeCommandCatalog {
+        PCodeCommandCatalog(snapshot: .init(
+            commands: [
+                PCodeCommand("/compact", "Summarize the conversation"),
+                PCodeCommand("/model", "Switch model", arguments: ["claude:opus", "openai:gpt"]),
+            ],
+            models: ["claude:opus"]))
+    }
+
+    @Test func commandRowsReplaceTheTypedWord() {
+        let rows = PCodeComposerCompletion.commandRows(catalog(), text: "/com", caret: 4)
+        #expect(rows.map(\.insertion).contains("/compact"))
+        #expect(rows.map(\.insertion).contains("/commands") == false)  // An alias completes as its name.
+        let compact = rows.first { $0.insertion == "/compact" }!
+        #expect(compact.range == NSRange(location: 0, length: 4))
+        #expect(compact.meta == "Summarize the conversation")
+        #expect(PCodeComposerCompletion.apply(compact, to: "/com") == ("/compact", 8))
+    }
+
+    @Test func commandRowsCompleteArguments() {
+        let rows = PCodeComposerCompletion.commandRows(catalog(), text: "/model cl", caret: 9)
+        #expect(rows.map(\.insertion) == ["claude:opus"])
+        #expect(rows[0].range == NSRange(location: 7, length: 2))
+        #expect(PCodeComposerCompletion.apply(rows[0], to: "/model cl").text == "/model claude:opus")
+    }
+
+    @Test func noRowsForProseOrTextAfterTheCaret() {
+        #expect(PCodeComposerCompletion.commandRows(catalog(), text: "hello", caret: 5).isEmpty)
+        #expect(PCodeComposerCompletion.commandRows(catalog(), text: "/com x", caret: 4).isEmpty)
+        #expect(PCodeComposerCompletion.commandRows(catalog(), text: "/com", caret: 99).isEmpty)
+    }
+
+    @Test func menuSelectionFollowsTheTerminal() {
+        let menu = PCodeComposerCompletion(catalog: catalog(), files: nil)
+        menu.update(text: "/", caret: 1)
+        #expect(menu.isOpen && menu.selected == nil)
+        // Nothing selected: Enter sends, Tab takes the first row.
+        #expect(menu.chosen == nil)
+        #expect(menu.offered == menu.rows.first)
+        menu.move(1)
+        #expect(menu.selected == 0 && menu.chosen == menu.rows[0])
+        menu.move(-1)
+        #expect(menu.selected == menu.rows.count - 1)  // Wraps.
+        // Escape closes it until the text changes.
+        menu.dismiss()
+        #expect(!menu.isOpen)
+        menu.update(text: "/", caret: 1)
+        #expect(!menu.isOpen)
+        menu.update(text: "/c", caret: 2)
+        #expect(menu.isOpen && menu.selected == nil)
+    }
+
+    @Test func fileTokenNeedsAnIndex() {
+        let menu = PCodeComposerCompletion(catalog: catalog(), files: nil)
+        menu.update(text: "look at @ui", caret: 11)
+        #expect(!menu.isOpen)
+    }
+
+    @Test func filePickerListDecodesAsAPickList() throws {
+        let list = PCodeComposerSession.filePickerList(["src/a.py", "docs/b c.md", "README.md"], loaded: true)
+        let data = try JSONSerialization.data(withJSONObject: list)
+        let payload = try JSONDecoder().decode(PCodePicker.Payload.self, from: data)
+        #expect(payload.items.map(\.id) == ["src/a.py", "docs/b c.md", "README.md"])
+        #expect(payload.items[2].search == ["readme.md", "readme.md"])
+        #expect(payload.items[0].search == ["a.py", "src/a.py"])
+        #expect(payload.match == "fuzzy")
+        #expect(PCodeFileIndex.Item(path: "docs/b c.md").insertion == "\"./docs/b c.md\" ")
+    }
+
+    @Test func localPickerHandsThePickBack() {
+        let picker = PCodePicker()
+        var picked: String?
+        var closed = false
+        picker.onClosed = { closed = true }
+        picker.showLocal(PCodeComposerSession.filePickerList(["src/a.py", "src/b.py"], loaded: true)) { id, _ in
+            picked = id
+        }
+        #expect(picker.rows.count == 2)
+        picker.query = "B.PY"  // Case does not matter, as in pcode's pickers.
+        picker.accept()
+        #expect(picked == "src/b.py" && closed)
+    }
+
+    @Test func menuKeysOnlyWhileOpen() {
+        let open = { (code: UInt16, chars: String?, mods: NSEvent.ModifierFlags) in
+            PCodeComposerTextView.action(keyCode: code, characters: chars, modifiers: mods,
+                                         onFirstLine: true, onLastLine: true, menuOpen: true)
+        }
+        #expect(open(48, "\t", []) == .menuAccept)
+        #expect(open(37, "l", .control) == .menuAccept)
+        #expect(open(126, nil, []) == .menuPrevious)
+        #expect(open(35, "p", .control) == .menuPrevious)
+        #expect(open(125, nil, []) == .menuNext)
+        #expect(open(45, "n", .control) == .menuNext)
+        #expect(open(53, "\u{1b}", []) == .menuClose)
+        #expect(open(36, "\r", []) == .submit)  // The session decides: take a selection or send.
+        #expect(action(126, nil, first: true) == .historyPrevious)  // Closed: history again.
+        #expect(action(48, "\t") == nil)
+        #expect(action(0, "a", [.command, .shift]) == .openFilePicker)
+    }
+
+    // MARK: History and drafts
+
+    @Test func historyKeepsTheTextInProgressAndSavesDrafts() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("composer-drafts-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let history = PCodePromptHistory(entries: ["first", "second"], drafts: PCodeDraftStore(directory: dir))
+        #expect(history.up(current: "typing") == "second")
+        #expect(history.up(current: "second") == "first")
+        #expect(history.down(current: "first") == "second")
+        #expect(history.down(current: "second") == "typing")
+        history.saveDrafts(current: "typing")
+        let files = try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".txt") }
+        #expect(files.count == 1)
+        #expect(try String(contentsOf: dir.appendingPathComponent(files[0]), encoding: .utf8) == "typing")
+        history.send("typing")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".txt") }.isEmpty)
     }
 
     @Test func echoedPromptsReplaceLocalRows() {

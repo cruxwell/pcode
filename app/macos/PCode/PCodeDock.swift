@@ -569,6 +569,8 @@ struct PCodeComposerStatusStrip: View {
     let status: PCodeComposerStatus
     let startedAt: Date?
     var onToggleSendMode: (() -> Void)? = nil
+    /// The native composer's `@` file picker (Cmd+Shift+A).
+    var onOpenFiles: (() -> Void)? = nil
 
     private var stripColorScheme: ColorScheme {
         NSColor(ghostty.config.backgroundColor).isLightColor ? .light : .dark
@@ -639,6 +641,19 @@ struct PCodeComposerStatusStrip: View {
             Spacer(minLength: 8)
 
             HStack(spacing: 6) {
+                if let onOpenFiles {
+                    Button(action: onOpenFiles) {
+                        Text("@ file")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 1.5)
+                            .background(Capsule(style: .continuous).fill(Color.primary.opacity(0.06)))
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Insert a file reference (Cmd+Shift+A)")
+                }
                 ForEach(Array(activityBadges.enumerated()), id: \.offset) { _, badge in
                     Text(badge)
                         .font(.system(size: 10.5, weight: .medium).monospacedDigit())

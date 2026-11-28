@@ -2884,6 +2884,8 @@ final class PCodeWorkspace: ObservableObject {
 
     func select(_ pane: PCodeSessionPane) {
         peek.dismiss(restoreFocus: false)
+        // The composer being left keeps its unsent text as a draft (`drafts.py`).
+        if selected != pane.id { selectedPane?.composer?.saveDrafts() }
         selected = pane.id
         saveSelected()
         if isViewed(pane) { markSeen(pane) }
