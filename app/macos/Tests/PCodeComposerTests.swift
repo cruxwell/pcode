@@ -157,7 +157,8 @@ struct PCodeComposerTests {
     }
 
     @Test func nativeComposerFlag() {
-        #expect(!PCodeNativeComposer.enabled(environment: [:], preferences: [:]))
+        #expect(PCodeNativeComposer.enabled(environment: [:], preferences: [:]))  // On by default.
+        #expect(!PCodeNativeComposer.enabled(environment: [:], preferences: ["native_composer": "off"]))
         #expect(PCodeNativeComposer.enabled(environment: [:], preferences: ["native_composer": "on"]))
         #expect(!PCodeNativeComposer.enabled(environment: ["PCODE_NATIVE_COMPOSER": "0"], preferences: ["native_composer": "on"]))
         #expect(PCodeNativeComposer.enabled(environment: ["PCODE_NATIVE_COMPOSER": "1"], preferences: [:]))

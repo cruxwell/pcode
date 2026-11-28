@@ -429,10 +429,10 @@ SETTINGS = {
     # Read by Pcode.app when it opens a session pane (`PCodeNativeComposer.enabled`);
     # PCODE_NATIVE_COMPOSER=1|0 overrides it there.
     "native_composer": Setting(
-        "off",
+        "on",
         ("on", "off"),
-        description="Pcode.app: type into a native text box instead of the terminal editor "
-        "(experimental; new panes only)",
+        description="Pcode.app: type into a native text box; off runs the terminal editor "
+        "in each session pane instead (new panes only)",
     ),
     # 0 by default: a stopped host costs nothing, since /attach still lists one
     # with an unseen result and resumes it.

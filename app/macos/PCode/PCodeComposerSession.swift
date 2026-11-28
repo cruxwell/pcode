@@ -2,8 +2,9 @@ import AppKit
 import Combine
 import Foundation
 
-/// The `native_composer` preference (`pcode config set native_composer on`), read when a
-/// session pane opens. `PCODE_NATIVE_COMPOSER=1|0` overrides it.
+/// The `native_composer` preference (on by default; `pcode config set native_composer off`
+/// brings back the terminal editor), read when a session pane opens.
+/// `PCODE_NATIVE_COMPOSER=1|0` overrides it.
 enum PCodeNativeComposer {
     static var enabled: Bool {
         enabled(environment: ProcessInfo.processInfo.environment, preferences: PCodePreferences.load())
@@ -13,7 +14,8 @@ enum PCodeNativeComposer {
         if let env = environment["PCODE_NATIVE_COMPOSER"], !env.isEmpty {
             return !["0", "off", "false", "no"].contains(env.lowercased())
         }
-        return (preferences["native_composer"] as? String) == "on"
+        // On unless turned off, as `native_composer`'s default in `pcode.preferences`.
+        return (preferences["native_composer"] as? String) != "off"
     }
 }
 

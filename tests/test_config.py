@@ -46,7 +46,7 @@ def test_defaults_and_path_do_not_create_files():
         "subagent_models": "",
         "advisor_model": None,
         "session_host": "off",
-        "native_composer": "off",
+        "native_composer": "on",
         "session_host_idle_minutes": "0",
         "email_owner": None,
         "email_mcp": "off",

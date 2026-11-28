@@ -278,7 +278,7 @@ Every key works with `pcode config set KEY VALUE` and `/config set KEY VALUE`.
 | --- | --- | --- |
 | `session_host` | `off` | `on`, `off` (run sessions in a [background host](sessions.md#background-sessions) that outlives the terminal from the start; off runs them in the terminal until [`/detach`](sessions.md#background-sessions) moves one into a host; `--host`/`--no-host` override it once) |
 | `session_host_idle_minutes` | `0` | whole minutes a [background session](sessions.md#idle-hosts-stop) may sit idle with no terminal before its host stops; `0` stops it 15 seconds after it goes idle, `off` never |
-| `native_composer` | `off` | `on`, `off` (experimental, Pcode.app only: session panes take input in a native text box instead of the terminal editor, editable before the session has started; applies to panes opened afterwards) |
+| `native_composer` | `on` | `on`, `off` (Pcode.app only: session panes take input in a native text box, editable before the session has started; `off` runs the terminal editor in each pane instead; applies to panes opened afterwards) |
 | `worktree` | `off` | `on`, `off` (start new sessions in `.worktrees/` git worktrees; does not enable worker isolation on its own) |
 | `worktree_exit` | `ask` | `ask`, `merge`, `keep` (what to do with unmerged commits when a session worktree is left) |
 | `worker_isolation` | `off` | `on`, `off` (opt in to isolated built-in worker tasks; also requires effective `worktree=on`, not just the CLI launch override; checked at each delegation) |
