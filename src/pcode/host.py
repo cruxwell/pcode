@@ -522,9 +522,6 @@ class HostView:
             # every settled tool (`stream_events`), so planning calls need no hook.
             self._host.push_plan(event.items)
 
-    def plan_changed(self, items: list[dict]) -> None:
-        self._host.push_plan(items)
-
     def commands_changed(self) -> None:
         self._host.push_state()
 
@@ -709,6 +706,8 @@ class SessionHost:
         # of the store that will update it, if one is pending.
         self.plan: list[dict] = []
         self._plan_read: asyncio.Task | None = None
+        # Something replaced the plan store while a read was in flight.
+        self._plan_stale = False
 
     @property
     def socket(self) -> Path:
@@ -1195,14 +1194,22 @@ class SessionHost:
 
     def refresh_plan(self) -> None:
         """Re-read the plan store soon, after something that may have replaced it."""
+        if self.stopped.is_set():
+            return
         if self._plan_read is not None and not self._plan_read.done():
-            return  # The pending read sees this change too: it reads when it runs.
+            self._plan_stale = True  # The pending read goes again once it finishes.
+            return
         self._plan_read = asyncio.get_running_loop().create_task(self._read_plan())
 
     async def _read_plan(self) -> None:
-        store = getattr(self.controller.runtime, "plan_store", None)
-        if store is not None:
-            self.push_plan([item.model_dump(mode="json") for item in await store.get_items()])
+        while True:
+            self._plan_stale = False
+            store = getattr(self.controller.runtime, "plan_store", None)
+            if store is not None:
+                items = await store.get_items()
+                self.push_plan([item.model_dump(mode="json") for item in items])
+            if not self._plan_stale or self.stopped.is_set():
+                return
 
     def _buffer(self, method: str, args: tuple, kwargs: dict) -> None:
         previous = self.buffer[-1] if self.buffer else None
