@@ -521,4 +521,22 @@ struct PCodeComposerTests {
         #expect(PCodeNativeCommands.route(for: "/new fix it") == .action(.newSession(prompt: "fix it")))
         #expect(PCodeCommandCatalog().handling(for: "/new fix it") == .native)
     }
+
+    // MARK: /btw drawer
+
+    @Test func latestThreadPrefersTheNewestUnreadAnswer() {
+        let asides: [[String: Any]] = [
+            ["id": "1", "thread": "t1", "status": "done", "read": false],
+            ["id": "2", "thread": "t2", "status": "done", "read": true],
+            ["id": "3", "thread": "t3", "status": "running", "read": false],
+        ]
+        #expect(PCodeComposerSession.latestThread(asides) == "t1")
+        #expect(PCodeComposerSession.latestThread(Array(asides.suffix(2))) == "t3")  // None unread: the newest.
+        #expect(PCodeComposerSession.latestThread([]) == nil)
+        #expect(PCodeComposerSession.threads(asides + [["id": "4", "thread": "t1"]]) == ["t1", "t2", "t3"])
+    }
+
+    @Test func nextThreadKeyIsCtrlBackslash() {
+        #expect(action(42, "\\", .control) == .nextThread)
+    }
 }

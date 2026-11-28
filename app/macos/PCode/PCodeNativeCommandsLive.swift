@@ -47,6 +47,10 @@ extension PCodeNativeCommands {
                 return Message(role: .user, text: text)
             case .answerActions(let markdown):
                 return Message(role: .assistant, text: markdown)
+            // An answer ending in prose carries its copy text on that row instead
+            // (`finishStreamingTurn`), which is how most answers end.
+            case .prose(_, _, let copyMarkdown?, true):
+                return Message(role: .assistant, text: copyMarkdown)
             default:
                 return nil
             }

@@ -300,4 +300,18 @@ struct PCodeNativeCommandsTests {
         ]
         #expect(PCodeNativeCommands.messages(rows) == [.init(role: .user, text: "hi"), .init(role: .assistant, text: "hello")])
     }
+
+    @Test func messagesFromAnswersEndingInProse() {
+        let rows = [
+            PCodeTranscriptItem(id: "p", payload: .prompt(label: "", text: "hi", isSide: false), spacingAfter: 0),
+            // A block mid-answer has no copy button; only the answer's last row does.
+            PCodeTranscriptItem(
+                id: "m1", payload: .prose(markdown: "a", referenceDefinitions: "", copyMarkdown: nil), spacingAfter: 0),
+            PCodeTranscriptItem(
+                id: "m2",
+                payload: .prose(markdown: "b", referenceDefinitions: "", copyMarkdown: "a\n\nb", showCopyButton: true),
+                spacingAfter: 0),
+        ]
+        #expect(PCodeNativeCommands.messages(rows) == [.init(role: .user, text: "hi"), .init(role: .assistant, text: "a\n\nb")])
+    }
 }
