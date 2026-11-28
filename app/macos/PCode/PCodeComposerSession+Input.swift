@@ -19,6 +19,10 @@ extension PCodeComposerSession {
         }
         textView.onPasteImage = { [weak self] board in self?.pasteImage(from: board) ?? false }
         startDraftTimer()
+        // Quitting closes no pane, so without this the last `interval` of typing is lost.
+        terminateObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.saveDrafts() }
     }
 
     // MARK: History and drafts

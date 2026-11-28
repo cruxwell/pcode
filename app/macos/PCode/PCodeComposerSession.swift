@@ -125,6 +125,8 @@ final class PCodeComposerSession: ObservableObject {
     /// `PCODE_DEBUG_PLAN_FILE`'s poller (`startDebugPlanFeed`).
     var debugPlanTimer: Timer?
     var draftTimer: Timer?
+    /// Saves the draft when the app quits, which stops no pane (`saveDrafts`).
+    var terminateObserver: NSObjectProtocol?
     /// The text the last draft save saw, so an idle composer writes nothing.
     var lastDraftText = ""
     /// Set while the text is replaced in code (history), which must not open the menu.
@@ -205,6 +207,8 @@ final class PCodeComposerSession: ObservableObject {
         saveDrafts()
         draftTimer?.invalidate()
         draftTimer = nil
+        if let terminateObserver { NotificationCenter.default.removeObserver(terminateObserver) }
+        terminateObserver = nil
         debugPlanTimer?.invalidate()
         debugPlanTimer = nil
         filePicker?.cancel()
