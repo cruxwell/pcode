@@ -11,8 +11,8 @@ import Foundation
 ///
 /// Reads are cheap and never block: `matches` answers from the cached listing
 /// and starts a background refresh once it is older than `cacheSeconds`.
-/// `onUpdate` runs on the main queue when a refresh changes the listing, so an
-/// open menu can re-query.
+/// `didUpdate` is posted on the main queue when a refresh changes the listing, so
+/// an open menu can re-query.
 final class PCodeFileIndex: @unchecked Sendable {
     /// One file a reference can name.
     struct Item: Equatable, Sendable {

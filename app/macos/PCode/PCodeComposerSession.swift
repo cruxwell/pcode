@@ -257,6 +257,8 @@ final class PCodeComposerSession: ObservableObject {
         // `--spawn-only -c` would hand it straight back (`existing`).
         let previous = (id: hostID, pid: hostPID)
         hostPID = nil
+        // A reconnect retry already queued must not attach to the host being stopped.
+        socketPath = nil
         spawn(trust: nil, hostID: PCodeWorkspace.newHostID(), stopping: previous)
     }
 

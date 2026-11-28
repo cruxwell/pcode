@@ -68,7 +68,7 @@ final class PCodeComposerCompletion: ObservableObject {
             guard let files else { return show([]) }
             if rows.isEmpty {
                 // The menu is opening: a file made a moment ago should be in it. The
-                // refresh lands in the background, and `onUpdate` ranks again.
+                // refresh lands in the background, and `didUpdate` ranks again.
                 files.refreshIfStale(maxAge: Self.openRefreshAge)
             }
             let wanted = generation
