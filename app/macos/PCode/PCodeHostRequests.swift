@@ -32,7 +32,7 @@ enum PCodeHostRequests {
             let title = (args.first as? String) ?? "pcode"
             let prompt = (args.count > 1 ? args[1] as? String : nil) ?? ""
             let detail = (args.count > 2 ? args[2] as? String : nil) ?? ""
-            readSecret(title: title, prompt: prompt, detail: detail, window: session.textView?.window) { secret in
+            readSecret(title: title, prompt: prompt, detail: detail, session: session) { secret in
                 client.reply(id: id, result: secret)
             }
         case "browse_jobs", "read_asides":
@@ -62,26 +62,33 @@ enum PCodeHostRequests {
         }
     }
 
-    /// The host needs a secret (an API key, a sign-in code): ask for it in a sheet.
+    /// The host needs a secret (an API key, a sign-in code): ask for it in a sheet on the
+    /// workspace window, naming the pane it is for (it may not be the one shown). Closing
+    /// the pane cancels it (`PCodeComposerSession.stop`), which answers nil.
     static func readSecret(
-        title: String, prompt: String, detail: String, window: NSWindow?,
+        title: String, prompt: String, detail: String, session: PCodeComposerSession,
         completion: @escaping (String?) -> Void
     ) {
+        guard session.secretAlert == nil,
+              let window = session.textView?.window ?? PCodeWorkspaceController.existing?.window
+        else {
+            // One prompt at a time, and never an app-modal one with no window to own it.
+            completion(nil)
+            return
+        }
         let alert = NSAlert()
         alert.messageText = title
-        alert.informativeText = [prompt, detail].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        let pane = "For \(session.paneLabel)."
+        alert.informativeText = [pane, prompt, detail].filter { !$0.isEmpty }.joined(separator: "\n\n")
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
         alert.accessoryView = field
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
-        let finish: (NSApplication.ModalResponse) -> Void = { response in
+        session.secretAlert = alert
+        alert.beginSheetModal(for: window) { [weak session] response in
+            session?.secretAlert = nil
             completion(response == .alertFirstButtonReturn ? field.stringValue : nil)
-        }
-        if let window {
-            alert.beginSheetModal(for: window, completionHandler: finish)
-        } else {
-            finish(alert.runModal())
         }
     }
 }

@@ -12,6 +12,14 @@ import SwiftUI
 /// while a resumed session's host boots and publishing `ConnectionState` so the
 /// pane can show native startup, error and host-stopped cards instead of tailing
 /// the journal.
+/// A prompt the native composer showed before the host echoed it.
+struct PCodeLocalPrompt: Equatable {
+    let id: String
+    let text: String
+    /// Delivered to the host, so its echo may now arrive.
+    var sent = false
+}
+
 final class PCodeLiveTranscriptController: ObservableObject {
     enum ConnectionState: Equatable {
         /// Waiting for the session host to boot and open its socket.
@@ -92,7 +100,7 @@ final class PCodeLiveTranscriptController: ObservableObject {
     private var waitStartedAt: Date?
     private var waitingAfterStop = false
     /// Prompts the native composer sent before its host attached (`showLocalPrompt`).
-    private var localPrompts: [(id: String, text: String)] = []
+    private var localPrompts: [PCodeLocalPrompt] = []
     private var localPromptCounter = 0
 
     init(
@@ -176,6 +184,11 @@ final class PCodeLiveTranscriptController: ObservableObject {
         }
     }
 
+    /// Whether this controller is drawing into `documentView` (nil: into nothing).
+    func isAttached(to documentView: PCodeTranscriptDocumentView?) -> Bool {
+        self.documentView === documentView
+    }
+
     func detach() {
         attachGeneration &+= 1
         hostRetryTimer?.invalidate()
@@ -216,11 +229,16 @@ final class PCodeLiveTranscriptController: ObservableObject {
     /// (`turn_started`, or `user` for steering and `!command`s) replaces it, so it shows once.
     func showLocalPrompt(_ text: String) {
         localPromptCounter += 1
-        let entry = (id: "local-prompt-\(localPromptCounter)", text: text)
+        let entry = PCodeLocalPrompt(id: "local-prompt-\(localPromptCounter)", text: text)
         localPrompts.append(entry)
         guard let documentView else { return }
         documentView.upsertItem(Self.localPromptItem(entry), reveal: true)
         documentView.scrollToBottomAndPin()
+    }
+
+    /// The composer sent every waiting prompt to the host: from now on an echo may answer them.
+    func markLocalPromptsSent() {
+        for index in localPrompts.indices { localPrompts[index].sent = true }
     }
 
     /// Drop prompts that will never be echoed (Ctrl+C cleared the queue before attach).
@@ -229,7 +247,13 @@ final class PCodeLiveTranscriptController: ObservableObject {
         localPrompts.removeAll()
     }
 
-    private static func localPromptItem(_ entry: (id: String, text: String)) -> PCodeTranscriptItem {
+    /// Drop sent prompts the host never echoed (it refused or rewrote them) once it is idle.
+    func dropSentLocalPrompts() {
+        for entry in localPrompts where entry.sent { documentView?.removeItem(id: entry.id) }
+        localPrompts.removeAll { $0.sent }
+    }
+
+    private static func localPromptItem(_ entry: PCodeLocalPrompt) -> PCodeTranscriptItem {
         PCodeTranscriptItem(
             id: entry.id,
             payload: .prompt(label: "", text: entry.text, isSide: false),
@@ -245,27 +269,43 @@ final class PCodeLiveTranscriptController: ObservableObject {
         }
     }
 
-    /// Before `event` is drawn: if it echoes a local prompt, remove the stand-in row.
+    /// Before `event` is drawn: if it echoes the oldest sent stand-in, remove that row.
+    /// By position: the host runs them in the order they were sent, so an echo only ever
+    /// answers the oldest, and an older prompt with the same text never takes a newer row.
     private func consumeEcho(_ event: PCodeHostEvent) {
-        guard let echoed = Self.echoedPrompt(event)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              let index = localPrompts.firstIndex(where: { $0.text == echoed }) else { return }
+        guard let echoed = Self.echoedPrompt(event),
+              let index = Self.echoAnswers(echoed, localPrompts) else { return }
         documentView?.removeItem(id: localPrompts[index].id)
         localPrompts.remove(at: index)
+    }
+
+    /// Which stand-in `echoed` answers: the oldest one, if it was sent and has that text.
+    static func echoAnswers(_ echoed: String, _ prompts: [PCodeLocalPrompt]) -> Int? {
+        guard let first = prompts.first, first.sent,
+              first.text == echoed.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        return 0
     }
 
     /// After a redraw dropped every row: put back the stand-ins `history` doesn't already
     /// end with (a prompt the host ran before this observer connected).
     private func restoreLocalPrompts(after history: [PCodeHostEvent]) {
         guard !localPrompts.isEmpty else { return }
-        var recent = history.suffix(localPrompts.count * 4).compactMap(Self.echoedPrompt)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        localPrompts.removeAll { entry in
-            guard let index = recent.firstIndex(of: entry.text) else { return false }
-            recent.remove(at: index)
-            return true
-        }
+        let ran = Self.promptsAlreadyRun(history: history, prompts: localPrompts)
+        localPrompts.removeFirst(ran)
         guard let documentView else { return }
         for entry in localPrompts { documentView.upsertItem(Self.localPromptItem(entry), reveal: false) }
+    }
+
+    /// How many of the oldest stand-ins `history` already holds: the longest run of sent
+    /// ones whose texts are the last prompts in it, in order. Unsent ones never are.
+    static func promptsAlreadyRun(history: [PCodeHostEvent], prompts: [PCodeLocalPrompt]) -> Int {
+        let echoes = history.compactMap(echoedPrompt).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let sent = prompts.prefix { $0.sent }.map(\.text)
+        for count in stride(from: min(sent.count, echoes.count), through: 1, by: -1)
+        where Array(echoes.suffix(count)) == Array(sent.prefix(count)) {
+            return count
+        }
+        return 0
     }
 
     /// Forget what a host reported, keeping only the attached session id.
@@ -755,6 +795,7 @@ struct PCodeLiveTranscriptRepresentable: NSViewRepresentable {
         context.coordinator.lastRequestedSessionID = sessionID
         context.coordinator.lastRequestedHostID = hostID
         context.coordinator.controller = controller
+        context.coordinator.nativePane = nativePane
         let sid = sessionID
         let hid = hostID
         DispatchQueue.main.async { [weak controller, weak doc = scrollView.transcriptDocumentView] in
@@ -948,8 +989,16 @@ struct PCodeLiveTranscriptRepresentable: NSViewRepresentable {
 
     static func dismantleNSView(_ nsView: PCodeTranscriptScrollView, coordinator: Coordinator) {
         let controller = coordinator.controller
+        weak var document = nsView.transcriptDocumentView
+        weak var pane = coordinator.nativePane
+        weak var view = nsView
+        if let pane, pane.transcriptScrollView === nsView { pane.transcriptScrollView = nil }
         DispatchQueue.main.async {
-            controller?.detach()
+            // A native pane's controller outlives its views: a new view (the pane shown
+            // again, a live peek) may have attached it already, and must keep it.
+            guard let controller, controller.isAttached(to: document) else { return }
+            controller.detach()
+            if let pane, pane.transcriptScrollView === view { pane.transcriptScrollView = nil }
         }
     }
 
@@ -960,6 +1009,7 @@ struct PCodeLiveTranscriptRepresentable: NSViewRepresentable {
         var lastRequestedSessionID: String?
         var lastRequestedHostID: String?
         weak var controller: PCodeLiveTranscriptController?
+        weak var nativePane: PCodeSessionPane?
     }
 }
 

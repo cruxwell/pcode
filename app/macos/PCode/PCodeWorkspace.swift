@@ -1666,6 +1666,8 @@ final class PCodeWorkspace: ObservableObject {
         var ready: Set<String> = []
         var hosted: Set<String> = []
         var openElsewhere: Set<String> = []
+        var liveHosts: [(id: String, pid: Int32, sessionID: String)] = []
+        let savedHosts = Self.savedHostPanes()
         steps.enter()
         DispatchQueue.global(qos: .userInitiated).async {
             // Sessions a Restart Pcode just moved may still be on their way
@@ -1680,6 +1682,7 @@ final class PCodeWorkspace: ObservableObject {
             // What `reopen` checks, read here rather than on the main thread.
             hosted = PCodeSessionInfo.hosted()
             openElsewhere = Set(saved.filter { !hosted.contains($0) && PCodeSessionInfo.isOpen($0) })
+            if !savedHosts.isEmpty { liveHosts = PCodeSessionInfo.liveHostEntries() }
             steps.leave()
         }
         steps.notify(queue: .main) { [weak self] in
@@ -1695,6 +1698,7 @@ final class PCodeWorkspace: ObservableObject {
                 self.reopen(
                     saved: saved, marked: Set(marked), ready: ready, all: all, selectedID: selectedID,
                     hosted: hosted, openElsewhere: openElsewhere)
+                self.reopenHostPanes(savedHosts, live: liveHosts)
                 PCodeStartupTrace.mark("reopen done (\(self.panes.count) panes)")
             }
             // Restarted sessions' hosts registered during the wait: reload
@@ -1704,6 +1708,53 @@ final class PCodeWorkspace: ObservableObject {
             } else {
                 self.reloadHistory(then: reopen)
             }
+        }
+    }
+
+    /// Native-composer panes whose session had no id yet (no turn had run) are saved by
+    /// their host instead, so a restart reattaches them rather than orphaning the host.
+    private static let openHostsKey = "PCodeWorkspaceOpenHosts"
+
+    struct SavedHostPane: Codable, Equatable {
+        let hostID: String
+        let directory: String
+        let projectPath: String
+    }
+
+    static func savedHostPanes() -> [SavedHostPane] {
+        guard let data = UserDefaults.standard.data(forKey: openHostsKey) else { return [] }
+        return (try? JSONDecoder().decode([SavedHostPane].self, from: data)) ?? []
+    }
+
+    /// The saved host panes still worth reopening: native panes are on, their host is
+    /// alive, and it holds no session that is open already.
+    static func reopenableHostPanes(
+        _ saved: [SavedHostPane], live: [(id: String, pid: Int32, sessionID: String)],
+        openSessions: Set<String>, nativeEnabled: Bool
+    ) -> [(pane: SavedHostPane, sessionID: String?)] {
+        guard nativeEnabled else { return [] }
+        return saved.compactMap { pane in
+            guard PCode.valid(pane.hostID, length: 8...8, hex: true),
+                  let entry = live.first(where: { $0.id == pane.hostID }) else { return nil }
+            if !entry.sessionID.isEmpty, openSessions.contains(entry.sessionID) { return nil }
+            return (pane, entry.sessionID.isEmpty ? nil : entry.sessionID)
+        }
+    }
+
+    private func reopenHostPanes(_ saved: [SavedHostPane], live: [(id: String, pid: Int32, sessionID: String)]) {
+        let reopenable = Self.reopenableHostPanes(
+            saved, live: live, openSessions: Set(panes.compactMap(\.sessionID)),
+            nativeEnabled: PCodeNativeComposer.enabled)
+        for (savedPane, sessionID) in reopenable {
+            let pane = makeNativePane(
+                directory: savedPane.directory, projectPath: savedPane.projectPath,
+                sessionID: sessionID, existingHostID: savedPane.hostID)
+            adopt(pane)
+            panes.append(pane)
+        }
+        if !reopenable.isEmpty {
+            saveOpen()
+            if selected == nil, let first = panes.first { select(first) }
         }
     }
 
@@ -3235,9 +3286,13 @@ final class PCodeWorkspace: ObservableObject {
 
     /// A native-composer pane: no terminal; the host is spawned headless and the composer
     /// attaches to it over its socket (`PCodeComposerSession`).
-    private func makeNativePane(directory: String, projectPath: String, sessionID: String?) -> PCodeSessionPane {
-        let launchHostID = Self.newHostID()
-        let session = PCodeComposerSession(directory: directory, resumeSessionID: sessionID, launchHostID: launchHostID)
+    private func makeNativePane(
+        directory: String, projectPath: String, sessionID: String?, existingHostID: String? = nil
+    ) -> PCodeSessionPane {
+        let launchHostID = existingHostID ?? Self.newHostID()
+        let session = PCodeComposerSession(
+            directory: directory, resumeSessionID: sessionID, launchHostID: launchHostID,
+            existingHostID: existingHostID)
         let pane = PCodeSessionPane(composer: session, directory: directory, projectPath: projectPath, sessionID: sessionID)
         pane.launchHostID = launchHostID
         session.onSessionReported = { [weak self, weak pane] sessionID, hostID in
@@ -3338,6 +3393,12 @@ final class PCodeWorkspace: ObservableObject {
     private func saveOpen() {
         guard !restarting else { return }
         UserDefaults.standard.set(panes.compactMap(\.sessionID), forKey: Self.openKey)
+        let hostPanes = panes.compactMap { pane -> SavedHostPane? in
+            guard pane.sessionID == nil, let composer = pane.composer,
+                  let hostID = composer.hostID ?? pane.hostID else { return nil }
+            return SavedHostPane(hostID: hostID, directory: pane.directory, projectPath: pane.projectPath)
+        }
+        UserDefaults.standard.set(try? JSONEncoder().encode(hostPanes), forKey: Self.openHostsKey)
     }
 
     /// Remember the shown session, for `restore` to show again.

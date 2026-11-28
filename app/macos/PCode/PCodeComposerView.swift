@@ -14,6 +14,9 @@ import SwiftUI
 /// | Ctrl+C | clear the draft; with nothing typed, interrupt a busy session |
 /// | Ctrl+S | cycle the send mode for the next send (steering, queue, interrupt) |
 ///
+/// Ctrl+D is left to `NSTextView` (delete forward): the terminal's "exit on an empty
+/// prompt" has no place in a pane you close with ⌘W, and its busy-cancel is Ctrl+C's.
+///
 /// Hooks for later phases are the `on…` closures below: each returns whether it handled
 /// the event, and the default (nil) leaves it to `NSTextView`.
 final class PCodeComposerTextView: NSTextView {
@@ -122,7 +125,7 @@ final class PCodeComposerTextView: NSTextView {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         // Ctrl+key chords (and Cmd+Shift+A) arrive here first when a menu item claims them.
         let mods = event.modifierFlags.intersection([.shift, .control, .option, .command])
-        if window?.firstResponder === self,
+        if window?.firstResponder === self, !hasMarkedText(),
            mods == .control || mods == [.command, .shift],
            let action = Self.action(
                keyCode: event.keyCode, characters: event.charactersIgnoringModifiers,

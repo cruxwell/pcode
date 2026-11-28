@@ -333,4 +333,83 @@ struct PCodeComposerTests {
         #expect(action(126, nil, first: false) == nil)
         #expect(action(125, nil, last: true) == .historyNext)
     }
+
+    // MARK: Review fixes
+
+    @Test func echoesAnswerTheOldestSentStandInOnly() {
+        let prompts = [
+            PCodeLocalPrompt(id: "a", text: "again", sent: true),
+            PCodeLocalPrompt(id: "b", text: "next", sent: true),
+        ]
+        #expect(PCodeLiveTranscriptController.echoAnswers("again", prompts) == 0)
+        #expect(PCodeLiveTranscriptController.echoAnswers("next", prompts) == nil)  // Not by text alone.
+        let unsent = [PCodeLocalPrompt(id: "a", text: "again", sent: false)]
+        #expect(PCodeLiveTranscriptController.echoAnswers("again", unsent) == nil)
+    }
+
+    @Test func historyOnlyAccountsForTrailingSentStandIns() {
+        let history: [PCodeHostEvent] = [
+            .turnStarted(prompt: "again", isSide: false, runID: ""),
+            .message(markdown: "ok"),
+        ]
+        // An older prompt with the same text does not take an unsent stand-in...
+        #expect(PCodeLiveTranscriptController.promptsAlreadyRun(
+            history: history, prompts: [PCodeLocalPrompt(id: "a", text: "again", sent: false)]) == 0)
+        // ...but a sent one the host ran before this observer connected is accounted for.
+        #expect(PCodeLiveTranscriptController.promptsAlreadyRun(
+            history: history, prompts: [PCodeLocalPrompt(id: "a", text: "again", sent: true),
+                                        PCodeLocalPrompt(id: "b", text: "more", sent: true)]) == 1)
+        #expect(PCodeLiveTranscriptController.promptsAlreadyRun(
+            history: history + [.user(text: "more")],
+            prompts: [PCodeLocalPrompt(id: "a", text: "again", sent: true),
+                      PCodeLocalPrompt(id: "b", text: "more", sent: true)]) == 2)
+    }
+
+    @Test func spawnAnswerIsACompleteLine() {
+        #expect(!PCodeComposerSession.isAnswer(Data("Last login\n".utf8)))
+        #expect(!PCodeComposerSession.isAnswer(Data(#"{"id": "ab12cd34""#.utf8)))  // Half a line.
+        #expect(PCodeComposerSession.isAnswer(Data("motd\n{\"id\": \"ab12cd34\", \"socket\": \"/s\"}\n".utf8)))
+        #expect(PCodeComposerSession.isAnswer(Data(#"{"error": "no"}"#.utf8 + [0x0A])))
+        #expect(PCodeComposerSession.isAnswer(Data(#"{"trust": {}}"#.utf8 + [0x0A])))
+    }
+
+    @Test func spawnedChildRunsInItsOwnGroupAndAnswers() throws {
+        let err = FileManager.default.temporaryDirectory.appendingPathComponent("spawn-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: err) }
+        let child = try #require(SpawnedChild(
+            argv: ["/bin/sh", "-c", "echo '{\"id\": \"x\"}'; echo oops >&2; (sleep 30 &)"],
+            environment: ["PATH": "/usr/bin:/bin"], directory: "/tmp", stderrPath: err.path))
+        defer { kill(-child.pid, SIGKILL); child.closePipe() }
+        #expect(getpgid(child.pid) == child.pid)
+        var bytes = Data()
+        var chunk = [UInt8](repeating: 0, count: 1024)
+        let deadline = Date().addingTimeInterval(5)
+        while !PCodeComposerSession.isAnswer(bytes), Date() < deadline {
+            let n = read(child.stdout, &chunk, chunk.count)
+            if n <= 0 { break }
+            bytes.append(contentsOf: chunk[0..<n])
+        }
+        #expect(PCodeComposerSession.isAnswer(bytes))
+    }
+
+    @Test func savedHostPanesReopenOnlyLiveUnopenedHosts() {
+        let saved = [
+            PCodeWorkspace.SavedHostPane(hostID: "aaaa0001", directory: "/w", projectPath: "/w"),
+            PCodeWorkspace.SavedHostPane(hostID: "aaaa0002", directory: "/w", projectPath: "/w"),
+            PCodeWorkspace.SavedHostPane(hostID: "aaaa0003", directory: "/w", projectPath: "/w"),
+        ]
+        let live: [(id: String, pid: Int32, sessionID: String)] = [
+            ("aaaa0001", 10, ""), ("aaaa0003", 12, "s3"),
+        ]
+        let reopen = PCodeWorkspace.reopenableHostPanes(saved, live: live, openSessions: [], nativeEnabled: true)
+        #expect(reopen.map(\.pane.hostID) == ["aaaa0001", "aaaa0003"])
+        #expect(reopen.map(\.sessionID) == [nil, "s3"])
+        #expect(PCodeWorkspace.reopenableHostPanes(saved, live: live, openSessions: ["s3"], nativeEnabled: true)
+            .map(\.pane.hostID) == ["aaaa0001"])
+        #expect(PCodeWorkspace.reopenableHostPanes(saved, live: live, openSessions: [], nativeEnabled: false).isEmpty)
+    }
+
+    @Test func unencodableReplyIsAnError() {
+        #expect(PCodeHostRPCClient.encode(["type": "reply", "id": 1, "result": Date()]) == nil)
+    }
 }

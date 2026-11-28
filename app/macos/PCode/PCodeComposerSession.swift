@@ -125,6 +125,17 @@ final class PCodeComposerSession: ObservableObject {
     var settingText = false
 
     private(set) var resumeSessionID: String?
+    /// A host already running for this pane (reopened after an app restart): attach,
+    /// don't spawn.
+    let existingHostID: String?
+    /// The secret prompt open for this pane's host, if any (`PCodeHostRequests.readSecret`).
+    var secretAlert: NSAlert?
+    /// When busy was set before the host confirmed it; cleared by the host's own `busy`.
+    private var optimisticBusySince: Date?
+    /// How long a stopped host (or its `/restart` successor) gets to come back.
+    static let reconnectWindow: TimeInterval = 60
+    /// How long an optimistic busy waits for the host to confirm it.
+    static let busyConfirmWindow: TimeInterval = 5
     /// The id the first host is started with (`PCODE_HOST_ID`); relaunches pick new ones.
     let launchHostID: String
 
@@ -144,11 +155,13 @@ final class PCodeComposerSession: ObservableObject {
 
     init(
         directory: String, resumeSessionID: String?, launchHostID: String,
+        existingHostID: String? = nil,
         catalogStore: PCodeCatalogStore = PCodeCatalogStore(),
         history: PCodePromptHistory? = nil
     ) {
         self.directory = directory
         self.resumeSessionID = resumeSessionID
+        self.existingHostID = existingHostID
         self.launchHostID = launchHostID
         self.catalogStore = catalogStore
         self.history = history ?? PCodePromptHistory(drafts: PCodeDraftStore())
@@ -163,6 +176,15 @@ final class PCodeComposerSession: ObservableObject {
 
     func start() {
         guard !stopped else { return }
+        if let existing = existingHostID {
+            // Reopened after an app restart: the host from before is still running.
+            hostID = existing
+            socketPath = PCodeSessionInfo.hostRoot.appendingPathComponent("\(existing).sock").path
+            onSessionReported?(resumeSessionID, existing)
+            connectDeadline = Date().addingTimeInterval(10)
+            connect()
+            return
+        }
         spawn(trust: nil, hostID: launchHostID)
     }
 
@@ -173,6 +195,10 @@ final class PCodeComposerSession: ObservableObject {
         draftTimer = nil
         filePicker?.cancel()
         stopped = true
+        // A secret prompt for this pane must not outlive it: cancelling answers the host nil.
+        if let alert = secretAlert, let parent = alert.window.sheetParent {
+            parent.endSheet(alert.window, returnCode: .alertSecondButtonReturn)
+        }
         client?.close()
         client = nil
     }
@@ -203,7 +229,21 @@ final class PCodeComposerSession: ObservableObject {
         client?.close()
         client = nil
         if !state.sessionID.isEmpty { resumeSessionID = state.sessionID }
-        spawn(trust: nil, hostID: PCodeWorkspace.newHostID())
+        // The stuck host goes first: left running, it would keep the session, and
+        // `--spawn-only -c` would hand it straight back (`existing`).
+        let previous = (id: hostID, pid: hostPID)
+        hostPID = nil
+        spawn(trust: nil, hostID: PCodeWorkspace.newHostID(), stopping: previous)
+    }
+
+    /// SIGTERM the host `id`/`pid` and wait (off main) up to `wait` seconds for it to go.
+    static func stopHost(id: String?, pid: Int32?, wait: TimeInterval) {
+        var pids = PCodeWorkspace.stopHost(hostID: id, sessionID: nil)
+        if let pid, pid > 0, !pids.contains(pid), kill(pid, SIGTERM) == 0 { pids.append(pid) }
+        let deadline = Date().addingTimeInterval(wait)
+        while Date() < deadline, pids.contains(where: { kill($0, 0) == 0 }) {
+            usleep(50_000)
+        }
     }
 
     // MARK: Spawning
@@ -242,7 +282,7 @@ final class PCodeComposerSession: ObservableObject {
         ["--host", trust.map { "--spawn-only=\($0)" } ?? "--spawn-only"] + (resume.map { ["-c", $0] } ?? [])
     }
 
-    private func spawn(trust: String?, hostID: String) {
+    private func spawn(trust: String?, hostID: String, stopping: (id: String?, pid: Int32?)? = nil) {
         connection = .starting
         spawnAttempts += 1
         // Reported before the host exists, so closing the pane now still stops it.
@@ -251,6 +291,7 @@ final class PCodeComposerSession: ObservableObject {
         let args = Self.spawnArguments(resume: resumeSessionID, trust: trust)
         let directory = self.directory
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            if let stopping { Self.stopHost(id: stopping.id, pid: stopping.pid, wait: 5) }
             // Panes made right after launch take the direct command, not a login shell each.
             PCodeWorkspaceMode.awaitLoginShellCache(timeout: 3)
             let launch = PCodeWorkspaceMode.launchConfig(args, directory: directory)
@@ -259,41 +300,83 @@ final class PCodeComposerSession: ObservableObject {
         }
     }
 
+    /// How long `--spawn-only` may take (worktree setup runs in the host, not here).
+    static let spawnTimeout: TimeInterval = 60
+
     private static func runSpawn(command: String, env: [String: String], directory: String, hostID: String) -> SpawnResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", command]
-        process.currentDirectoryURL = URL(fileURLWithPath: directory)
         var environment = ProcessInfo.processInfo.environment.filter { key, _ in
             !key.hasPrefix("GHOSTTY_") && !["PCODE_EDITOR_ONLY", "PCODE_DOCK", "PCODE_NATIVE_TRANSCRIPT", "TERM_PROGRAM"].contains(key)
         }
         environment.merge(env) { _, new in new }
         environment["PCODE_HOST_ID"] = hostID
         environment["PCODE_HUSH_LOGIN"] = "1"
-        process.environment = environment
-        let stdout = Pipe()
         let stderrURL = FileManager.default.temporaryDirectory.appendingPathComponent("pcode-spawn-\(hostID).err")
-        FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
         defer { try? FileManager.default.removeItem(at: stderrURL) }
-        process.standardOutput = stdout
-        process.standardError = (try? FileHandle(forWritingTo: stderrURL)) ?? FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
-            return .error("Could not run pcode: \(error.localizedDescription)")
+        guard let child = SpawnedChild(
+            argv: ["/bin/sh", "-c", command], environment: environment,
+            directory: directory, stderrPath: stderrURL.path)
+        else { return .error("Could not run pcode.") }
+        defer { child.closePipe() }
+        // Read until pcode's answer, not to EOF: a child the login shell left behind
+        // (direnv, a background job) can hold the pipe open long after pcode exits.
+        let data = readAnswer(from: child)
+        if child.isRunning {
+            // Answered, or timed out: either way nothing more is wanted from it.
+            if data.answered { usleep(200_000) }
+            // The whole group, so a timeout takes the login shell's children too.
+            if child.isRunning { kill(-child.pid, SIGTERM) }
         }
-        let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 60, execute: timeout)
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        timeout.cancel()
         let errText = (try? String(contentsOf: stderrURL, encoding: .utf8)) ?? ""
-        return parseSpawnOutput(String(decoding: data, as: UTF8.self), stderr: errText, status: process.terminationStatus)
+        if !data.answered, data.timedOut {
+            return .error("pcode did not start a session host within \(Int(spawnTimeout))s.")
+        }
+        return parseSpawnOutput(String(decoding: data.bytes, as: UTF8.self), stderr: errText, status: child.status ?? -1)
+    }
+
+    /// Read the child's stdout until a line holds pcode's answer, the pipe closes, the
+    /// child has exited and a moment passed with nothing more, or `spawnTimeout` runs out.
+    private static func readAnswer(from child: SpawnedChild) -> (bytes: Data, answered: Bool, timedOut: Bool) {
+        var bytes = Data()
+        var chunk = [UInt8](repeating: 0, count: 16 * 1024)
+        let deadline = Date().addingTimeInterval(spawnTimeout)
+        var exitedAt: Date?
+        while Date() < deadline {
+            var poller = pollfd(fd: child.stdout, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&poller, 1, 100)
+            if ready > 0 {
+                let n = read(child.stdout, &chunk, chunk.count)
+                if n <= 0 { return (bytes, isAnswer(bytes), false) }  // EOF
+                bytes.append(contentsOf: chunk[0..<n])
+                if isAnswer(bytes) { return (bytes, true, false) }
+            } else if ready < 0, errno != EINTR {
+                return (bytes, isAnswer(bytes), false)
+            }
+            if !child.isRunning {
+                exitedAt = exitedAt ?? Date()
+                if Date().timeIntervalSince(exitedAt!) > 1 { return (bytes, isAnswer(bytes), false) }
+            }
+        }
+        return (bytes, isAnswer(bytes), true)
+    }
+
+    /// Whether `bytes` hold a complete line `parseSpawnOutput` takes as pcode's answer.
+    static func isAnswer(_ bytes: Data) -> Bool {
+        String(decoding: bytes, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: true)
+            .dropLast(bytes.last == 0x0A ? 0 : 1)
+            .contains { line in
+                guard let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { return false }
+                return obj["id"] != nil || obj["error"] != nil || obj["trust"] != nil
+            }
     }
 
     private func spawned(_ result: SpawnResult) {
-        guard !stopped else { return }
+        guard !stopped else {
+            // The pane closed while its host was starting: that host is nobody's now.
+            if case .host(let id, _, _, let pid, let existing) = result, !existing {
+                DispatchQueue.global(qos: .utility).async { Self.stopHost(id: id, pid: pid, wait: 0) }
+            }
+            return
+        }
         switch result {
         case .error(let message):
             connection = .failed(message)
@@ -329,10 +412,15 @@ final class PCodeComposerSession: ObservableObject {
             guard let self, let client, self.client === client else { return }
             PCodeHostRequests.handle(id: id, method: method, args: args, kwargs: kwargs, session: self, client: client)
         }
-        client.onClosed = { [weak self, weak client] error in
+        client.onClosed = { [weak self, weak client] ending in
             guard let self, let client, self.client === client else { return }
             self.client = nil
-            self.connectionLost(error)
+            switch ending {
+            case .lost(let error): self.connectionLost(error)
+            case .refused(let message):
+                // Asking again gets the same answer: say so now, not after the deadline.
+                if !self.stopped { self.connection = .failed(message) }
+            }
         }
         client.connect(socketPath: socketPath)
     }
@@ -370,7 +458,8 @@ final class PCodeComposerSession: ObservableObject {
             onSessionReported?(state.sessionID.isEmpty ? nil : state.sessionID, successor)
         }
         connection = .reconnecting(error ?? "The session host stopped.")
-        connectDeadline = Date().addingTimeInterval(10)
+        // A `/restart` successor boots a whole new pcode before its socket appears.
+        connectDeadline = Date().addingTimeInterval(Self.reconnectWindow)
         updatePhaseClock()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.connect() }
     }
@@ -403,11 +492,52 @@ final class PCodeComposerSession: ObservableObject {
         guard let client, connection == .attached else { return }
         let sending = outbox
         outbox.removeAll()
-        for item in sending {
-            switch item {
-            case .submit(let text, let mode): client.notify("submit", [text, mode])
-            case .command(let text): client.notify("command", [text, NSNull()])
-            }
+        for item in sending { deliver(item, to: client) }
+        // Their stand-in rows now wait for the host's echo (or are dropped once it is idle).
+        transcript.markLocalPromptsSent()
+        updatePhaseClock()
+    }
+
+    /// Send one prompt or command now, as `RemoteController` does.
+    private func deliver(_ item: Outgoing, to client: PCodeHostRPCClient) {
+        switch item {
+        case .submit(let text, let mode):
+            client.notify("submit", [text, mode])
+            // Set now so Ctrl+C right after Enter cancels it rather than clearing the draft.
+            markBusyOptimistically()
+        case .command(let text):
+            client.notify("command", [text, NSNull()])
+        }
+    }
+
+    /// Busy before the host says so. If the host never confirms (it refused the
+    /// prompt), it is cleared again rather than leaving Ctrl+C aimed at nothing.
+    private func markBusyOptimistically() {
+        // Already busy (steering mid-turn): the host sends no `busy` to confirm.
+        guard !state.busy else { return }
+        var next = state
+        next.busy = true
+        setState(next)
+        let since = Date()
+        optimisticBusySince = since
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.busyConfirmWindow) { [weak self] in
+            guard let self, self.optimisticBusySince == since else { return }
+            self.optimisticBusySince = nil
+            var next = self.state
+            next.busy = false
+            self.setState(next)
+            self.dropUnechoedPrompts()
+        }
+    }
+
+    /// Stand-in rows whose prompt the host has, by now, run or refused: once it is idle
+    /// with nothing queued, any left will never be echoed.
+    private func dropUnechoedPrompts() {
+        guard outbox.isEmpty, connection == .attached, !state.busy, state.queuedPrompts.isEmpty else { return }
+        // The echo comes over the transcript's own connection, which may lag this one.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, self.outbox.isEmpty, !self.state.busy, self.state.queuedPrompts.isEmpty else { return }
+            self.transcript.dropSentLocalPrompts()
         }
     }
 
@@ -419,8 +549,10 @@ final class PCodeComposerSession: ObservableObject {
             guard let changes = args.first as? [String: Any] else { return }
             var next = state
             next.applyActivity(changes)
+            if changes["busy"] != nil { optimisticBusySince = nil }  // The host's own word.
             setState(next)
             if let notice = changes["notice"] as? String, !notice.isEmpty { showToast(notice) }
+            if changes["busy"] as? Bool == false { dropUnechoedPrompts() }
         case "session_state":
             guard let session = args.first as? [String: Any] else { return }
             applySessionState(session)
@@ -504,16 +636,7 @@ final class PCodeComposerSession: ObservableObject {
 
     private func send(_ item: Outgoing) {
         if let client, connection == .attached {
-            switch item {
-            case .submit(let text, let mode):
-                client.notify("submit", [text, mode])
-                // As `RemoteController.submit`: Ctrl+C right after Enter cancels it.
-                var next = state
-                next.busy = true
-                setState(next)
-            case .command(let text):
-                client.notify("command", [text, NSNull()])
-            }
+            deliver(item, to: client)
             return
         }
         outbox.append(item)
@@ -524,6 +647,12 @@ final class PCodeComposerSession: ObservableObject {
             showToast("\(name) runs once the session has started.")
         }
         updatePhaseClock()
+    }
+
+    /// How a prompt names this pane: its session's title, else its folder.
+    var paneLabel: String {
+        let folder = (directory as NSString).lastPathComponent
+        return state.sessionTitle.isEmpty ? "the session in \(folder)" : "“\(state.sessionTitle)” (\(folder))"
     }
 
     /// Whether Ctrl+C on an empty composer has something to interrupt.
@@ -645,7 +774,7 @@ final class PCodeComposerSession: ObservableObject {
                 // `drafts.edited`: changed from the entry it was recalled from, so ↑ finds it.
                 let unsent = history.edited(current: textView.string)[history.index] != nil
                 history.clear(current: textView.string)
-                clearDraft()
+                clearDraft(undoable: true)
                 let discarded = unsent ? "Input discarded. ↑ brings it back." : "Input discarded."
                 showToast(isBusy ? "\(discarded) Ctrl+C again interrupts." : discarded)
             } else if isBusy {
@@ -674,10 +803,18 @@ final class PCodeComposerSession: ObservableObject {
         }
     }
 
-    func clearDraft() {
+    /// Empty the composer. `undoable` (Ctrl+C) goes through the text system, so ⌘Z
+    /// brings the text back; a send just resets it.
+    func clearDraft(undoable: Bool = false) {
         let textView = editor.textView
-        textView.string = ""
-        textView.didChangeText()
+        let all = NSRange(location: 0, length: (textView.string as NSString).length)
+        if undoable, all.length > 0, textView.shouldChangeText(in: all, replacementString: "") {
+            textView.replaceCharacters(in: all, with: "")
+            textView.didChangeText()
+        } else {
+            textView.string = ""
+            textView.didChangeText()
+        }
         editor.reportHeight()
     }
 
@@ -686,5 +823,71 @@ final class PCodeComposerSession: ObservableObject {
         let textView = editor.textView
         textView.insertText(text, replacementRange: textView.selectedRange())
         focus()
+    }
+}
+
+/// A child started with `posix_spawn` in a process group of its own (which `Process`
+/// cannot do: by the time `setpgid` could run, the child has exec'd), stdout on a
+/// pipe, stderr to a file, stdin from /dev/null, and no other descriptor inherited.
+final class SpawnedChild {
+    let pid: pid_t
+    /// The read end of the child's stdout.
+    let stdout: Int32
+    private(set) var status: Int32?
+
+    init?(argv: [String], environment: [String: String], directory: String, stderrPath: String) {
+        var pipeFDs: [Int32] = [-1, -1]
+        guard pipe(&pipeFDs) == 0 else { return nil }
+        var actions: posix_spawn_file_actions_t?
+        var attributes: posix_spawnattr_t?
+        posix_spawn_file_actions_init(&actions)
+        posix_spawnattr_init(&attributes)
+        defer {
+            posix_spawn_file_actions_destroy(&actions)
+            posix_spawnattr_destroy(&attributes)
+        }
+        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        posix_spawn_file_actions_adddup2(&actions, pipeFDs[1], 1)
+        posix_spawn_file_actions_addopen(&actions, 2, stderrPath, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
+        posix_spawn_file_actions_addchdir_np(&actions, directory)
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT))
+        posix_spawnattr_setpgroup(&attributes, 0)
+        let cArgs = argv.map { strdup($0) } + [nil]
+        let cEnv = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
+        defer {
+            cArgs.forEach { free($0) }
+            cEnv.forEach { free($0) }
+        }
+        var child: pid_t = 0
+        let result = posix_spawn(&child, argv[0], &actions, &attributes, cArgs, cEnv)
+        Darwin.close(pipeFDs[1])
+        guard result == 0 else {
+            Darwin.close(pipeFDs[0])
+            return nil
+        }
+        pid = child
+        stdout = pipeFDs[0]
+    }
+
+    /// Whether the child still runs; reaps it once it has exited.
+    var isRunning: Bool {
+        guard status == nil else { return false }
+        var raw: Int32 = 0
+        let reaped = waitpid(pid, &raw, WNOHANG)
+        if reaped == pid {
+            // WIFEXITED / WEXITSTATUS, which Swift does not import.
+            status = (raw & 0x7f) == 0 ? (raw >> 8) & 0xff : 128 + (raw & 0x7f)
+            return false
+        }
+        return reaped == 0
+    }
+
+    func closePipe() {
+        Darwin.close(stdout)
+        // Reap it later if it outlives us, so it never lingers as a zombie.
+        if isRunning {
+            let pid = self.pid
+            DispatchQueue.global(qos: .utility).async { var raw: Int32 = 0; waitpid(pid, &raw, 0) }
+        }
     }
 }

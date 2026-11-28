@@ -26,10 +26,23 @@ final class PCodeHostRPCClient {
     var onNotify: ((_ method: String, _ args: [Any], _ kwargs: [String: Any]) -> Void)?
     /// A host request; answer it with `reply` or `replyError` using `id`.
     var onRequest: ((_ id: Int, _ method: String, _ args: [Any], _ kwargs: [String: Any]) -> Void)?
-    /// The connection ended: nil when the host closed it, else why it failed.
-    var onClosed: ((String?) -> Void)?
+    /// Why a connection ended.
+    enum Ending: Equatable {
+        /// The socket was not there, or went away: worth connecting again.
+        case lost(String?)
+        /// The host answered and said no (a protocol mismatch, a failed `attach`):
+        /// connecting again gets the same answer.
+        case refused(String)
+    }
+
+    /// The connection ended (not called after `close()`).
+    var onClosed: ((Ending) -> Void)?
 
     private let lock = NSLock()
+    /// Held by a write in progress and by the reader closing the socket, so a write
+    /// never lands on a descriptor number the system has reused. Not held by `close()`,
+    /// whose `shutdown` is what unblocks a stuck write.
+    private let writeLock = NSLock()
     private var fd: Int32 = -1
     private var closed = false
     private var nextID = 1
@@ -73,8 +86,14 @@ final class PCodeHostRPCClient {
         send(Self.encode(["type": "request", "id": id, "method": method, "args": args, "kwargs": kwargs]))
     }
 
+    /// Answer request `id`. A result JSON can't carry is answered with an error instead,
+    /// so the host's request never waits forever.
     func reply(id: Int, result: Any?) {
-        send(Self.encode(["type": "reply", "id": id, "result": result ?? NSNull()]))
+        if let data = Self.encode(["type": "reply", "id": id, "result": result ?? NSNull()]) {
+            send(data)
+        } else {
+            replyError(id: id, type: "TypeError", message: "Pcode.app could not encode its answer.")
+        }
     }
 
     func replyError(id: Int, type: String = "RuntimeError", message: String) {
@@ -88,6 +107,8 @@ final class PCodeHostRPCClient {
         guard let data else { return }
         writer.async { [weak self] in
             guard let self else { return }
+            self.writeLock.lock()
+            defer { self.writeLock.unlock() }
             self.lock.lock()
             let sock = self.closed ? -1 : self.fd
             self.lock.unlock()
@@ -143,7 +164,7 @@ final class PCodeHostRPCClient {
     // MARK: Reader
 
     private func run(socketPath: String) {
-        func finish(_ message: String?) {
+        func finish(_ ending: Ending) {
             lock.lock()
             let waiting = pending
             pending.removeAll()
@@ -153,16 +174,28 @@ final class PCodeHostRPCClient {
             DispatchQueue.main.async { [weak self] in
                 for (_, completion) in waiting { completion(nil, "The session host connection closed.") }
                 // An explicit `close()` reports nothing: the owner already knows.
-                if !wasClosed { self?.onClosed?(message) }
+                if !wasClosed { self?.onClosed?(ending) }
             }
         }
 
         let sock: Int32
         switch PCodeHostLineSocket.connect(path: socketPath) {
         case .success(let value): sock = value
-        case .failure(let error): return finish(error.message)
+        case .failure(let error):
+            // Another user's socket is a refusal; a missing or dead one may come up yet.
+            return finish(error.message.hasPrefix("Refusing") ? .refused(error.message) : .lost(error.message))
         }
-        defer { Darwin.close(sock) }
+        defer {
+            // After any write in progress, and with `fd` cleared first, so no later
+            // write reaches a descriptor number the system hands out again.
+            writeLock.lock()
+            lock.lock()
+            fd = -1
+            closed = true
+            lock.unlock()
+            Darwin.close(sock)
+            writeLock.unlock()
+        }
         lock.lock()
         if closed {
             lock.unlock()
@@ -172,12 +205,12 @@ final class PCodeHostRPCClient {
         lock.unlock()
 
         guard PCodeHostLineSocket.writeAll(sock, Self.helloLine()) else {
-            return finish("Failed to send the session host handshake.")
+            return finish(.lost("Failed to send the session host handshake."))
         }
         var lines = PCodeLineBuffer()
         var chunk = [UInt8](repeating: 0, count: 64 * 1024)
         var handshaken = false
-        var failure: String?
+        var failure: Ending = .lost(nil)
         reading: while true {
             let n = Darwin.read(sock, &chunk, chunk.count)
             if n < 0 {
@@ -186,13 +219,13 @@ final class PCodeHostRPCClient {
             }
             if n == 0 { break }
             guard lines.append(chunk[0..<n]) else {
-                failure = "Host message exceeded maximum line limit."
+                failure = .refused("Host message exceeded maximum line limit.")
                 break
             }
             while let obj = lines.nextObject() {
                 if !handshaken {
                     if let error = Self.handshakeError(obj) {
-                        failure = error
+                        failure = .refused(error)
                         break reading
                     }
                     handshaken = true
@@ -228,7 +261,7 @@ final class PCodeHostRPCClient {
                         self?.onAttached?(welcome)
                     } else {
                         self?.close()
-                        self?.onClosed?(error ?? "The session host did not send its welcome.")
+                        self?.onClosed?(.refused(error ?? "The session host did not send its welcome."))
                     }
                 } else {
                     completion?(result, error)
