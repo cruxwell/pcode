@@ -29,7 +29,14 @@ Tests patch the submodule that defines a name (`pcode.claude_sdk.session_pool`),
 never this package: a re-export is a copy, so patching it changes nothing the
 submodules read. Tuning knobs and pool state are left out of the re-exports for
 that reason.
+
+The `model` names load on first use: `model` imports the Anthropic SDK
+(~80 MB and 3,000+ modules), which a session on another provider never needs,
+while `ClaudeWorkspace` is part of every agent.
 """
+
+import importlib
+from typing import TYPE_CHECKING
 
 from pcode.claude_sdk.cli import CLI_ENV, LOGIN_ENV, cli_path
 from pcode.claude_sdk.errors import (
@@ -42,7 +49,6 @@ from pcode.claude_sdk.errors import (
     failure_hint,
 )
 from pcode.claude_sdk.messages import REPLAY_INTRO, lineage, normalize, replay
-from pcode.claude_sdk.model import PREFIX, ClaudeModel, ClaudeProvider, claude_model
 from pcode.claude_sdk.resume import ForkPoint, ResumeIndex, index_path
 from pcode.claude_sdk.session import (
     SERVER,
@@ -58,6 +64,22 @@ from pcode.claude_sdk.session_pool import (
     shutdown,
 )
 from pcode.claude_sdk.workspace import CWD_SETTING, ClaudeWorkspace
+
+if TYPE_CHECKING:
+    from pcode.claude_sdk.model import PREFIX, ClaudeModel, ClaudeProvider, claude_model
+
+_MODEL_NAMES = frozenset({"PREFIX", "ClaudeModel", "ClaudeProvider", "claude_model"})
+
+
+def __getattr__(name: str):
+    if name in _MODEL_NAMES:
+        return getattr(importlib.import_module("pcode.claude_sdk.model"), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), *_MODEL_NAMES})
+
 
 __all__ = [
     "CLI_ENV",

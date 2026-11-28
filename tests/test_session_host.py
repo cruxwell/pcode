@@ -26,6 +26,7 @@ import pytest
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from pydantic_ai import Agent
+from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from rich.console import Console
 
@@ -240,6 +241,12 @@ class Script:
             yield "Steering received."
         elif prompt == "fail at once":
             raise RuntimeError("provider down")
+        elif prompt == "make a plan":
+            if isinstance(messages[-1].parts[-1], ToolReturnPart):
+                yield "Planned."
+            else:
+                items = '{"items": [{"content": "Inspect", "status": "in_progress"}]}'
+                yield {1: DeltaToolCall(name="write_plan", json_args=items)}
         elif prompt.startswith("hang"):
             yield "Started. "
             await self.gate(prompt).wait()
@@ -3272,6 +3279,65 @@ def test_observe_transcript_streams_history_catchup_and_live_data_only(tmp_path,
             assert refused["error"]["type"] == "PermissionError"
 
             writer.close()
+        finally:
+            await stop_host(host)
+
+    asyncio.run(run())
+
+
+def test_plan_changes_reach_terminals_and_transcript_observers(tmp_path, host_dir):
+    """Pcode.app shows the plan from `plan_changed` and the welcome's `plan`, not tool calls."""
+    from pcode.host import TRANSCRIPT_OBSERVER_VERSION
+    from pcode.host_protocol import dumps, read_message
+
+    async def observe(host):
+        reader, writer = await asyncio.open_unix_connection(str(host.socket))
+        writer.write(dumps({"type": "observe_transcript", "version": TRANSCRIPT_OBSERVER_VERSION}))
+        await writer.drain()
+        return reader, writer, await read_message(reader)
+
+    async def next_plan(reader):
+        while True:
+            msg = await asyncio.wait_for(read_message(reader), timeout=5.0)
+            if msg.get("method") == "plan_changed":
+                return msg["args"][0]
+
+    async def run():
+        host = await start_host("plan1111", tmp_path, Script())
+        try:
+            reader, writer, ready = await observe(host)
+            assert ready["plan"] == []
+            client, view, welcome = await attach(host)
+            assert welcome["plan"] == []
+
+            client.submit("make a plan", "queue")
+            items = await next_plan(reader)
+            assert [(item["content"], item["status"]) for item in items] == [
+                ("Inspect", "in_progress")
+            ]
+            assert {"id", "content", "status", "size", "active_form"} <= items[0].keys()
+            await until(lambda: view.count("plan_changed"))
+            assert [args[0] for name, args, _ in view.calls if name == "plan_changed"] == [items]
+            await until(lambda: view.count("after_turn"))
+
+            # Connecting mid-session gets the current plan in the welcome, and
+            # it is not replayed as a buffered call.
+            late_reader, late_writer, late_ready = await observe(host)
+            assert late_ready["plan"] == items
+            assert "plan_changed" not in [call[0] for call in late_ready["calls"]]
+            late_client, _, late_welcome = await attach(host)
+            assert late_welcome["plan"] == items
+            assert "plan_changed" not in [call[0] for call in late_welcome["calls"]]
+
+            # A new conversation drops the plan.
+            host.controller.new("")
+            assert await next_plan(reader) == []
+            assert host.plan == []
+
+            for w in (writer, late_writer):
+                w.close()
+            await late_client.detach()
+            await client.detach()
         finally:
             await stop_host(host)
 

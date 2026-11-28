@@ -257,3 +257,47 @@ def test_error_report_delegates_while_the_package_is_intact():
     error = ModelAPIError("test:local", "Connection error.")
     assert reported(error) == described(error)
     assert reported(error, unexpected="/diffs failed") == "/diffs failed (ModelAPIError)."
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        (
+            "You've hit your 5-hour limit · resets 12:10am (America/Los_Angeles)"
+            " · out of usage credits"
+        ),
+        "You are out of usage credits for this billing period.",
+        "Your 5-hour limit has been exceeded.",
+        "You've reached your Weekly Limit.",
+        "Usage limit reached; please try again later.",
+    ],
+)
+def test_claude_window_and_credit_limits_classify_as_quota_exhausted(message):
+    from pcode.claude_sdk.errors import ClaudeHTTPError
+    from pcode.diagnostics import quota_exhausted, quota_message
+
+    error = ClaudeHTTPError(
+        429,
+        "claude-opus-5-5",
+        {"type": "error", "error": {"type": "rate_limit", "message": message}},
+    )
+    assert quota_exhausted(error) is True
+    summary = quota_message(error)
+    assert summary is not None
+    assert "Provider quota or credits exhausted" in summary
+    assert "Provider rate limit reached" not in summary
+
+
+def test_generic_429_remains_rate_limit_not_quota_exhausted():
+    from pcode.claude_sdk.errors import ClaudeHTTPError
+    from pcode.diagnostics import quota_exhausted, quota_message
+
+    error = ClaudeHTTPError(
+        429,
+        "claude-opus-5-5",
+        {"type": "error", "error": {"type": "rate_limit", "message": "Too many requests"}},
+    )
+    assert quota_exhausted(error) is False
+    summary = quota_message(error)
+    assert summary is not None
+    assert "Provider rate limit reached (HTTP 429)" in summary

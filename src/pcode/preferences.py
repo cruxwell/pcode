@@ -426,6 +426,14 @@ SETTINGS = {
         description="Run each session in a background host that outlives the terminal; "
         "off runs it inside the terminal until /detach moves it into one",
     ),
+    # Read by Pcode.app when it opens a session pane (`PCodeNativeComposer.enabled`);
+    # PCODE_NATIVE_COMPOSER=1|0 overrides it there.
+    "native_composer": Setting(
+        "on",
+        ("on", "off"),
+        description="Pcode.app: type into a native text box; off runs the terminal editor "
+        "in each session pane instead (new panes only)",
+    ),
     # 0 by default: a stopped host costs nothing, since /attach still lists one
     # with an unseen result and resumes it.
     "session_host_idle_minutes": Setting(

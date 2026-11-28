@@ -856,7 +856,19 @@ struct PCodeSessionInfo: Identifiable, Hashable, Decodable {
 /// One session shown in the workspace: pcode's terminal and its optional bottom shell.
 final class PCodeSessionPane: ObservableObject, Identifiable {
     let id = UUID()
-    let surface: Ghostty.SurfaceView
+    /// The terminal running pcode's editor-only client, or nil in a native-composer pane.
+    ///
+    /// Native-composer panes (`native_composer`, step 3b) run no terminal for the session:
+    /// the host is spawned headless and `composer` talks to it over its socket. Rather than
+    /// keep a hidden terminal so every caller still has a surface, the surface is optional
+    /// and the few things that need "the input" go through `focusInput()` and `composer`.
+    /// The bottom shell split stays a Ghostty surface either way.
+    let surface: Ghostty.SurfaceView?
+    /// The native composer's connection to the session host, when this pane has one.
+    let composer: PCodeComposerSession?
+    /// The most recently mounted transcript of a native pane (a terminal pane's is on its
+    /// surface, `pcodeTranscriptScrollView`), so a live peek scrolls this pane's.
+    weak var transcriptScrollView: PCodeTranscriptScrollView?
     let directory: String
     /// The project folder this pane is grouped under (main checkout for worktrees).
     let projectPath: String
@@ -884,6 +896,20 @@ final class PCodeSessionPane: ObservableObject, Identifiable {
     var lastShownAt = Date()
     /// A `release` request for hibernating this pane is in flight.
     var hibernating = false
+
+    /// What stopping this pane's pcode would lose; nil when it can't tell.
+    var work: PCodePaneWork? {
+        if let composer {
+            guard case .attached = composer.connection else { return nil }
+            let state = composer.state
+            return PCodePaneWork(
+                busy: state.busy, starting: state.startupPending,
+                draft: !(composer.textView?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                queued: state.queuedPrompts.count + composer.outbox.count, jobs: state.jobCount,
+                asidesRunning: state.asidesRunning, asidesReady: state.asidesReady)
+        }
+        return PCodePaneWork(status: surface?.pcodeDock.composerStatus)
+    }
     /// True once pcode has painted its ready UI (dock ready, or fallback timeout).
     @Published private(set) var isReady = false
     @Published private(set) var shell: Ghostty.SurfaceView?
@@ -962,9 +988,24 @@ final class PCodeSessionPane: ObservableObject, Identifiable {
         inspectorState.openFiles()
     }
 
-    init(surface: Ghostty.SurfaceView, directory: String, projectPath: String? = nil, sessionID: String?) {
+    convenience init(surface: Ghostty.SurfaceView, directory: String, projectPath: String? = nil, sessionID: String?) {
+        self.init(surface: surface, composer: nil, directory: directory, projectPath: projectPath, sessionID: sessionID)
+    }
+
+    convenience init(composer: PCodeComposerSession, directory: String, projectPath: String? = nil, sessionID: String?) {
+        self.init(surface: nil, composer: composer, directory: directory, projectPath: projectPath, sessionID: sessionID)
+    }
+
+    private init(
+        surface: Ghostty.SurfaceView?,
+        composer: PCodeComposerSession?,
+        directory: String,
+        projectPath: String?,
+        sessionID: String?
+    ) {
         self.surface = surface
-        surface.pcodeIsSessionPane = true
+        self.composer = composer
+        surface?.pcodeIsSessionPane = true
         self.directory = directory
         self.projectPath = PCodeWorkspace.normalizePath(projectPath ?? directory)
         self.resuming = sessionID != nil
@@ -985,13 +1026,6 @@ final class PCodeSessionPane: ObservableObject, Identifiable {
         self.agentsStore = inspectorBundle.3
         self.commandsStore = inspectorBundle.4
         self.treeStore = inspectorBundle.5
-        titleSubscription = surface.$title.removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] title in
-                guard let self else { return }
-                self.resolver.oscTitle = title
-                self.resolve()
-            }
         hostSubscription = $sessionID
             .combineLatest(PCodeHostWatcher.shared.$statuses)
             .map { sessionID, statuses in sessionID.flatMap { statuses[$0] } }
@@ -1002,6 +1036,46 @@ final class PCodeSessionPane: ObservableObject, Identifiable {
                 self.hostStatus = status
                 if let hostID = status?.hostID { self.lastHostID = hostID }
                 self.resolver.setHost(status)
+                self.resolve()
+            }
+        if let composer {
+            observeComposer(composer)
+        } else if let surface {
+            observeSurface(surface)
+        }
+    }
+
+    /// A native pane: title and activity come from the composer's host state, and it is
+    /// ready at once, since its composer takes typing from the first frame.
+    private func observeComposer(_ composer: PCodeComposerSession) {
+        isReady = true
+        titleSubscription = composer.$state
+            .map(\.sessionTitle)
+            .removeDuplicates()
+            .sink { [weak self] title in
+                guard let self else { return }
+                self.resolver.oscTitle = title
+                self.resolve()
+            }
+        progressSubscription = composer.$state
+            .map { state -> Activity in
+                if state.busy || state.promptState == "running" { return .running }
+                return state.turnOutcome == "failed" ? .failed : .idle
+            }
+            .removeDuplicates()
+            .sink { [weak self] activity in
+                guard let self else { return }
+                self.resolver.setOSCActivity(activity)
+                self.resolve()
+            }
+    }
+
+    private func observeSurface(_ surface: Ghostty.SurfaceView) {
+        titleSubscription = surface.$title.removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] title in
+                guard let self else { return }
+                self.resolver.oscTitle = title
                 self.resolve()
             }
         progressSubscription = surface.$progressReport
@@ -1078,7 +1152,7 @@ final class PCodeSessionPane: ObservableObject, Identifiable {
         readySafetyWork?.cancel()
         readySafetyWork = nil
         isReady = true
-        if surface.pcodeDock.bootCovered { surface.pcodeDock.bootCovered = false }
+        if let surface, surface.pcodeDock.bootCovered { surface.pcodeDock.bootCovered = false }
     }
 
     /// Called when pcode reports its session or host ID: if `pcode;ready` hasn't
@@ -1087,7 +1161,7 @@ final class PCodeSessionPane: ObservableObject, Identifiable {
         // A resumed pane already shows its transcript under a compact boot card:
         // dropping that early would swap in the full-pane terminal for a moment
         // before the dock card. It waits for the dock (or the safety timeout).
-        guard !isReady, readyFallbackWork == nil, !surface.pcodeDock.bootCovered else { return }
+        guard !isReady, readyFallbackWork == nil, let surface, !surface.pcodeDock.bootCovered else { return }
         let work = DispatchWorkItem { [weak self] in
             self?.markReady(via: "session fallback")
         }
@@ -1100,9 +1174,26 @@ final class PCodeSessionPane: ObservableObject, Identifiable {
         [surface, shell].compactMap { $0 }
     }
 
-    /// The surface keys should go to: pcode's editor terminal.
-    var keyboardSurface: Ghostty.SurfaceView {
+    /// The surface keys should go to: pcode's editor terminal (none in a native pane).
+    var keyboardSurface: Ghostty.SurfaceView? {
         surface
+    }
+
+    /// Give the keyboard to whatever takes this pane's typing: the editor terminal or the
+    /// native composer.
+    func focusInput() {
+        if let surface {
+            Ghostty.moveFocus(to: surface)
+        } else {
+            composer?.focus()
+        }
+    }
+
+    /// Whether `view` is (inside) one of the views that take this pane's typing.
+    func ownsInput(_ view: NSView) -> Bool {
+        if surfaces.contains(where: { view === $0 || view.isDescendant(of: $0) }) { return true }
+        guard let text = composer?.textView else { return false }
+        return view === text || view.isDescendant(of: text)
     }
 
     /// Worktree directory name when this pane runs in a worktree under `projectPath`.
@@ -1163,6 +1254,44 @@ struct PCodeHostedSession: Identifiable, Equatable {
         if host.isWorking { return .running }
         if host.outcome == "failed" { return .failed }
         return .idle
+    }
+}
+
+/// What a pane has going that stopping its pcode would lose, from its native
+/// composer or its terminal's status strip (`pcode;composer;...`).
+struct PCodePaneWork: Equatable {
+    var busy = false
+    var starting = false
+    var draft = false
+    var queued = 0
+    var jobs = 0
+    var asidesRunning = 0
+    var asidesReady = 0
+
+    var isQuiet: Bool {
+        !busy && !starting && !draft && queued == 0 && jobs == 0 && asidesRunning == 0 && asidesReady == 0
+    }
+
+    /// From a terminal pane's status strip; nil from a pcode too old to report a draft.
+    init?(status: PCodeComposerStatus?) {
+        guard let status, let draft = status.draft else { return nil }
+        self.init(
+            busy: status.busy, starting: status.starting, draft: draft,
+            queued: status.queued + status.steeringPending, jobs: status.jobs,
+            asidesRunning: status.btwRunning, asidesReady: status.btwReady)
+    }
+
+    init(
+        busy: Bool = false, starting: Bool = false, draft: Bool = false, queued: Int = 0,
+        jobs: Int = 0, asidesRunning: Int = 0, asidesReady: Int = 0
+    ) {
+        self.busy = busy
+        self.starting = starting
+        self.draft = draft
+        self.queued = queued
+        self.jobs = jobs
+        self.asidesRunning = asidesRunning
+        self.asidesReady = asidesReady
     }
 }
 
@@ -1426,7 +1555,7 @@ final class PCodeWorkspace: ObservableObject {
                   self.window?.isKeyWindow == true,
                   let pane = self.selectedPane
             else { return }
-            DispatchQueue.main.async { Ghostty.moveFocus(to: pane.keyboardSurface) }
+            DispatchQueue.main.async { pane.focusInput() }
         }
         let center = NotificationCenter.default
         observers.append(center.addObserver(
@@ -1467,22 +1596,7 @@ final class PCodeWorkspace: ObservableObject {
         ) { [weak self] note in
             guard let self, let view = note.object as? Ghostty.SurfaceView,
                   let pane = self.panes.first(where: { $0.surface === view }) else { return }
-            let old = pane.sessionID
-            pane.sessionID = view.pcodeSession
-            // `/new` or `/resume` swapped sessions: the previous one's response time and label no longer apply.
-            if let old, old != view.pcodeSession {
-                pane.clearLastResponseDate()
-                pane.openedLabel = nil
-                if view.pcodeSession == nil { pane.resetSessionStartedAt() }
-            }
-            pane.hostID = view.pcodeHost
-            if let host = view.pcodeHost { pane.lastHostID = host }
-            pane.noteSessionReported()
-            self.sessionIDChanged(pane, from: old)
-            self.syncDetachedHostStatuses()
-            self.saveOpen()
-            if pane.id == self.selected { self.saveSelected() }
-            self.scheduleHistoryReload()
+            self.sessionReported(pane, sessionID: view.pcodeSession, hostID: view.pcodeHost)
         })
         hostWatcherSubscription = PCodeHostWatcher.shared.$statuses
             .receive(on: DispatchQueue.main)
@@ -1497,6 +1611,27 @@ final class PCodeWorkspace: ObservableObject {
         }
         // A backstop, not a deadline: let the system batch its wakeups.
         reconcileTimer?.tolerance = 1
+    }
+
+    /// pcode reported the session and host a pane holds: from its terminal
+    /// (`pcode;session;...`), or from a native composer's host.
+    func sessionReported(_ pane: PCodeSessionPane, sessionID: String?, hostID: String?) {
+        let old = pane.sessionID
+        pane.sessionID = sessionID
+        // `/new` or `/resume` swapped sessions: the previous one's response time and label no longer apply.
+        if let old, old != sessionID {
+            pane.clearLastResponseDate()
+            pane.openedLabel = nil
+            if sessionID == nil { pane.resetSessionStartedAt() }
+        }
+        pane.hostID = hostID
+        if let hostID { pane.lastHostID = hostID }
+        pane.noteSessionReported()
+        sessionIDChanged(pane, from: old)
+        syncDetachedHostStatuses()
+        saveOpen()
+        if pane.id == selected { saveSelected() }
+        scheduleHistoryReload()
     }
 
     private var reconcileTimer: Timer?
@@ -1519,7 +1654,9 @@ final class PCodeWorkspace: ObservableObject {
     @MainActor
     func reconcilePanes(now: Date = Date()) {
         let dead = panes.filter { pane in
-            now.timeIntervalSince(pane.createdAt) > Self.reconcileGrace && Self.processGone(pane.surface)
+            // A native pane has no terminal process to judge; its composer watches the host.
+            guard let surface = pane.surface else { return false }
+            return now.timeIntervalSince(pane.createdAt) > Self.reconcileGrace && Self.processGone(surface)
         }
         dead.forEach(close)
         hibernateIdlePanes(now: now)
@@ -1545,25 +1682,21 @@ final class PCodeWorkspace: ObservableObject {
     }
 
     /// Whether a pane out of sight should be hibernated: nothing it shows or
-    /// runs would be lost. Pure, for tests.
+    /// runs would be lost. `work` is nil when the pane can't tell. Pure, for tests.
     static func shouldHibernate(
         hiddenFor: TimeInterval,
         after: TimeInterval,
         ready: Bool,
         activity: PCodeSessionPane.Activity,
         hostState: String?,
-        composer: PCodeComposerStatus?,
+        work: PCodePaneWork?,
         hasShell: Bool,
         turns: Int
     ) -> Bool {
         guard after > 0, hiddenFor >= after, ready, activity == .idle, !hasShell else { return false }
         // A session with no turn would be deleted by its host on the way out.
         guard turns > 0, hostState == "idle" else { return false }
-        // No status, or one from a pcode too old to report a draft: can't tell.
-        guard let composer, composer.draft != nil else { return false }
-        return !composer.busy && !composer.starting && !composer.hasDraft
-            && composer.queued == 0 && composer.steeringPending == 0 && composer.jobs == 0
-            && composer.btwRunning == 0 && composer.btwReady == 0
+        return work?.isQuiet == true
     }
 
     /// Stop pcode in panes left idle out of sight, keeping them listed as open.
@@ -1584,7 +1717,7 @@ final class PCodeWorkspace: ObservableObject {
                     ready: pane.isReady,
                     activity: pane.activity,
                     hostState: pane.hostStatus?.state,
-                    composer: pane.surface.pcodeDock.composerStatus,
+                    work: pane.work,
                     hasShell: pane.shell != nil,
                     turns: info(for: pane)?.turns ?? 0)
             else { continue }
@@ -1611,8 +1744,10 @@ final class PCodeWorkspace: ObservableObject {
             self.dormant.append(info)
             self.peek.clearHover(paneID: pane.id)
             self.panes.remove(at: index)
-            // Out of `panes` first: its terminal's close notification finds no pane.
-            PCode.retire(pane.surface)
+            // As `close` lets go of a pane, but leaving its host to `release`.
+            // Out of `panes` first: a terminal's close notification finds no pane.
+            if let surface = pane.surface { PCode.retire(surface) }
+            pane.composer?.stop()
             self.saveOpen()
         }
     }
@@ -1745,6 +1880,8 @@ final class PCodeWorkspace: ObservableObject {
         var ready: Set<String> = []
         var hosted: Set<String> = []
         var openElsewhere: Set<String> = []
+        var liveHosts: [(id: String, pid: Int32, sessionID: String)] = []
+        let savedHosts = Self.savedHostPanes()
         steps.enter()
         DispatchQueue.global(qos: .userInitiated).async {
             // Sessions a Restart Pcode just moved may still be on their way
@@ -1759,6 +1896,7 @@ final class PCodeWorkspace: ObservableObject {
             // What `reopen` checks, read here rather than on the main thread.
             hosted = PCodeSessionInfo.hosted()
             openElsewhere = Set(saved.filter { !hosted.contains($0) && PCodeSessionInfo.isOpen($0) })
+            if !savedHosts.isEmpty { liveHosts = PCodeSessionInfo.liveHostEntries() }
             steps.leave()
         }
         steps.notify(queue: .main) { [weak self] in
@@ -1774,6 +1912,7 @@ final class PCodeWorkspace: ObservableObject {
                 self.reopen(
                     saved: saved, marked: Set(marked), ready: ready, all: all, selectedID: selectedID,
                     hosted: hosted, openElsewhere: openElsewhere)
+                self.reopenHostPanes(savedHosts, live: liveHosts)
                 PCodeStartupTrace.mark("reopen done (\(self.panes.count) panes)")
             }
             // Restarted sessions' hosts registered during the wait: reload
@@ -1783,6 +1922,53 @@ final class PCodeWorkspace: ObservableObject {
             } else {
                 self.reloadHistory(then: reopen)
             }
+        }
+    }
+
+    /// Native-composer panes whose session had no id yet (no turn had run) are saved by
+    /// their host instead, so a restart reattaches them rather than orphaning the host.
+    private static let openHostsKey = "PCodeWorkspaceOpenHosts"
+
+    struct SavedHostPane: Codable, Equatable {
+        let hostID: String
+        let directory: String
+        let projectPath: String
+    }
+
+    static func savedHostPanes() -> [SavedHostPane] {
+        guard let data = UserDefaults.standard.data(forKey: openHostsKey) else { return [] }
+        return (try? JSONDecoder().decode([SavedHostPane].self, from: data)) ?? []
+    }
+
+    /// The saved host panes still worth reopening: native panes are on, their host is
+    /// alive, and it holds no session that is open already.
+    static func reopenableHostPanes(
+        _ saved: [SavedHostPane], live: [(id: String, pid: Int32, sessionID: String)],
+        openSessions: Set<String>, nativeEnabled: Bool
+    ) -> [(pane: SavedHostPane, sessionID: String?)] {
+        guard nativeEnabled else { return [] }
+        return saved.compactMap { pane in
+            guard PCode.valid(pane.hostID, length: 8...8, hex: true),
+                  let entry = live.first(where: { $0.id == pane.hostID }) else { return nil }
+            if !entry.sessionID.isEmpty, openSessions.contains(entry.sessionID) { return nil }
+            return (pane, entry.sessionID.isEmpty ? nil : entry.sessionID)
+        }
+    }
+
+    private func reopenHostPanes(_ saved: [SavedHostPane], live: [(id: String, pid: Int32, sessionID: String)]) {
+        let reopenable = Self.reopenableHostPanes(
+            saved, live: live, openSessions: Set(panes.compactMap(\.sessionID)),
+            nativeEnabled: PCodeNativeComposer.enabled)
+        for (savedPane, sessionID) in reopenable {
+            let pane = makeNativePane(
+                directory: savedPane.directory, projectPath: savedPane.projectPath,
+                sessionID: sessionID, existingHostID: savedPane.hostID)
+            adopt(pane)
+            panes.append(pane)
+        }
+        if !reopenable.isEmpty {
+            saveOpen()
+            if selected == nil, let first = panes.first { select(first) }
         }
     }
 
@@ -2259,12 +2445,10 @@ final class PCodeWorkspace: ObservableObject {
             launcherFocusTrigger += 1
             return
         }
-        let target = pane.keyboardSurface
-        if let responder = window.firstResponder as? NSView,
-           pane.surfaces.contains(where: { responder === $0 || responder.isDescendant(of: $0) }) {
+        if let responder = window.firstResponder as? NSView, pane.ownsInput(responder) {
             return
         }
-        DispatchQueue.main.async { Ghostty.moveFocus(to: target) }
+        DispatchQueue.main.async { pane.focusInput() }
     }
 
     func sidebarWindowDidResignKey() {
@@ -2619,7 +2803,7 @@ final class PCodeWorkspace: ObservableObject {
     func dismissDirectoryPicker() {
         showingDirectoryPicker = false
         if let pane = selectedPane {
-            DispatchQueue.main.async { Ghostty.moveFocus(to: pane.keyboardSurface) }
+            DispatchQueue.main.async { pane.focusInput() }
         }
     }
 
@@ -2941,14 +3125,15 @@ final class PCodeWorkspace: ObservableObject {
         guard let window, detailSize.width > 0, detailSize.height > 0 else { return }
         let scale = window.backingScaleFactor
         let shown = selectedPane
-        let shownCard = shown?.surface.existingPCodeDrawer?.isOpen == true
+        let shownCard = shown?.surface?.existingPCodeDrawer?.isOpen == true
             ? nil
             : Self.pixels(shown?.surface)
         for pane in panes where pane.id != selected {
-            let cell = pane.surface.cellSize.height > 0 ? pane.surface.cellSize.height : 18
+            guard let surface = pane.surface else { continue }  // Native: no terminal to size.
+            let cell = surface.cellSize.height > 0 ? surface.cellSize.height : 18
             let heightPx = UInt32(max(1, PCodeDock.cardHeight(rows: PCodeDock.gridRows, cell: cell) * scale))
             let card: (UInt32, UInt32)
-            if let drawer = pane.surface.existingPCodeDrawer, drawer.isOpen {
+            if let drawer = surface.existingPCodeDrawer, drawer.isOpen {
                 let h = PCodeDock.horizontalLayout(
                     in: detailSize.width,
                     drawerOpen: true,
@@ -2958,7 +3143,7 @@ final class PCodeWorkspace: ObservableObject {
                 let h = PCodeDock.horizontalLayout(in: detailSize.width)
                 card = shownCard ?? (UInt32(max(1, h.cardWidth * scale)), heightPx)
             }
-            Self.setSize(pane.surface, card, scale: scale)
+            Self.setSize(surface, card, scale: scale)
         }
     }
 
@@ -3041,6 +3226,8 @@ final class PCodeWorkspace: ObservableObject {
 
     func select(_ pane: PCodeSessionPane) {
         peek.dismiss(restoreFocus: false)
+        // The composer being left keeps its unsent text as a draft (`drafts.py`).
+        if selected != pane.id { selectedPane?.composer?.saveDrafts() }
         selected = pane.id
         saveSelected()
         if isViewed(pane) { markSeen(pane) }
@@ -3048,7 +3235,7 @@ final class PCodeWorkspace: ObservableObject {
         // The pane just hidden keeps its size; the others follow the shown one.
         schedulePresize()
         // After SwiftUI has put the pane's views in the window.
-        DispatchQueue.main.async { Ghostty.moveFocus(to: pane.keyboardSurface) }
+        DispatchQueue.main.async { pane.focusInput() }
     }
 
     /// Maximum automatic host relaunches before showing the fallback error card with Reopen.
@@ -3159,7 +3346,7 @@ final class PCodeWorkspace: ObservableObject {
         fresh.openedLabel = pane.openedLabel
         fresh.unseen = pane.unseen
         fresh.hostRelaunchAttempts = attempt
-        fresh.surface.pcodeHostRelaunchAttempt = attempt
+        fresh.surface?.pcodeHostRelaunchAttempt = attempt
         MainActor.assumeIsolated {
             fresh.inspectorState.isOpen = pane.inspectorState.isOpen
             fresh.inspectorState.activeTab = pane.inspectorState.activeTab
@@ -3182,7 +3369,8 @@ final class PCodeWorkspace: ObservableObject {
         peek.clearHover(paneID: pane.id)
         let wasSelected = (selected == pane.id)
         panes[index] = fresh
-        PCode.retire(pane.surface)
+        if let surface = pane.surface { PCode.retire(surface) }
+        pane.composer?.stop()
         schedulePresize()
         if wasSelected {
             select(fresh)
@@ -3195,7 +3383,8 @@ final class PCodeWorkspace: ObservableObject {
     /// Ask to close `pane`: pcode's terminal reports back through the close
     /// notification, which confirms first if pcode is still running.
     func requestClose(_ pane: PCodeSessionPane) {
-        guard let surface = pane.surface.surface else { return close(pane) }
+        // A native pane has no terminal to ask: closing it just stops its host.
+        guard let surface = pane.surface?.surface else { return close(pane) }
         ghostty.requestClose(surface: surface)
     }
 
@@ -3233,7 +3422,8 @@ final class PCodeWorkspace: ObservableObject {
         let hostID = pane.hostID ?? pane.lastHostID ?? pane.hostStatus?.hostID ?? pane.launchHostID
         let sessionID = pane.sessionID
         if let shell = pane.shell { PCode.retire(shell) }
-        PCode.retire(pane.surface)
+        if let surface = pane.surface { PCode.retire(surface) }
+        pane.composer?.stop()
         if shouldStopHost, Self.stopHost(hostID: hostID, sessionID: sessionID).isEmpty,
            let launchHostID = pane.launchHostID {
             // Closed before its host registered: it may still be importing, so
@@ -3324,8 +3514,11 @@ final class PCodeWorkspace: ObservableObject {
         }
         pane.shellVisible.toggle()
         syncOcclusion()
-        let target = pane.shellVisible ? pane.shell! : pane.keyboardSurface
-        DispatchQueue.main.async { Ghostty.moveFocus(to: target) }
+        if pane.shellVisible, let shell = pane.shell {
+            DispatchQueue.main.async { Ghostty.moveFocus(to: shell) }
+        } else {
+            DispatchQueue.main.async { pane.focusInput() }
+        }
     }
 
     private func makePane(
@@ -3334,7 +3527,6 @@ final class PCodeWorkspace: ObservableObject {
         projectPath: String? = nil,
         sessionID: String?
     ) -> PCodeSessionPane? {
-        guard let app = ghostty.app else { return nil }
         let fm = FileManager.default
         let isDir: (String) -> Bool = { path in
             var flag: ObjCBool = false
@@ -3353,6 +3545,10 @@ final class PCodeWorkspace: ObservableObject {
             resolvedDir = home
             resolvedProject = home
         }
+        if PCodeNativeComposer.enabled {
+            return makeNativePane(directory: resolvedDir, projectPath: resolvedProject, sessionID: sessionID)
+        }
+        guard let app = ghostty.app else { return nil }
         var config = Ghostty.SurfaceConfiguration()
         let launch = PCodeWorkspaceMode.launchConfig(args, directory: resolvedDir)
         config.command = launch.command
@@ -3389,6 +3585,29 @@ final class PCodeWorkspace: ObservableObject {
         return pane
     }
 
+    /// A native-composer pane: no terminal; the host is spawned headless and the composer
+    /// attaches to it over its socket (`PCodeComposerSession`).
+    private func makeNativePane(
+        directory: String, projectPath: String, sessionID: String?, existingHostID: String? = nil
+    ) -> PCodeSessionPane {
+        let launchHostID = existingHostID ?? Self.newHostID()
+        let session = PCodeComposerSession(
+            directory: directory, resumeSessionID: sessionID, launchHostID: launchHostID,
+            existingHostID: existingHostID)
+        let pane = PCodeSessionPane(composer: session, directory: directory, projectPath: projectPath, sessionID: sessionID)
+        pane.launchHostID = launchHostID
+        session.onSessionReported = { [weak self, weak pane] sessionID, hostID in
+            guard let self, let pane else { return }
+            self.sessionReported(pane, sessionID: sessionID, hostID: hostID)
+        }
+        session.onCloseRequested = { [weak self, weak pane] in
+            guard let self, let pane else { return }
+            self.close(pane)
+        }
+        session.start()
+        return pane
+    }
+
     /// A fresh host id in pcode's format (`new_host_id`: 8 lowercase hex digits).
     static func newHostID() -> String {
         String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8)).lowercased()
@@ -3400,7 +3619,7 @@ final class PCodeWorkspace: ObservableObject {
     private var allLiveSurfaces: [Ghostty.SurfaceView] {
         var result = panes.flatMap(\.surfaces)
         for pane in panes {
-            if let overlay = pane.surface.existingPCodePopup?.slot?.surface,
+            if let overlay = pane.surface?.existingPCodePopup?.slot?.surface,
                !result.contains(where: { $0 === overlay }) {
                 result.append(overlay)
             }
@@ -3456,7 +3675,7 @@ final class PCodeWorkspace: ObservableObject {
             pane.shellVisible = false
             pane.setShell(nil)
             view.freeSurface()
-            Ghostty.moveFocus(to: pane.keyboardSurface)
+            pane.focusInput()
             return
         }
         guard let pane = panes.first(where: { $0.surface === view }) else { return }
@@ -3475,6 +3694,12 @@ final class PCodeWorkspace: ObservableObject {
     private func saveOpen() {
         guard !restarting else { return }
         UserDefaults.standard.set(panes.compactMap(\.sessionID) + dormant.map(\.id), forKey: Self.openKey)
+        let hostPanes = panes.compactMap { pane -> SavedHostPane? in
+            guard pane.sessionID == nil, let composer = pane.composer,
+                  let hostID = composer.hostID ?? pane.hostID else { return nil }
+            return SavedHostPane(hostID: hostID, directory: pane.directory, projectPath: pane.projectPath)
+        }
+        UserDefaults.standard.set(try? JSONEncoder().encode(hostPanes), forKey: Self.openHostsKey)
     }
 
     /// Remember the shown session, for `restore` to show again.
@@ -5255,6 +5480,8 @@ private struct PCodePaneStartupOverlay: View {
 struct PCodeSessionPaneView: View {
     @ObservedObject var pane: PCodeSessionPane
     var showInspector = true
+    /// False for a live peek: a native composer stays with the pane that owns it.
+    var interactive = true
     @EnvironmentObject var ghostty: Ghostty.App
     /// The shell's height, set by dragging its top edge; shared by every session.
     @AppStorage("PCodeWorkspaceShellHeight") private var shellHeight: Double = 200
@@ -5278,9 +5505,13 @@ struct PCodeSessionPaneView: View {
             let maxShell = max(Self.minShell, geometry.size.height - Self.minSession)
             VStack(spacing: 0) {
                 ZStack {
-                    Ghostty.InspectableSurface(surfaceView: pane.surface, isSplit: false)
-                    PCodeSurfaceOverlay(surfaceView: pane.surface)
-                    PCodePaneStartupOverlay(pane: pane, surface: pane.surface, dock: pane.surface.pcodeDock)
+                    if let surface = pane.surface {
+                        Ghostty.InspectableSurface(surfaceView: surface, isSplit: false)
+                        PCodeSurfaceOverlay(surfaceView: surface)
+                        PCodePaneStartupOverlay(pane: pane, surface: surface, dock: surface.pcodeDock)
+                    } else if let composer = pane.composer {
+                        PCodeNativeSessionPaneContent(pane: pane, session: composer, interactive: interactive)
+                    }
                 }
                 if pane.shellVisible, let shell = pane.shell {
                     handle(maxShell: maxShell)

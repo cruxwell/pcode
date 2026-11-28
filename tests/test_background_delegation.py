@@ -283,3 +283,173 @@ def test_upstream_internals_this_relies_on():
     assert "_next_node" in CallToolsNode.__dataclass_fields__
     assert "_event_stream_buffer" in RunContext.__dataclass_fields__
     assert callable(dispatch_event_stream)
+
+
+def test_abandoned_message_formats_rich_entries_and_preserves_plain_strings():
+    from pcode.background_delegation import abandoned_message
+
+    plain = abandoned_message(["call-1", "call-2"])
+    assert "The background delegation call-1, call-2 was stopped before it reported" in plain
+    assert "Delegate again if you still need it" in plain
+
+    resumable = abandoned_message(
+        [
+            {
+                "task_id": "call-3",
+                "worker_id": "w2",
+                "purpose": "fix parser",
+                "workspace_mode": "shared",
+                "resumable": True,
+                "worktree_task_id": "",
+                "detached": True,
+            }
+        ]
+    )
+    assert "worker w2 (fix parser)" in resumable
+    assert "delegate_task(continue_worker='w2', task=...)" in resumable
+
+    isolated = abandoned_message(
+        [
+            {
+                "task_id": "call-4",
+                "worker_id": "w3",
+                "purpose": "",
+                "workspace_mode": "isolated",
+                "resumable": False,
+                "worktree_task_id": "deadbeef",
+                "detached": False,
+            }
+        ]
+    )
+    assert "worker w3" in isolated
+    assert "deadbeef" in isolated
+    assert "task-deadbeef" in isolated
+    assert "task_worktree(action='list')" in isolated
+
+    unresumable = abandoned_message(
+        [
+            {
+                "task_id": "call-5",
+                "worker_id": "w4",
+                "purpose": "quick check",
+                "workspace_mode": "shared",
+                "resumable": False,
+                "worktree_task_id": "",
+                "detached": True,
+            }
+        ]
+    )
+    assert "worker w4 (quick check)" in unresumable
+    assert "Delegate again if you still need it" in unresumable
+    assert "continue_worker" not in unresumable
+
+
+@pytest.mark.parametrize("background", [False, True])
+def test_cancelled_worker_abandoned_delegation_persists_across_restore_and_navigate(
+    tmp_path, background
+):
+    from pcode.agent import create_coder
+    from pcode.sessions import SavedSession
+
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "notes.txt").write_text("NOTE CONTENT\n")
+    sessions_root = tmp_path / "sessions"
+
+    blocked = asyncio.Event()
+    requests: list[str] = []
+
+    def make_runtime(session):
+        async def model(messages, info):
+            if "task_worktree" in {t.name for t in info.function_tools}:
+                text = last_request_text(messages)
+                requests.append(text)
+                if "Continue" in text or "delegate_task(continue_worker='w1'" in text:
+                    yield "Recovered"
+                elif "Started in the background" in text:
+                    yield "Waiting on worker"
+                else:
+                    args = {
+                        "agent_name": "worker",
+                        "task": "Read notes",
+                        "purpose": "survey notes",
+                        "run_in_background": background,
+                    }
+                    yield {
+                        0: DeltaToolCall(
+                            name="delegate_task",
+                            json_args=json.dumps(args),
+                            tool_call_id="call-w1",
+                        )
+                    }
+            else:
+                done = {
+                    p.tool_name for m in messages for p in m.parts if isinstance(p, ToolReturnPart)
+                }
+                if "read_file" in done:
+                    blocked.set()
+                    await asyncio.Event().wait()
+                    yield "Unreachable"
+                else:
+                    yield {
+                        0: DeltaToolCall(
+                            name="read_file",
+                            json_args=json.dumps({"path": "notes.txt"}),
+                            tool_call_id="read-1",
+                        )
+                    }
+
+        return AgentRuntime(
+            Agent(FunctionModel(stream_function=model), capabilities=[create_coder(work)]),
+            session,
+        )
+
+    async def scenario():
+        saved = SavedSession.create("test:local", work, sessions_root)
+        identity = saved.info.id
+        rt1 = make_runtime(saved)
+        try:
+            task = asyncio.create_task(_collect(rt1.stream("Start")))
+            await asyncio.wait_for(blocked.wait(), 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            cancelled_run_id = rt1.tree.active
+            assert len(rt1.context.abandoned_delegations) == 1
+            entry = rt1.context.abandoned_delegations[0]
+            assert isinstance(entry, dict)
+            assert entry["worker_id"] == "w1"
+            assert entry["purpose"] == "survey notes"
+            assert entry["workspace_mode"] == "shared"
+            assert entry["resumable"] is True
+            assert entry["detached"] is background
+        finally:
+            saved.close()
+
+        worker_disk = json.loads((saved.directory / "workers" / "w1.json").read_text())
+        assert worker_disk["status"] == "stopped"
+        assert worker_disk["report"] == "Interrupted before it reported."
+        assert worker_disk["model"]
+        assert worker_disk["messages"]
+
+        reopened = SavedSession.open(identity, sessions_root)
+        rt2 = make_runtime(reopened)
+        try:
+            await rt2.restore()
+            assert rt2.context.abandoned_delegations == [entry]
+
+            await _collect(rt2.stream("Continue"))
+            assert "worker w1 (survey notes)" in requests[-1]
+            assert "delegate_task(continue_worker='w1', task=...)" in requests[-1]
+            assert rt2.context.abandoned_delegations == []
+
+            # Navigating back to the cancelled turn re-seeds abandoned_delegations;
+            # navigating to conversation start clears them.
+            await rt2.navigate(cancelled_run_id)
+            assert rt2.context.abandoned_delegations == [entry]
+            await rt2.navigate(None)
+            assert rt2.context.abandoned_delegations == []
+        finally:
+            reopened.close()
+
+    asyncio.run(scenario())

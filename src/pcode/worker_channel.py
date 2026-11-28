@@ -60,6 +60,7 @@ SAVED_FIELDS = (
     "purpose",
     "plan_step",
     "workspace_mode",
+    "worktree_task_id",
     "model",
     "status",
     "report",
@@ -153,6 +154,7 @@ class WorkerHandle:
     purpose: str = ""
     plan_step: str = ""
     workspace_mode: str = "shared"
+    worktree_task_id: str = ""
     model: str = ""
     # running, done, failed or stopped.
     status: str = "running"
@@ -216,6 +218,8 @@ class WorkerHandle:
             "review": self.review,
             "waiting_on_answer": self.question is not None,
         }
+        if self.worktree_task_id:
+            info["worktree_task_id"] = self.worktree_task_id
         if self.running and self.started_at is not None:
             now = monotonic()
             quiet = round(now - (self.progressed_at or self.started_at))
@@ -338,8 +342,7 @@ class WorkerHub:
             logger.warning("Could not save worker %s to %s", handle.id, path, exc_info=True)
             temporary.unlink(missing_ok=True)
 
-    def _load(self, worker_id: str) -> WorkerHandle | None:
-        """A worker this session saved, back in memory; None if there is none."""
+    def _read_saved(self, worker_id: str, *, include_messages: bool = True) -> WorkerHandle | None:
         if self._directory is None or not WORKER_ID.fullmatch(worker_id):
             return None
         path = self._directory / f"{worker_id}.json"
@@ -347,7 +350,11 @@ class WorkerHub:
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            messages = ModelMessagesTypeAdapter.validate_python(data.get("messages") or [])
+            messages = (
+                ModelMessagesTypeAdapter.validate_python(data.get("messages") or [])
+                if include_messages
+                else []
+            )
             handle = WorkerHandle(**{name: data[name] for name in SAVED_FIELDS if name in data})
         except FileNotFoundError:
             return None
@@ -358,12 +365,24 @@ class WorkerHub:
             return None
         handle.messages = list(messages)
         handle.directory = self._directory
+        return handle
+
+    def _load(self, worker_id: str) -> WorkerHandle | None:
+        """A worker this session saved, back in memory; None if there is none."""
+        handle = self._read_saved(worker_id, include_messages=True)
+        if handle is None:
+            return None
         # Its earlier tokens were spent before this process; only new ones count.
         # Evened out again when it is trimmed or forgotten.
         self._trimmed_tokens -= handle.tokens
         self._handles[handle.id] = handle
         self._trim(keep=handle)
         return handle
+
+    def saved_summary(self, worker_id: str) -> dict[str, Any] | None:
+        """Summary of a saved-on-disk worker without loading its messages into memory."""
+        handle = self._read_saved(worker_id, include_messages=False)
+        return handle.summary() if handle is not None else None
 
     def _saved_ids(self) -> list[str]:
         if self._directory is None:
@@ -598,17 +617,22 @@ def report_text(result: Any) -> str:
 
 
 def resume_hint(handle: WorkerHandle) -> str:
-    """What a failed or stopped worker's result adds when `continue_worker` can resume it.
+    """Guidance added to a failed or stopped worker's result when it can be resumed or inspected.
 
     Only promised when true: an isolated worker is its branch, and an Antigravity
     worker's session ends with the failure (its tools ran inside one model call,
     so pcode's history misses what they did).
     """
-    if (
-        handle.workspace_mode == "isolated"
-        or not handle.messages
-        or handle.worker_model is not None
-    ):
+    if handle.workspace_mode == "isolated":
+        if handle.worktree_task_id:
+            return (
+                f" Worker {handle.id} ran in an isolated worktree (task_id="
+                f"'{handle.worktree_task_id}', branch 'task-{handle.worktree_task_id}'); "
+                "its partial work is preserved there. Inspect it with "
+                "task_worktree(action='list')."
+            )
+        return ""
+    if not handle.messages or handle.worker_model is not None:
         return ""
     return (
         f" Worker {handle.id} kept its history up to where it stopped: resume it with "

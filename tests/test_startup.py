@@ -72,6 +72,28 @@ assert asyncio.run(_stopping_provider_processes(editor())) == 'done'
     )
 
 
+def test_agent_stack_does_not_import_unused_provider_sdks():
+    # Every session host loads these; the Anthropic SDK alone is ~80 MB per
+    # host, and the OpenAI one ~50 MB, for sessions that never use them.
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+import pcode.agent, pcode.live, pcode.output_limits, pcode.claude_sdk
+from pcode.models import active_providers
+active_providers('antigravity:gemini-4-neon')
+for name in ('anthropic', 'openai', 'pydantic_ai.models.anthropic', 'pcode.claude_sdk.model'):
+    assert name not in sys.modules, name
+""",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_provider_shutdown_wrapper_stops_loaded_providers(monkeypatch):
     from types import SimpleNamespace
 

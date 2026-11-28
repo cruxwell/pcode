@@ -374,9 +374,10 @@ struct PCodeInspectorSplit<MainContent: View>: View {
 
     private func actions(isOverlay: Bool) -> PCodeInspectorActions {
         let surface = pane.surface
+        let composer = pane.composer
         let directory = changesStore.sessionDirectory ?? pane.directory
         let sessionID = pane.sessionID
-        let hostID = surface.pcodeHost
+        let hostID = surface?.pcodeHost
             ?? pane.hostID
             ?? pane.hostStatus?.hostID
             ?? pane.lastHostID
@@ -391,8 +392,12 @@ struct PCodeInspectorSplit<MainContent: View>: View {
                 if isOverlay {
                     state.close()
                 }
-                surface.surfaceModel?.sendText(text)
-                Ghostty.moveFocus(to: surface)
+                if let surface {
+                    surface.surfaceModel?.sendText(text)
+                    Ghostty.moveFocus(to: surface)
+                } else {
+                    composer?.insert(text)
+                }
             },
             openInEditor: { path, line in
                 let resolved = Self.resolvePath(path, relativeTo: directory)
@@ -513,7 +518,7 @@ struct PCodeInspectorSplit<MainContent: View>: View {
                         .ignoresSafeArea()
                         .onTapGesture {
                             inspectorState.close()
-                            Ghostty.moveFocus(to: pane.keyboardSurface)
+                            pane.focusInput()
                         }
 
                     ZStack(alignment: .leading) {
@@ -547,7 +552,7 @@ struct PCodeInspectorSplit<MainContent: View>: View {
                         inspectorState.isExpanded = false
                     } else {
                         inspectorState.close()
-                        Ghostty.moveFocus(to: pane.keyboardSurface)
+                        pane.focusInput()
                     }
                 }
             )

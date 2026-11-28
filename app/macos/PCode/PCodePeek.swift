@@ -673,20 +673,24 @@ final class PCodePeekController: ObservableObject {
 /// Transparent overlay that forwards scroll-wheel events to a live-peeked session's
 /// transcript scroll view while blocking mouse clicks from stealing focus or sending input.
 private struct PCodePeekScrollShield: NSViewRepresentable {
-    let targetSurface: Ghostty.SurfaceView
+    let pane: PCodeSessionPane
 
     func makeNSView(context: Context) -> ShieldView {
         let view = ShieldView()
-        view.targetSurface = targetSurface
+        view.targetSurface = pane.surface
+        view.pane = pane
         return view
     }
 
     func updateNSView(_ nsView: ShieldView, context: Context) {
-        nsView.targetSurface = targetSurface
+        nsView.targetSurface = pane.surface
+        nsView.pane = pane
     }
 
     final class ShieldView: NSView {
         weak var targetSurface: Ghostty.SurfaceView?
+        /// A native-composer pane has no surface; its transcript is found through the pane.
+        weak var pane: PCodeSessionPane?
 
         override func scrollWheel(with event: NSEvent) {
             if let transcript = peekedTranscript {
@@ -699,7 +703,7 @@ private struct PCodePeekScrollShield: NSViewRepresentable {
         /// The peeked pane's own transcript, the one its view mounted under this
         /// shield; never another pane's, which a search of the view tree could find.
         private var peekedTranscript: PCodeTranscriptScrollView? {
-            guard let transcript = targetSurface?.pcodeTranscriptScrollView,
+            guard let transcript = targetSurface?.pcodeTranscriptScrollView ?? pane?.transcriptScrollView,
                   transcript.window === window,
                   !transcript.isHiddenOrHasHiddenAncestor else { return nil }
             return transcript
@@ -753,13 +757,13 @@ struct PCodePeekOverlay: View {
 
     private func livePeekView(target: PCodePeekTarget, pane: PCodeSessionPane) -> some View {
         ZStack(alignment: .topTrailing) {
-            PCodeSessionPaneView(pane: pane, showInspector: false)
+            PCodeSessionPaneView(pane: pane, showInspector: false, interactive: false)
                 .id(pane.id)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(ghostty.config.backgroundColor)
 
             // Allow scrolling the live terminal without letting clicks steal focus or type into it.
-            PCodePeekScrollShield(targetSurface: pane.surface)
+            PCodePeekScrollShield(pane: pane)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             // Crisp border + compact floating pill so it's unmistakably a live peek, not a switch.

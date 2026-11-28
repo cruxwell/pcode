@@ -221,7 +221,7 @@ two-surface path stays the default until piece 6.
    `make app-lock`). Raise it with the owner once 3a is done; it depends on
    3b and step 4.
 
-### 3b. Native composer (decided, not started)
+### 3b. Native composer (done, 2026-11-28; on by default)
 
 Replace the prompt_toolkit editor in the app with a Swift one that talks to the
 session host directly. The Python editor stays for terminal mode, untouched.
@@ -368,13 +368,129 @@ the app working. The terminal editor stays the default until phase 5.
 Phases 0 and 1 are the first milestone: they deliver the instant startup and
 are enough to judge the native text view before building the rest.
 
-Risks:
+#### Phases 0 and 1 as built (2026-11-27, behind `native_composer`)
 
-- The long tail is anything a command draws that was not counted above. Any
-  flow that still needs a terminal overlay blocks the cutover in phase 5, so
-  audit the `*_ui.py` modules again before starting it.
-- Two submitters during the flag period. While both editors exist, make sure a
-  pane runs exactly one of them.
+- Spawning: `pcode --host --spawn-only[=ask|trust|skip]` (`pcode.app_spawn`)
+  spawns the host detached and prints one JSON line (`id`, `socket`, `log`,
+  `pid`, `existing`). The app runs it through `PCodeWorkspaceMode.launchConfig`
+  so the host gets the login-shell env and direnv. Project trust comes back as
+  `{"trust": ...}` and is asked in a native card; the app reruns with `=trust`
+  or `=skip`. No model means the host runs `PreviewRuntime`; `startup_error`
+  shows as a card above the composer.
+- Pane model: `PCodeSessionPane.surface` is optional, and a native pane has
+  `composer: PCodeComposerSession` instead. Nothing runs a hidden terminal.
+  Focus goes through `pane.focusInput()`, "is this the input" checks go through
+  `pane.ownsInput(_:)`, and size, occlusion and reconcile skip surface-less panes.
+  The bottom shell split is still a Ghostty surface.
+- Client: `PCodeHostRPCClient` attaches as a full client (protocol 2) and
+  shares socket framing with the observer (`PCodeHostLineSocket`,
+  `PCodeLineBuffer`). The transcript keeps its own `observe_transcript`
+  connection, which already handles history, catch-up and reconnects. Host
+  requests all go to `PCodeHostRequests`: `run_command` handles `/quit`,
+  `/exit` and `/redraw` and shows a toast for the rest, `choose_model` returns
+  nil, and `read_secret` opens an `NSAlert` with an `NSSecureTextField`.
+- Pre-connect queue: `PCodeComposerSession.outbox`. Prompts show at once as
+  local rows (`PCodeLiveTranscriptController.showLocalPrompt`), and the host's
+  echo (`turn_started` / `user`) replaces each one.
+- Hooks for later phases: `PCodeComposerTextView.onPasteImage`, `onTextChange`
+  and `caretScreenRect()` (completion anchor); `PCodeComposerSession.onHistory`
+  for Up/Down history, `onSessionState` for the catalog snapshot, and `state.plan`
+  for the task strip.
+- Phases 2 and 3 (same flag): `PCodeComposerSession+Input.swift` wires
+  `PCodePromptHistory` (Up/Down, drafts every `PCodeDraftStore.interval`, on
+  Ctrl+C, pane switch and close), `PCodePastedImage` (Cmd+V without text, drop,
+  `/paste-image`), and `PCodeComposerCompletion` (the `/` and `@` menu, drawn
+  with the terminal menu's `PCodeCompletionList`). The catalog snapshot is saved
+  on every `session_state` and loaded on the first frame. Cmd+Shift+A, or the
+  strip's `@ file` button, opens the workspace in `PCodePicker.showLocal`.
+- Known gap: attaching counts as a terminal, so opening a session another
+  client holds marks it seen and routes its popups to the app.
+
+#### Native command routes (phase 5)
+
+`PCodeNativeCommands.route(for:)` decides what the app does with each terminal
+command, and `run(_:context:)` does it through a `Context` (built for a real
+pane by `Context.live(session:client:)`). Host popup requests have their own
+entry points on the same type. Sheets go over the window as AppKit sheets
+(`PCodeNativeSheetPresenter`), so the pane's views don't change.
+`PCodeHostRequests` calls these for `run_command` and the popup requests, and
+`PCodeCommandCatalog.terminalCommands` marks a command `.native` exactly when it
+has a route here that isn't a toast (a test keeps them in step).
+
+| Command / request | Native route | Entry point |
+| --- | --- | --- |
+| `/help`, `/commands` | Commands sheet: the catalog by group, filterable | `PCodeHelpSheet` |
+| `/config` (bare) | Pcode.app Settings | `PCodeSettingsController.shared.show()` |
+| `/config ARGS` | `pcode config ARGS` run for its output: a toast if it's one line, a text sheet otherwise | `runConfig`, `PCodeTextSheet` |
+| `/bind`, `/unbind` | Not supported, toast: prompt_toolkit keybindings; the composer uses macOS text keys | |
+| `/quit`, `/exit` | Close the pane (stops its host) | `session.onCloseRequested` |
+| `/stop` | Same as `/quit`: closing a native pane ends its host | `session.onCloseRequested` |
+| `/detach` | Not supported, toast: a native pane's host lives as long as the pane | |
+| `/status` | Session sheet: mirrored state at once, then the host's `query("session_overview")` rows | `PCodeSessionInfoSheet` |
+| `/tools`, `/tools failed` | Inspector Commands tab (shell calls and jobs; other tools are in the transcript) | `pane.inspectorState` |
+| `/tools edits`, `/diffs` | Inspector Changes tab | `pane.inspectorState` |
+| `/links` | Picker of URLs from the transcript's prompts and answers (newest first); Enter opens, `file://` links in the editor at their line | `PCodePicker.showLocal`, `PCodeExternalEditor.open(fileURL:)`, `NSWorkspace.open` |
+| `/copy` | Picker of answers, their code blocks nested; Enter copies | `PCodePicker.showLocal`, `NSPasteboard` |
+| `/paste-image` | Composer image paste | `session.pasteImage(from:)` |
+| `/tree` | Inspector Tree tab | `pane.inspectorState` |
+| `/agents` | Inspector Agents tab | `pane.inspectorState` |
+| `/resume` | Picker of saved sessions; Enter opens one in a pane | `workspace.history`, `workspace.open(_:)` |
+| `/attach`, `/switch` (bare) | Picker of background hosts | `workspace.projectGroups[].hostedSessions` |
+| `/attach HOST` | Opens that host's session: exact id, else a prefix of exactly one, as `find_host` | `attachTarget`, `workspace.open(_:)` |
+| `/attach -` | Not supported, toast: use the sidebar | |
+| `/fork` | Not supported, toast: needs the terminal's fork-into-worktree flow | |
+| `/new PROMPT` | New pane in this folder; the prompt waits in its outbox | `workspace.newSession(directory:)`, `composer.submit` |
+| `/restart` | Restart this pane's host | `session.requestRelaunch(isManual: true)` |
+| `/restart all` | Not supported, toast: Restart Pcode restarts every session | |
+| `/show-thinking [mode]` | `set_thinking` intent (the host pushes `thinking_mode` to the transcript) and `show_thinking` saved to preferences.json; bare cycles off/scrollback | `context.notify`, `savePreference` |
+| `/group-tools [on\|off]` | The transcript's own toggle | `PCodeTranscriptPreferences.shared.groupTools` |
+| `/show-activity`, `/show-tasks`, `/autohide-tasks` | Not supported, toast: no activity panel (the task strip is phase 4) | |
+| `/show-edits` | Not supported, toast: edits always show, folded, plus the Changes tab | |
+| `/show-commands` | Not supported, toast: shell output lives in the Commands tab | |
+| `/theme`, `/syntax`, `/theme-preview` | Not supported, toast: the app follows macOS appearance and its Ghostty theme | |
+| `/redraw` | Nothing to do | |
+| `choose_model(values, providers, current)` | Picker as `model_ui` builds it: `Provider · model`, current marked and selected, typed `provider:model-id` as a custom row; replies with the id or nil | `chooseModel(...)` |
+| `browse_jobs()` | Jobs sheet from `peek().jobs`: Watch/Unwatch (`watch_job`), Stop and Stop All (`stop_jobs`). Replied at once, so the host's command queue isn't held | `browseJobs`, `PCodeJobsSheet` |
+| `read_asides(tag)` | The `/btw` drawer, mounted at pane level for native panes (`PCodeDrawer(onFocusInput:)`); reply nil | `readAsides` → `Action.btw` → `session.openBtw()` |
+| `read_secret(...)` | Unchanged: `PCodeHostRequests.readSecret` | |
+
+#### Cutover and what is still not native (2026-11-28)
+
+`native_composer` defaults to `on`: new session panes run no terminal for the
+session. `native_composer off` (or `PCODE_NATIVE_COMPOSER=0`) brings back the
+editor-only terminal client in new panes; both paths were smoke-tested. While
+both exist a pane runs exactly one of them (`PCodeSessionPane.surface` xor
+`composer`).
+
+The `/btw` drawer in native panes: `read_asides` (bare `/btw`) and a fresh
+answer (when the composer is empty) open the newest thread; Ctrl+\ steps
+threads; Escape closes. While it shows a thread, Enter follows up, and
+`/merge`, `/summarize`, `/close` and `/stop` act on it, as `btw_submit` does.
+
+Still not native, or not verified natively:
+
+- Toasts only: `/bind`, `/unbind`, `/detach`, `/fork`, `/attach -`,
+  `/restart all`, `/show-activity`, `/show-tasks`, `/autohide-tasks`,
+  `/show-edits`, `/show-commands`, `/theme`, `/syntax`, `/theme-preview`.
+- No vi bindings, and no user keybindings (`/bind`) in the composer.
+- The status strip's phase is coarser than the terminal's: no tool or
+  sub-agent counts, no cache-bust note.
+- Driven only with the preview model, so never in the app: the Jobs sheet
+  (preview has no job registry), the `/btw` drawer with real answers and its
+  merge/summarize/follow-up paths, `read_secret`, a real host's
+  `plan_changed` (the strip was driven with `PCODE_DEBUG_PLAN_FILE`), image
+  attachment by a real model, and opening a session from the `/resume` picker.
+- Synthetic ⌘V can't be driven in the harness, so image paste by ⌘V and
+  drag-and-drop are unverified in the app (`/paste-image` is).
+- Attaching counts as a terminal: opening a session another client holds marks
+  it seen and routes its popups to the app.
+- Restart Pcode doesn't signal native panes' hosts; it relies on reattaching
+  them by session or saved host id on relaunch.
+- The launcher's Enter can open two "New session" panes (seen with the flag on
+  and off; not investigated).
+- Peek's scroll shield and the terminal-only dock code (`PCodeDock`,
+  `PCodeDockedSurface`, the APC composer status) stay for the flag-off path;
+  removing them, and step 4, wait on deciding to drop that path.
 
 ### 4. Swap the container (only if 3b is done)
 

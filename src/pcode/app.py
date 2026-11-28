@@ -29,6 +29,7 @@ from rich.rule import Rule
 from rich.text import Text
 
 from pcode import glyphs, terminal_color
+from pcode.app_spawn import SPAWN_MODES
 from pcode.appearance import AppearanceWatch
 from pcode.cli import ask, restore_stdin
 from pcode.commands import Command, CommandRegistry, DeferredDescriptions
@@ -689,6 +690,9 @@ class PreviewApp:
 
     def session_changed(self) -> None:
         pass  # In this process the footer reads the controller directly.
+
+    def plan_changed(self, items: list[dict]) -> None:
+        pass  # The task list follows the turn's `PlanUpdated` events instead.
 
     def commands_changed(self) -> None:
         """Mirror the session's commands (skills and extensions come and go) in the editor's."""
@@ -4135,6 +4139,10 @@ def main() -> None:
         ),
         "hosts",
     )
+    # Pcode.app's native composer: start the host and print where it is (`pcode.app_spawn`).
+    parser.add_argument(
+        "--spawn-only", nargs="?", const="ask", choices=SPAWN_MODES, help=argparse.SUPPRESS
+    )
     parser.add_argument("--hosts", action="store_true", help="List running session hosts and exit")
     parser.add_argument(
         "--launch",
@@ -4795,6 +4803,10 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         parser.error("--fork needs --continue")
     if args.fork and args.attach is not None:
         parser.error("--fork cannot be combined with --attach")
+    if args.spawn_only is not None:
+        from pcode.app_spawn import spawn_only
+
+        sys.exit(spawn_only(args))
     if args.compact and not args.sessions:
         parser.error("--compact applies to --sessions")
     if args.json and not args.hosts:

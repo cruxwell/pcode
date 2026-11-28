@@ -139,6 +139,8 @@ final class PCodePicker: ObservableObject {
     private var custom: NSRegularExpression?
     private var armed: (key: String, id: String)?
     private var connection: Connection?
+    /// A list the app built itself (`showLocal`): the pick goes here, not to pcode.
+    private var localPick: ((_ id: String?, _ action: String?) -> Void)?
     private var keyMonitor: Any?
     private var pendingFilter: DispatchWorkItem?
 
@@ -154,10 +156,21 @@ final class PCodePicker: ObservableObject {
             onClosed: { [weak self] in self?.connectionClosed() })
     }
 
+    /// Show a list the app built (the composer's `@` file picker), with no pcode behind
+    /// it: `onPick` gets the chosen row's id and Cmd+key action, then the picker closes.
+    /// `list` is the same JSON object `pcode.pick_ui.payload` sends.
+    func showLocal(_ list: [String: Any], onPick: @escaping (_ id: String?, _ action: String?) -> Void) {
+        guard let data = try? JSONSerialization.data(withJSONObject: list),
+              let payload = try? JSONDecoder().decode(Payload.self, from: data) else { return }
+        localPick = onPick
+        show(payload)
+    }
+
     /// Close the connection and stop taking keys; pcode takes it as a cancel.
     func stop() {
         connection?.close()
         connection = nil
+        localPick = nil
         pendingFilter?.cancel()
         pendingFilter = nil
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
@@ -184,6 +197,11 @@ final class PCodePicker: ObservableObject {
             onClosed?()
             return
         }
+        show(list)
+        connection.send(Self.line(["shown": true]))
+    }
+
+    private func show(_ list: Payload) {
         let first = payload == nil
         payload = list
         guides = PCodePickMatch.treeGuides(list.items.map(\.depth))
@@ -201,7 +219,6 @@ final class PCodePicker: ObservableObject {
         select(list.selected.flatMap { wanted in rows.firstIndex { $0.id == wanted } } ?? 0)
         onList?(list.title)
         if first { watchKeys() }
-        connection.send(Self.line(["shown": true]))
     }
 
     /// `object` as one line of JSON, if it can be.
@@ -212,6 +229,12 @@ final class PCodePicker: ObservableObject {
     }
 
     private func send(id: String?, action: String?) {
+        if let localPick {
+            stop()
+            localPick(id, action)
+            onClosed?()
+            return
+        }
         guard let connection, !busy,
               let data = Self.line(["id": id ?? NSNull(), "action": action ?? NSNull(), "query": query])
         else { return }
@@ -302,7 +325,7 @@ final class PCodePicker: ObservableObject {
 
     /// Cancel: close the connection, then the popup.
     func cancel() {
-        guard connection != nil else { return }
+        guard connection != nil || localPick != nil else { return }
         stop()
         onClosed?()
     }

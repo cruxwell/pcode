@@ -1,6 +1,6 @@
 ---
 name: ui-loop
-description: See and drive the Pcode macOS app (app/macos on the Ghostty fork, including the Swift workspace) while changing its UI. Use when working on the app's Swift code, popups, drawer, docked editor or any pcode rendering inside the app, to snapshot windows, send keys and clicks, check selection and focus, and catch one-frame flicker yourself instead of asking the user to look.
+description: See and drive the Pcode macOS app (app/macos on the Ghostty fork, including the Swift workspace) while changing its UI. Use when working on the app's Swift code, popups, drawer, native composer, docked editor or any pcode rendering inside the app, to snapshot windows, send keys and clicks, check selection and focus, and catch one-frame flicker yourself instead of asking the user to look.
 ---
 
 # UI loop
@@ -40,7 +40,12 @@ replaces.
 
 `/tmp/run.sh` is whatever the first terminal should run, for example
 `cd /tmp/demo && exec pcode --no-worktree`, or
-`PCODE_EDITOR_ONLY=1 uv run --no-sync pcode --host` in a pcode worktree for the app's single-surface docked editor card.
+`PCODE_EDITOR_ONLY=1 uv run --no-sync pcode --host` in a pcode worktree for the
+old single-surface docked editor card. Workspace session panes don't run a
+terminal for the session any more: they use the native composer
+(`PCodeComposer*.swift`), which spawns the host headless with
+`pcode --host --spawn-only` and talks to its socket. `PCODE_NATIVE_COMPOSER=0`
+(or `native_composer off`) brings back the terminal editor card in new panes.
 Launching brings the window to the front once. After that, nothing in the
 harness takes focus from the user unless you run `activate`.
 
@@ -94,11 +99,28 @@ launch. `--json` prints the raw reply.
   `xcodebuild -target Ghostty -configuration ReleaseLocal -arch arm64 build SYMROOT=/tmp/x | grep error:`
   in `macos/`.
 - **The workspace window ignores `--command`.** With workspace mode on (the
-  default), the window resumes a session by running `$PCODE_COMMAND`, and
-  `launch` passes your environment on. Run from inside a pcode session, that
-  is the parent's own pcode, not your worktree's: check with
+  default), the window starts each pane's host by running `$PCODE_COMMAND`,
+  and `launch` passes your environment on. Run from inside a pcode session,
+  that is the parent's own pcode, not your worktree's: check with
   `pgrep -fl bin/pcode`. Export `PCODE_COMMAND=<worktree>/.venv/bin/pcode`
-  (workspace mode sets `PCODE_EDITOR_ONLY=1` and `--host` automatically) before `launch`.
+  before `launch`.
+- **A test app restores and attaches to the user's real sessions.** It reopens
+  the sessions its bundle ID last had open and the hosts in the real hosts
+  dir, and a native pane attaching marks them seen. Isolate every launch:
+  export `XDG_STATE_HOME`, `XDG_CONFIG_HOME`, `PCODE_CONFIG_DIR`,
+  `PCODE_HOST_DIR` and `PCODE_SESSION_DIR` pointing at a throwaway dir, run
+  `defaults delete <your bundle id>`, and check `dump` shows only your window
+  before typing.
+- **Native sheets are their own windows.** `/help`, `/status`, pickers and the
+  model chooser are AppKit sheets: `dump` lists them as window 0 and
+  `snap -w 0` takes them; a plain `snap` shows only the main window.
+- **Synthetic ⌘V doesn't paste** (not even text): test image paste with
+  `/paste-image`, which takes the same save-and-insert path.
+- **`make app-test` runs the last build's copy of the tests.** After editing
+  `app/macos/Tests`, rebuild (or rsync them into `tmp/ghostty`) first.
+- **The preview model never plans, runs jobs or answers `/btw`.** Drive the
+  task strip with `PCODE_DEBUG_PLAN_FILE=<json file>`; jobs and `/btw` need a
+  real model.
 - **Shared worktrees collide.** Another session may be building and
   relaunching in the same Ghostty worktree. Commit only your own paths
   (`git commit <paths>`, never `-a`), and use your own `APP_NAME`, bundle ID

@@ -148,6 +148,66 @@ final class PCodeCompletion: ObservableObject {
     }
 }
 
+/// The rows of a completion menu, shared by the terminal editor's list
+/// (`PCodeCompletionLayer`) and the native composer's (`PCodeComposerCompletionLayer`).
+struct PCodeCompletionList: View {
+    let rows: [(text: String, meta: String)]
+    let selected: Int?
+    /// Changes whenever the list does, to scroll the selection back into view.
+    let revision: Int
+    let theme: PCodePickTheme
+    let rowHeight: CGFloat
+    let onAccept: (Int) -> Void
+
+    var body: some View {
+        let textWidth = PCodeCompletionLayer.columns(rows.map(\.text), max: PCodeCompletionLayer.maxTextColumns)
+            * (theme.fonts?.advance ?? 8)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { index, item in
+                        row(item, chosen: index == selected, textWidth: textWidth)
+                            .frame(height: rowHeight)
+                            .id(index)
+                            .contentShape(Rectangle())
+                            .onTapGesture { onAccept(index) }
+                    }
+                }
+                .padding(PCodeCompletionLayer.listPadding)
+            }
+            .onAppear { proxy.scrollTo(selected ?? 0) }
+            // Keep the selected row in view; with none (a fresh or refiltered list), show the top.
+            .onChange(of: revision) { _ in proxy.scrollTo(selected ?? 0) }
+            .onChange(of: selected) { _ in proxy.scrollTo(selected ?? 0) }
+        }
+    }
+
+    private func row(_ item: (text: String, meta: String), chosen: Bool, textWidth: CGFloat) -> some View {
+        let text = chosen ? theme.selectedText.color : nil
+        return HStack(spacing: 12) {
+            Text(item.text)
+                .font(theme.labelFont(fallbackSize: 13))
+                .foregroundStyle(text ?? theme.foreground)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: textWidth, alignment: .leading)
+            if !item.meta.isEmpty {
+                Text(item.meta)
+                    .font(theme.smallFont(fallbackSize: 12))
+                    .foregroundStyle(text.map { $0.opacity(0.8) } ?? theme.muted)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, PCodeCompletionLayer.textInset)
+        .frame(maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(chosen ? theme.selectedBackground.color : Color.clear))
+    }
+}
+
 /// The completion list, hung over pcode's editor box from where the word
 /// being completed starts; below the cursor if there is no room above.
 struct PCodeCompletionLayer: View {
@@ -199,56 +259,13 @@ struct PCodeCompletionLayer: View {
     }
 
     private func list(_ menu: PCodeCompletion.Menu, theme: PCodePickTheme, rowHeight: CGFloat) -> some View {
-        let textWidth = Self.columns(menu.items.map(\.text), max: Self.maxTextColumns)
-            * (theme.fonts?.advance ?? 8)
-        return ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(menu.items.enumerated()), id: \.offset) { index, item in
-                        row(item, chosen: index == menu.selected, theme: theme, textWidth: textWidth)
-                            .frame(height: rowHeight)
-                            .id(index)
-                            .contentShape(Rectangle())
-                            .onTapGesture { completion.accept(index) }
-                    }
-                }
-                .padding(Self.listPadding)
-            }
-            .onAppear { scroll(proxy, to: menu.selected) }
-            .onChange(of: menu.seq) { _ in scroll(proxy, to: menu.selected) }
-        }
-    }
-
-    /// Keep the selected row in view; with none (a fresh or refiltered list), show the top.
-    private func scroll(_ proxy: ScrollViewProxy, to row: Int?) {
-        proxy.scrollTo(row ?? 0)
-    }
-
-    private func row(
-        _ item: PCodeCompletion.Item, chosen: Bool, theme: PCodePickTheme, textWidth: CGFloat
-    ) -> some View {
-        let text = chosen ? theme.selectedText.color : nil
-        return HStack(spacing: 12) {
-            Text(item.text)
-                .font(theme.labelFont(fallbackSize: 13))
-                .foregroundStyle(text ?? theme.foreground)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(width: textWidth, alignment: .leading)
-            if !item.meta.isEmpty {
-                Text(item.meta)
-                    .font(theme.smallFont(fallbackSize: 12))
-                    .foregroundStyle(text.map { $0.opacity(0.8) } ?? theme.muted)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, Self.textInset)
-        .frame(maxHeight: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 5)
-                .fill(chosen ? theme.selectedBackground.color : Color.clear))
+        PCodeCompletionList(
+            rows: menu.items.map { ($0.text, $0.meta) },
+            selected: menu.selected,
+            revision: menu.seq,
+            theme: theme,
+            rowHeight: rowHeight,
+            onAccept: { completion.accept($0) })
     }
 
     /// The widest of `texts` in terminal columns (characters, near enough), up to `max`.

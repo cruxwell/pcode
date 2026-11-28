@@ -333,15 +333,15 @@ struct PCodeSidebarTests {
     }
 
     @Test func hibernatesOnlyAnIdleHiddenPaneWithNothingToLose() throws {
-        let quiet = try composer()
         func decide(
             hiddenFor: TimeInterval = 700, after: TimeInterval = 600, ready: Bool = true,
             activity: PCodeSessionPane.Activity = .idle, hostState: String? = "idle",
             composer: PCodeComposerStatus? = nil, hasShell: Bool = false, turns: Int = 3
         ) -> Bool {
-            PCodeWorkspace.shouldHibernate(
+            let work = composer == nil ? PCodePaneWork() : PCodePaneWork(status: composer)
+            return PCodeWorkspace.shouldHibernate(
                 hiddenFor: hiddenFor, after: after, ready: ready, activity: activity,
-                hostState: hostState, composer: composer ?? quiet, hasShell: hasShell, turns: turns)
+                hostState: hostState, work: work, hasShell: hasShell, turns: turns)
         }
         #expect(decide())
         #expect(!decide(after: 0), "0 minutes turns hibernation off")
@@ -357,6 +357,10 @@ struct PCodeSidebarTests {
         #expect(!decide(composer: try composer(jobs: 1)))
         #expect(!decide(composer: try composer(btwReady: 1)))
         #expect(!decide(composer: try composer(draft: nil)), "a pcode too old to report drafts")
+        #expect(PCodePaneWork(queued: 1).isQuiet == false, "a native composer's queued prompt")
+        #expect(!PCodeWorkspace.shouldHibernate(
+            hiddenFor: 700, after: 600, ready: true, activity: .idle, hostState: "idle",
+            work: nil, hasShell: false, turns: 3), "a composer not attached can't tell")
     }
 
     @Test func quietProjectKeepsItsFolderAndExactCounts() throws {

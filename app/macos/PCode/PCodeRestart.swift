@@ -78,8 +78,11 @@ final class PCodeRestart {
     private func proceed() {
         // From here on, panes whose pcode exits leave the saved list alone.
         workspace?.beginRestart()
+        // A native-composer pane has no pcode client to signal: its host keeps running
+        // (`beginRestart` stops panes closing hosts) and the relaunched pane reattaches.
         for pane in workspace?.panes ?? [] {
-            for pid in PCodeProcess.pids(in: pane.surface) where kill(pid, SIGUSR2) == 0 {
+            guard let surface = pane.surface else { continue }
+            for pid in PCodeProcess.pids(in: surface) where kill(pid, SIGUSR2) == 0 {
                 waiting.append(pid)
             }
         }
