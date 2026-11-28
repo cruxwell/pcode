@@ -62,10 +62,11 @@ final class PCodeHostRPCClient {
 
     func close() {
         lock.lock()
+        defer { lock.unlock() }
         closed = true
-        let current = fd
-        lock.unlock()
-        if current >= 0 { Darwin.shutdown(current, SHUT_RDWR) }
+        // Under `lock`: the reader clears `fd` under it before closing the socket, so the
+        // number can't have been handed to another connection yet. `shutdown` never blocks.
+        if fd >= 0 { Darwin.shutdown(fd, SHUT_RDWR) }
     }
 
     // MARK: Sending
@@ -79,6 +80,12 @@ final class PCodeHostRPCClient {
         completion: @escaping (_ result: Any?, _ error: String?) -> Void
     ) {
         lock.lock()
+        // Closed already (the reader has drained `pending`): nothing would ever answer it.
+        if closed {
+            lock.unlock()
+            DispatchQueue.main.async { completion(nil, "The session host connection closed.") }
+            return
+        }
         let id = nextID
         nextID += 1
         pending[id] = completion
@@ -199,7 +206,8 @@ final class PCodeHostRPCClient {
         lock.lock()
         if closed {
             lock.unlock()
-            return
+            // Closed while connecting: still answer any request made meanwhile.
+            return finish(.lost(nil))
         }
         fd = sock
         lock.unlock()

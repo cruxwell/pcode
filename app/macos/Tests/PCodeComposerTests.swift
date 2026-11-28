@@ -62,6 +62,16 @@ struct PCodeComposerTests {
         #expect(PCodeHostRPCClient.parse(try wire(#"{"type":"future"}"#)) == nil)
     }
 
+    @Test func requestOnAClosedClientIsAnswered() async {
+        // A sheet holding an old connection must not wait forever on it.
+        let client = PCodeHostRPCClient()
+        client.close()
+        let error: String? = await withCheckedContinuation { continuation in
+            client.request("peek") { _, error in continuation.resume(returning: error) }
+        }
+        #expect(error != nil)
+    }
+
     @Test func lineBufferSplitsAcrossReads() {
         var buffer = PCodeLineBuffer()
         let firstOK = buffer.append(ArraySlice(Array(#"{"a":1}"#.utf8) + [0x0A] + Array(#"{"b":"#.utf8)))
