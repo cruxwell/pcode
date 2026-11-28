@@ -1016,3 +1016,113 @@ def test_task_worktree_outside_a_checkout_asks_the_model_to_adjust(tmp_path):
             asyncio.run(toolset.task_worktree(action, task_id))
     with pytest.raises(ModelRetry, match="needs a task_id"):
         asyncio.run(toolset.task_worktree("integrate"))
+
+
+def test_isolated_worker_success_and_contained_crash_serialize_plain_string_summary(repo, tmp_path):
+    from pydantic_ai.exceptions import ModelHTTPError
+
+    from pcode.sessions import SavedSession
+
+    # Success case: record.summary on disk and in the returned artifact is a plain str, not a dict.
+    artifact = content(delegate_once(create_agent("test", repo), finished_child))
+    record = assert_artifact(repo, artifact, "completed")
+    assert artifact["summary"] == "Worker complete"
+    assert isinstance(record.summary, str) and record.summary == "Worker complete"
+    disk = json.loads((TaskWorktrees(repo).directory / f"{record.task_id}.json").read_text())
+    assert disk["summary"] == "Worker complete"
+
+    # Contained crash case: _Ended.cause holds ModelHTTPError; finish() must serialize ended.output
+    # as a plain str (never TypeError) and record the crash to errors.log.
+    sessions_root = tmp_path / "sessions"
+    saved = SavedSession.create("test:local", repo, sessions_root)
+    returned = []
+
+    async def model(messages, info):
+        if "task_worktree" not in {t.name for t in info.function_tools}:
+            raise ModelHTTPError(429, "test-model", retry_after=3600)
+        if not results(messages):
+            yield call("delegate_task", {"agent_name": "worker", "task": "Rate limited"})
+        else:
+            returned.append(results(messages)[-1])
+            yield "Parent handled failure"
+
+    agent = create_agent("test", repo)
+    rt = AgentRuntime(agent, saved)
+    try:
+        with agent.override(model=FunctionModel(stream_function=model)):
+            asyncio.run(_drain(rt.stream("Delegate")))
+    finally:
+        saved.close()
+
+    assert len(returned) == 1
+    failed = content(returned[0])
+    failed_record = assert_artifact(repo, failed, "failed")
+    assert isinstance(failed["summary"], str)
+    assert "TypeError" not in failed["summary"]
+    assert "429" in failed["summary"] or "rate limit" in failed["summary"].lower()
+    assert failed_record.summary == failed["summary"]
+    worker_disk = json.loads((saved.directory / "workers" / "w1.json").read_text())
+    assert worker_disk["status"] == "failed"
+    assert worker_disk["worktree_task_id"] == failed_record.task_id
+    assert worker_disk["model"]
+    errors_log = (saved.directory / "errors.log").read_text()
+    assert "run worker:w1" in errors_log
+    assert "ModelHTTPError" in errors_log
+
+
+def test_cancelled_isolated_worker_saves_stopped_status_and_worktree_task_id(repo, tmp_path):
+    from pcode.sessions import SavedSession
+
+    entered = asyncio.Event()
+    sessions_root = tmp_path / "sessions"
+    saved = SavedSession.create("test:local", repo, sessions_root)
+
+    async def model(messages, info):
+        if "task_worktree" in {t.name for t in info.function_tools}:
+            yield call(
+                "delegate_task",
+                {"agent_name": "worker", "task": "Partial work", "purpose": "isolated edit"},
+            )
+        elif not results(messages):
+            yield call("write_file", {"path": "file.txt", "content": "partial\n"})
+        else:
+            entered.set()
+            await asyncio.Event().wait()
+            yield "Unreachable"
+
+    agent = create_agent("test", repo)
+    rt = AgentRuntime(agent, saved)
+
+    async def scenario():
+        with agent.override(model=FunctionModel(stream_function=model)):
+            task = asyncio.create_task(_drain(rt.stream("Work")))
+            await asyncio.wait_for(entered.wait(), 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        saved.close()
+
+    (record,) = TaskWorktrees(repo).list()
+    assert record.status == "cancelled"
+    worker_disk = json.loads((saved.directory / "workers" / "w1.json").read_text())
+    assert worker_disk["status"] == "stopped"
+    assert worker_disk["report"] == "Interrupted before it reported."
+    assert worker_disk["worktree_task_id"] == record.task_id
+    assert worker_disk["model"]
+    assert len(rt.context.abandoned_delegations) == 1
+    abandoned = rt.context.abandoned_delegations[0]
+    assert isinstance(abandoned, dict)
+    assert abandoned["worker_id"] == "w1"
+    assert abandoned["purpose"] == "isolated edit"
+    assert abandoned["workspace_mode"] == "isolated"
+    assert abandoned["worktree_task_id"] == record.task_id
+    assert abandoned["resumable"] is False
+    assert abandoned["detached"] is False
+
+
+async def _drain(stream):
+    return [event async for event in stream]

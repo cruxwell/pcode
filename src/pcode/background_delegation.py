@@ -150,25 +150,96 @@ def stopped_message(task_id: str, worker_id: str = "", hint: str = "") -> str:
     )
 
 
-def abandoned_message(task_ids: list[str]) -> str:
-    tasks = ", ".join(task_ids)
+AbandonedItem = str | dict[str, Any]
+
+
+def _abandoned_entry(task_id: str, handle: Any, *, detached: bool) -> AbandonedItem:
+    if handle is None:
+        return task_id
+    resumable = (
+        handle.workspace_mode != "isolated"
+        and bool(handle.messages)
+        and handle.worker_model is None
+    )
+    return {
+        "task_id": task_id,
+        "worker_id": handle.id,
+        "purpose": handle.purpose,
+        "workspace_mode": handle.workspace_mode,
+        "resumable": resumable,
+        "worktree_task_id": handle.worktree_task_id,
+        "detached": detached,
+    }
+
+
+def _abandoned_line(item: AbandonedItem) -> str:
+    if isinstance(item, str):
+        return (
+            f"The background delegation {item} was stopped before it reported, because the "
+            "run it belonged to ended (interrupted or failed). Its result will not arrive. "
+            "Delegate again if you still need it; a sub-agent may have left partial changes."
+        )
+    task_id = str(item.get("task_id") or "")
+    worker_id = str(item.get("worker_id") or "")
+    purpose = str(item.get("purpose") or "").strip()
+    workspace_mode = str(item.get("workspace_mode") or "shared")
+    resumable = bool(item.get("resumable"))
+    worktree_task_id = str(item.get("worktree_task_id") or "")
+    detached = bool(item.get("detached", True))
+    kind = "background delegation" if detached else "delegation"
+    if worker_id:
+        named = f"worker {worker_id}"
+        if purpose:
+            named += f" ({purpose})"
+        if task_id:
+            named += f", task {task_id}"
+    elif task_id:
+        named = f"task {task_id}"
+    else:
+        named = "unknown"
+    if resumable and worker_id:
+        guidance = (
+            f"Worker {worker_id} kept its history up to where it stopped: resume it with "
+            f"delegate_task(continue_worker='{worker_id}', task=...) instead of starting a "
+            "new worker."
+        )
+    elif workspace_mode == "isolated" and worktree_task_id:
+        guidance = (
+            f"Its isolated worktree (task_id='{worktree_task_id}', "
+            f"branch 'task-{worktree_task_id}') preserved partial work; inspect it with "
+            "task_worktree(action='list')."
+        )
+    else:
+        guidance = "Delegate again if you still need it; a sub-agent may have left partial changes."
     return (
-        f"The background delegation {tasks} was stopped before it reported, because the "
-        "run it belonged to ended (interrupted or failed). Its result will not arrive. "
-        "Delegate again if you still need it; a sub-agent may have left partial changes."
+        f"The {kind} ({named}) was stopped before it reported, because the run it belonged "
+        f"to ended (interrupted or failed). Its result will not arrive. {guidance}"
     )
 
 
-class AbandonedDelegations(AbstractCapability):
-    """Tell a main turn which detached children died unreported. Per run, main turns only.
+def abandoned_message(items: list[AbandonedItem]) -> str:
+    if all(isinstance(item, str) for item in items):
+        tasks = ", ".join(items)  # type: ignore[arg-type]
+        return (
+            f"The background delegation {tasks} was stopped before it reported, because the "
+            "run it belonged to ended (interrupted or failed). Its result will not arrive. "
+            "Delegate again if you still need it; a sub-agent may have left partial changes."
+        )
+    return "\n".join(_abandoned_line(item) for item in items)
 
-    The model was told those results would arrive by themselves. A turn retry
-    after a dropped connection, Ctrl+C, or a crash ends the run that owned them,
-    so the next request says they won't. `ids` is the branch's own list
+
+class AbandonedDelegations(AbstractCapability):
+    """Tell a main turn which children died unreported. Per run, main turns only.
+
+    The model was told detached results would arrive by themselves, and a
+    cancelled foreground worker may have saved resumable history or a worktree.
+    A turn retry after a dropped connection, Ctrl+C, /restart, or a crash ends
+    the run that owned them, so the next request says they won't arrive and how
+    to resume them. `ids` is the branch's own list
     (`TurnContext.abandoned_delegations`), so a retry's new run still sees it.
     """
 
-    def __init__(self, ids: list[str]) -> None:
+    def __init__(self, ids: list[AbandonedItem]) -> None:
         self.ids = ids
 
     async def before_model_request(self, ctx, request_context):
@@ -179,10 +250,10 @@ class AbandonedDelegations(AbstractCapability):
         return request_context
 
 
-def _abandoned(ctx, task_id: str) -> None:
+def _abandoned(ctx, item: AbandonedItem) -> None:
     for capability in ctx.capabilities.values():
         if isinstance(capability, AbandonedDelegations):
-            capability.ids.append(task_id)
+            capability.ids.append(item)
 
 
 @dataclass
@@ -297,16 +368,18 @@ class BackgroundDelegation(BackgroundTools):
                         child.error = error
                     child.cancelled = False
             finally:
-                child.done.set()
                 if handle is not None:
                     handle.cancel = None
                     if not handle.started:
                         # Refused before delegate_task ran (another capability, a
                         # validation error): no worker exists, so none stays running.
                         hub.release(handle)
-                if child.detached and child.cancelled and not stop_requested():
-                    self._live -= 1
-                    _abandoned(ctx, task_id)
+                if child.cancelled and not stop_requested():
+                    if child.detached:
+                        self._live -= 1
+                    if child.detached or (handle is not None and handle.started):
+                        _abandoned(ctx, _abandoned_entry(task_id, handle, detached=child.detached))
+                child.done.set()
             if not child.detached:
                 return
             outcome: _Completion | BaseException
