@@ -690,6 +690,9 @@ class PreviewApp:
     def session_changed(self) -> None:
         pass  # In this process the footer reads the controller directly.
 
+    def plan_changed(self, items: list[dict]) -> None:
+        pass  # The task list follows the turn's `PlanUpdated` events instead.
+
     def commands_changed(self) -> None:
         """Mirror the session's commands (skills and extensions come and go) in the editor's."""
         owned = self.controller.registry

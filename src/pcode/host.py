@@ -51,7 +51,14 @@ from pcode.host_protocol import (
 )
 from pcode.jobs import registry as job_registry
 from pcode.rpc import Peer, broadcast
-from pcode.runtime import CommandOutput, EditPreview, PreviewRuntime, TextDelta, ThinkingDelta
+from pcode.runtime import (
+    CommandOutput,
+    EditPreview,
+    PlanUpdated,
+    PreviewRuntime,
+    TextDelta,
+    ThinkingDelta,
+)
 from pcode.ui import NOTICE_SECONDS, Activity
 
 # Consecutive events of these kinds merge in the catch-up buffer: deltas join,
@@ -86,8 +93,13 @@ TRANSCRIPT_OBSERVER_CALLS = frozenset(
         "show_branch",
         "session_changed",
         "state",
+        "plan_changed",
     }
 )
+
+# View calls never kept for a terminal attaching later: its welcome carries the
+# current value instead (`plan`), so replaying old ones would only repeat it.
+UNBUFFERED = frozenset({"plan_changed"})
 
 # View calls that change what the conversation is, so a terminal attaching
 # later reads it from the journal instead of from the buffer.
@@ -500,6 +512,18 @@ class HostView:
         self._host.push_state()
         for peer in list(self._host.transcript_observers):
             peer.notify("session_changed", self._host.entry.session_id)
+        # A resume or a new runtime brings its own plan store.
+        self._host.refresh_plan()
+
+    def turn_event(self, event) -> None:
+        self._host.emit("turn_event", (event,), {})
+        if isinstance(event, PlanUpdated):
+            # The turn's authoritative snapshot, read from the store after
+            # every settled tool (`stream_events`), so planning calls need no hook.
+            self._host.push_plan(event.items)
+
+    def plan_changed(self, items: list[dict]) -> None:
+        self._host.push_plan(items)
 
     def commands_changed(self) -> None:
         self._host.push_state()
@@ -681,6 +705,10 @@ class SessionHost:
         # shortly after, so a streaming answer is not rendered per token.
         self._observed: dict[str, object] = {}
         self._observe_flush: asyncio.TimerHandle | None = None
+        # The conversation's plan as last sent (`plan_changed`), and the read
+        # of the store that will update it, if one is pending.
+        self.plan: list[dict] = []
+        self._plan_read: asyncio.Task | None = None
 
     @property
     def socket(self) -> Path:
@@ -761,6 +789,8 @@ class SessionHost:
         for work in (controller.consume(), controller.consume_commands(), controller.watch_jobs()):
             self.tasks.append(asyncio.create_task(work))
         controller.ready.set()
+        # A resumed conversation restored its plan before anything was sent.
+        self.refresh_plan()
 
     async def _accept(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self.connections += 1
@@ -923,6 +953,7 @@ class SessionHost:
             "show_thinking": self.activity.thinking_mode,
             "queued_prompts": list(self.activity.queued_prompts),
             "queued_modes": list(self.activity.queued_modes),
+            "plan": self.plan,
             "history": history,
             "calls": calls,
         }
@@ -974,6 +1005,7 @@ class SessionHost:
             "fork_requested": getattr(
                 getattr(self.controller.runtime, "session", None), "fork_requested", False
             ),
+            "plan": self.plan,
             # Already encoded: a buffered call's arguments are whatever the view got.
             "calls": [
                 [name, encode(list(args)), encode(kwargs)] for name, args, kwargs in self.buffer
@@ -1146,9 +1178,31 @@ class SessionHost:
         elif method in TRANSCRIPT_OBSERVER_CALLS:
             for peer in list(self.transcript_observers):
                 peer.notify(method, *args, **kwargs)
-        if method in RESETS:
+        if method == "conversation_reset":
+            self.push_plan([])  # The runtime's reset dropped the plan with the rest.
+        elif method in REPLAYS:
+            self.refresh_plan()  # A branch or resumed conversation has its own plan.
+        if method in RESETS or method in UNBUFFERED:
             return
         self._buffer(method, args, kwargs)
+
+    def push_plan(self, items: list[dict]) -> None:
+        """Send the plan to terminals and transcript observers, if it changed."""
+        if items == self.plan:
+            return
+        self.plan = list(items)
+        self.emit("plan_changed", (self.plan,), {})
+
+    def refresh_plan(self) -> None:
+        """Re-read the plan store soon, after something that may have replaced it."""
+        if self._plan_read is not None and not self._plan_read.done():
+            return  # The pending read sees this change too: it reads when it runs.
+        self._plan_read = asyncio.get_running_loop().create_task(self._read_plan())
+
+    async def _read_plan(self) -> None:
+        store = getattr(self.controller.runtime, "plan_store", None)
+        if store is not None:
+            self.push_plan([item.model_dump(mode="json") for item in await store.get_items()])
 
     def _buffer(self, method: str, args: tuple, kwargs: dict) -> None:
         previous = self.buffer[-1] if self.buffer else None
@@ -1489,9 +1543,12 @@ class SessionHost:
             peer.close()
         controller.cancel_all()
         viewers = list(self.view.viewers)
-        for task in (*self.tasks, *viewers):
+        plan_read = [self._plan_read] if self._plan_read is not None else []
+        for task in (*self.tasks, *viewers, *plan_read):
             task.cancel()
-        await asyncio.gather(*self.tasks, *viewers, *controller.tasks(), return_exceptions=True)
+        await asyncio.gather(
+            *self.tasks, *viewers, *plan_read, *controller.tasks(), return_exceptions=True
+        )
         await controller.asides.close()
         # Stopping them settled them: their journal entries go in before the session closes.
         await controller.side_records_settled()
