@@ -221,7 +221,7 @@ two-surface path stays the default until piece 6.
    `make app-lock`). Raise it with the owner once 3a is done; it depends on
    3b and step 4.
 
-### 3b. Native composer (decided, not started)
+### 3b. Native composer (done, 2026-11-28; on by default)
 
 Replace the prompt_toolkit editor in the app with a Swift one that talks to the
 session host directly. The Python editor stays for terminal mode, untouched.
@@ -406,14 +406,16 @@ are enough to judge the native text view before building the rest.
 - Known gap: attaching counts as a terminal, so opening a session another
   client holds marks it seen and routes its popups to the app.
 
-#### Native command routes (phase 5 groundwork)
+#### Native command routes (phase 5)
 
 `PCodeNativeCommands.route(for:)` decides what the app does with each terminal
 command, and `run(_:context:)` does it through a `Context` (built for a real
 pane by `Context.live(session:client:)`). Host popup requests have their own
 entry points on the same type. Sheets go over the window as AppKit sheets
-(`PCodeNativeSheetPresenter`), so the pane's views don't change. Not wired yet:
-`PCodeHostRequests` still answers with the phase 1 toasts until it calls these.
+(`PCodeNativeSheetPresenter`), so the pane's views don't change.
+`PCodeHostRequests` calls these for `run_command` and the popup requests, and
+`PCodeCommandCatalog.terminalCommands` marks a command `.native` exactly when it
+has a route here that isn't a toast (a test keeps them in step).
 
 | Command / request | Native route | Entry point |
 | --- | --- | --- |
@@ -449,16 +451,46 @@ entry points on the same type. Sheets go over the window as AppKit sheets
 | `/redraw` | Nothing to do | |
 | `choose_model(values, providers, current)` | Picker as `model_ui` builds it: `Provider · model`, current marked and selected, typed `provider:model-id` as a custom row; replies with the id or nil | `chooseModel(...)` |
 | `browse_jobs()` | Jobs sheet from `peek().jobs`: Watch/Unwatch (`watch_job`), Stop and Stop All (`stop_jobs`). Replied at once, so the host's command queue isn't held | `browseJobs`, `PCodeJobsSheet` |
-| `read_asides(tag)` | The `/btw` drawer. Native panes have none yet (`PCodeDrawer` hangs off a terminal surface), so for now it's a toast; reply nil | `readAsides` → `Action.btw` |
+| `read_asides(tag)` | The `/btw` drawer, mounted at pane level for native panes (`PCodeDrawer(onFocusInput:)`); reply nil | `readAsides` → `Action.btw` → `session.openBtw()` |
 | `read_secret(...)` | Unchanged: `PCodeHostRequests.readSecret` | |
 
-Risks:
+#### Cutover and what is still not native (2026-11-28)
 
-- The long tail is anything a command draws that was not counted above. Any
-  flow that still needs a terminal overlay blocks the cutover in phase 5, so
-  audit the `*_ui.py` modules again before starting it.
-- Two submitters during the flag period. While both editors exist, make sure a
-  pane runs exactly one of them.
+`native_composer` defaults to `on`: new session panes run no terminal for the
+session. `native_composer off` (or `PCODE_NATIVE_COMPOSER=0`) brings back the
+editor-only terminal client in new panes; both paths were smoke-tested. While
+both exist a pane runs exactly one of them (`PCodeSessionPane.surface` xor
+`composer`).
+
+The `/btw` drawer in native panes: `read_asides` (bare `/btw`) and a fresh
+answer (when the composer is empty) open the newest thread; Ctrl+\\ steps
+threads; Escape closes. While it shows a thread, Enter follows up, and
+`/merge`, `/summarize`, `/close` and `/stop` act on it, as `btw_submit` does.
+
+Still not native, or not verified natively:
+
+- Toasts only: `/bind`, `/unbind`, `/detach`, `/fork`, `/attach -`,
+  `/restart all`, `/show-activity`, `/show-tasks`, `/autohide-tasks`,
+  `/show-edits`, `/show-commands`, `/theme`, `/syntax`, `/theme-preview`.
+- No vi bindings, and no user keybindings (`/bind`) in the composer.
+- The status strip's phase is coarser than the terminal's: no tool or
+  sub-agent counts, no cache-bust note.
+- Driven only with the preview model, so never in the app: the Jobs sheet
+  (preview has no job registry), the `/btw` drawer with real answers and its
+  merge/summarize/follow-up paths, `read_secret`, a real host's
+  `plan_changed` (the strip was driven with `PCODE_DEBUG_PLAN_FILE`), image
+  attachment by a real model, and opening a session from the `/resume` picker.
+- Synthetic ⌘V can't be driven in the harness, so image paste by ⌘V and
+  drag-and-drop are unverified in the app (`/paste-image` is).
+- Attaching counts as a terminal: opening a session another client holds marks
+  it seen and routes its popups to the app.
+- Restart Pcode doesn't signal native panes' hosts; it relies on reattaching
+  them by session or saved host id on relaunch.
+- The launcher's Enter can open two "New session" panes (seen with the flag on
+  and off; not investigated).
+- Peek's scroll shield and the terminal-only dock code (`PCodeDock`,
+  `PCodeDockedSurface`, the APC composer status) stay for the flag-off path;
+  removing them, and step 4, wait on deciding to drop that path.
 
 ### 4. Swap the container (only if 3b is done)
 
