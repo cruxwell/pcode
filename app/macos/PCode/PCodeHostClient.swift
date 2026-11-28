@@ -1108,7 +1108,6 @@ final class PCodeTranscriptEventReducer {
 /// multi-megabyte welcome snapshots never block the main thread.
 final class PCodeHostSocketClient {
     static let observerVersion = 1
-    private static let maxLineBytes = 64 * 1024 * 1024
 
     struct Welcome {
         let hostID: String
@@ -1212,9 +1211,11 @@ final class PCodeHostSocketClient {
             }
         }
 
-        let sock = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
-        guard sock >= 0 else {
-            emitError("Failed to create Unix socket.")
+        let sock: Int32
+        switch PCodeHostLineSocket.connect(path: socketPath) {
+        case .success(let fd): sock = fd
+        case .failure(let error):
+            emitError(error.message)
             return
         }
         // Reader thread exclusively owns `Darwin.close(sock)`.
@@ -1224,42 +1225,6 @@ final class PCodeHostSocketClient {
             session.isClosed = true
             session.lock.unlock()
             Darwin.close(sock)
-        }
-
-        var noSigPipe: Int32 = 1
-        setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
-
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        let pathBytes = Array(socketPath.utf8)
-        let maxLen = MemoryLayout.size(ofValue: addr.sun_path) - 1
-        guard pathBytes.count <= maxLen else {
-            emitError("Host socket path exceeds Unix socket limit.")
-            return
-        }
-        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
-            for i in 0..<pathBytes.count {
-                raw[i] = pathBytes[i]
-            }
-            raw[pathBytes.count] = 0
-        }
-
-        let connected = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
-                Darwin.connect(sock, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        guard connected == 0 else {
-            emitError("Could not connect to session host socket.")
-            return
-        }
-
-        // Same-user peer check (matching PCodePicker).
-        var euid: uid_t = 0
-        var egid: gid_t = 0
-        guard Darwin.getpeereid(sock, &euid, &egid) == 0, euid == Darwin.geteuid() else {
-            emitError("Refusing to connect to host owned by another user.")
-            return
         }
 
         session.lock.lock()
@@ -1272,15 +1237,13 @@ final class PCodeHostSocketClient {
 
         // Send `observe_transcript` handshake.
         let helloLine = "{\"type\":\"observe_transcript\",\"version\":\(Self.observerVersion)}\n"
-        if !writeAll(sock, Data(helloLine.utf8)) {
+        if !PCodeHostLineSocket.writeAll(sock, Data(helloLine.utf8)) {
             emitError("Failed to send observe_transcript handshake.")
             return
         }
 
-        // Read newline-delimited JSON off the main thread with an O(N) scan cursor.
-        var buffer = Data()
-        buffer.reserveCapacity(64 * 1024)
-        var scanOffset = 0
+        // Read newline-delimited JSON off the main thread.
+        var lines = PCodeLineBuffer()
         var chunk = [UInt8](repeating: 0, count: 64 * 1024)
         var receivedHandshake = false
 
@@ -1291,21 +1254,12 @@ final class PCodeHostSocketClient {
                 break
             }
             if n == 0 { break }
-            buffer.append(contentsOf: chunk[0..<n])
-            if buffer.count - scanOffset > Self.maxLineBytes {
+            if !lines.append(chunk[0..<n]) {
                 emitError("Host message exceeded maximum line limit.")
                 return
             }
 
-            while scanOffset < buffer.count,
-                  let newlineIdx = buffer[scanOffset...].firstIndex(of: 0x0A)
-            {
-                let lineData = buffer[scanOffset..<newlineIdx]
-                scanOffset = newlineIdx + 1
-                guard !lineData.isEmpty,
-                      let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any]
-                else { continue }
-
+            while let obj = lines.nextObject() {
                 if !receivedHandshake {
                     receivedHandshake = true
                     let type = (obj["type"] as? String) ?? ""
@@ -1339,16 +1293,8 @@ final class PCodeHostSocketClient {
                     }
                 } else if msgType == "request", let reqID = obj["id"] as? Int {
                     let reply = "{\"type\":\"reply\",\"id\":\(reqID),\"error\":{\"type\":\"PermissionError\",\"message\":\"Transcript observer is read-only.\"}}\n"
-                    _ = writeAll(sock, Data(reply.utf8))
+                    _ = PCodeHostLineSocket.writeAll(sock, Data(reply.utf8))
                 }
-            }
-
-            if scanOffset >= buffer.count {
-                buffer.removeAll(keepingCapacity: true)
-                scanOffset = 0
-            } else if scanOffset >= 64 * 1024 {
-                buffer.removeSubrange(0..<scanOffset)
-                scanOffset = 0
             }
         }
 
@@ -1357,23 +1303,6 @@ final class PCodeHostSocketClient {
                 guard let self, self.isCurrent(session) else { return }
                 onClosed()
             }
-        }
-    }
-
-    private func writeAll(_ sock: Int32, _ data: Data) -> Bool {
-        data.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress else { return true }
-            var written = 0
-            while written < data.count {
-                let n = Darwin.write(sock, base.advanced(by: written), data.count - written)
-                if n < 0 {
-                    if errno == EINTR { continue }
-                    return false
-                }
-                if n == 0 { return false }
-                written += n
-            }
-            return true
         }
     }
 
