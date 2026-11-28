@@ -406,6 +406,51 @@ are enough to judge the native text view before building the rest.
 - Known gap: attaching counts as a terminal, so opening a session another
   client holds marks it seen and routes its popups to the app.
 
+#### Native command routes (phase 5 groundwork)
+
+`PCodeNativeCommands.route(for:)` decides what the app does with each terminal
+command, and `run(_:context:)` does it through a `Context` (built for a real
+pane by `Context.live(session:client:)`). Host popup requests have their own
+entry points on the same type. Sheets go over the window as AppKit sheets
+(`PCodeNativeSheetPresenter`), so the pane's views don't change.
+
+| Command / request | Native route | Entry point |
+| --- | --- | --- |
+| `/help`, `/commands` | Commands sheet: the catalog by group, filterable | `PCodeHelpSheet` |
+| `/config` (bare) | Pcode.app Settings | `PCodeSettingsController.shared.show()` |
+| `/config ARGS` | `pcode config ARGS` run for its output: a toast if it's one line, a text sheet otherwise | `runConfig`, `PCodeTextSheet` |
+| `/bind`, `/unbind` | Not supported, toast: prompt_toolkit keybindings; the composer uses macOS text keys | |
+| `/quit`, `/exit` | Close the pane (stops its host) | `session.onCloseRequested` |
+| `/stop` | Same as `/quit`: closing a native pane ends its host | `session.onCloseRequested` |
+| `/detach` | Not supported, toast: a native pane's host lives as long as the pane | |
+| `/status` | Session sheet: mirrored state at once, then the host's `query("session_overview")` rows | `PCodeSessionInfoSheet` |
+| `/tools`, `/tools failed` | Inspector Commands tab (shell calls and jobs; other tools are in the transcript) | `pane.inspectorState` |
+| `/tools edits`, `/diffs` | Inspector Changes tab | `pane.inspectorState` |
+| `/links` | Picker of URLs from the transcript's prompts and answers (newest first); Enter opens | `PCodePicker.showLocal`, `NSWorkspace.open` |
+| `/copy` | Picker of answers, their code blocks nested; Enter copies | `PCodePicker.showLocal`, `NSPasteboard` |
+| `/paste-image` | Composer image paste | `session.pasteImage(from:)` |
+| `/tree` | Inspector Tree tab | `pane.inspectorState` |
+| `/agents` | Inspector Agents tab | `pane.inspectorState` |
+| `/resume` | Picker of saved sessions; Enter opens one in a pane | `workspace.history`, `workspace.open(_:)` |
+| `/attach`, `/switch` (bare) | Picker of background hosts | `workspace.projectGroups[].hostedSessions` |
+| `/attach HOST` | Opens that host's session (id or prefix) | `workspace.open(_:)` |
+| `/attach -` | Not supported, toast: use the sidebar | |
+| `/fork` | Not supported, toast: needs the terminal's fork-into-worktree flow | |
+| `/new PROMPT` | New pane in this folder; the prompt waits in its outbox | `workspace.newSession(directory:)`, `composer.submit` |
+| `/restart` | Restart this pane's host | `session.requestRelaunch(isManual: true)` |
+| `/restart all` | Not supported, toast: Restart Pcode restarts every session | |
+| `/show-thinking [mode]` | `set_thinking` intent (the host pushes `thinking_mode` to the transcript) and `show_thinking` saved to preferences.json; bare cycles off/scrollback | `context.notify`, `savePreference` |
+| `/group-tools [on\|off]` | The transcript's own toggle | `PCodeTranscriptPreferences.shared.groupTools` |
+| `/show-activity`, `/show-tasks`, `/autohide-tasks` | Not supported, toast: no activity panel (the task strip is phase 4) | |
+| `/show-edits` | Not supported, toast: edits always show, folded, plus the Changes tab | |
+| `/show-commands` | Not supported, toast: shell output lives in the Commands tab | |
+| `/theme`, `/syntax`, `/theme-preview` | Not supported, toast: the app follows macOS appearance and its Ghostty theme | |
+| `/redraw` | Nothing to do | |
+| `choose_model(values, providers, current)` | Picker as `model_ui` builds it: `Provider · model`, current marked and selected, typed `provider:model-id` as a custom row; replies with the id or nil | `chooseModel(...)` |
+| `browse_jobs()` | Jobs sheet from `peek().jobs`: Watch/Unwatch (`watch_job`), Stop and Stop All (`stop_jobs`). Replied at once, so the host's command queue isn't held | `browseJobs`, `PCodeJobsSheet` |
+| `read_asides(tag)` | The `/btw` drawer. Native panes have none yet (`PCodeDrawer` hangs off a terminal surface), so for now it's a toast; reply nil | `readAsides` → `Action.btw` |
+| `read_secret(...)` | Unchanged: `PCodeHostRequests.readSecret` | |
+
 Risks:
 
 - The long tail is anything a command draws that was not counted above. Any
