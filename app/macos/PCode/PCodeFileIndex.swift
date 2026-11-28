@@ -95,6 +95,10 @@ final class PCodeFileIndex: @unchecked Sendable {
 
     let root: URL
     let cacheSeconds: TimeInterval
+    /// Posted (object: the index) on the main queue after a refresh that changed the
+    /// listing. Indexes are shared per root, so every composer there observes this.
+    static let didUpdate = Notification.Name("PCodeFileIndexDidUpdate")
+
     /// Runs on the main queue after a refresh that changed the listing.
     var onUpdate: (() -> Void)? {
         get { lock.withLock { _onUpdate } }
@@ -205,7 +209,11 @@ final class PCodeFileIndex: @unchecked Sendable {
             _loadedAt = Date()
             guard let listing, _listing.paths != result.paths else { return nil }
             _listing = listing
-            return _onUpdate
+            let callback = _onUpdate
+            return { [self] in
+                callback?()
+                NotificationCenter.default.post(name: Self.didUpdate, object: self)
+            }
         }
     }
 

@@ -33,15 +33,25 @@ final class PCodeComposerCompletion: ObservableObject {
     /// Escape closed the menu for this text; it reopens once the text changes.
     private var dismissed: String?
     private var last: (text: String, caret: Int)?
+    private var filesObserver: NSObjectProtocol?
 
     init(catalog: PCodeCommandCatalog, files: PCodeFileIndex?) {
         self.catalog = catalog
         self.files = files
-        files?.onUpdate = { [weak self] in
+        guard let files else { return }
+        // A notification, not `files.onUpdate`: the index is shared by every pane in
+        // this folder, and one callback would leave all but the newest menu stale.
+        filesObserver = NotificationCenter.default.addObserver(
+            forName: PCodeFileIndex.didUpdate, object: files, queue: .main
+        ) { [weak self] _ in
             // A refresh changed the listing: an open `@` menu ranks again.
             guard let self, let last = self.last, !self.rows.isEmpty else { return }
             self.update(text: last.text, caret: last.caret)
         }
+    }
+
+    deinit {
+        if let filesObserver { NotificationCenter.default.removeObserver(filesObserver) }
     }
 
     var isOpen: Bool { !rows.isEmpty }
