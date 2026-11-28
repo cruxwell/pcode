@@ -1,0 +1,435 @@
+import AppKit
+import Combine
+import SwiftUI
+
+/// The native composer's text view: plain text on TextKit 2, with the terminal editor's
+/// keys (`pcode.prompt_keys`) for sending; everything else is `NSTextView`'s own
+/// macOS and Emacs-style editing.
+///
+/// | Key | Does |
+/// | --- | --- |
+/// | Enter | send (`!cmd` runs in the shell, `/cmd` is a command) |
+/// | Shift+Enter, Option+Enter, Ctrl+J | newline |
+/// | Ctrl+Enter | interrupt the turn and send |
+/// | Ctrl+C | clear the draft; with nothing typed, interrupt a busy session |
+/// | Ctrl+S | cycle the send mode for the next send (steering, queue, interrupt) |
+///
+/// Hooks for later phases are the `on…` closures below: each returns whether it handled
+/// the event, and the default (nil) leaves it to `NSTextView`.
+final class PCodeComposerTextView: NSTextView {
+    enum Action: Equatable {
+        case submit
+        case interruptSubmit
+        case newline
+        case clearOrCancel
+        case cycleSendMode
+        /// Up on the first line or Down on the last: history recall (phase 2).
+        case historyPrevious
+        case historyNext
+    }
+
+    var onAction: ((Action) -> Bool)?
+    /// Paste: an image on the pasteboard (phase 2, `PCodePastedImage`). True when taken.
+    var onPasteImage: ((NSPasteboard) -> Bool)?
+    /// Every edit, with the caret: where `@` and `/` completion (phase 3) will listen.
+    var onTextChange: ((_ text: String, _ caret: NSRange) -> Void)?
+    var placeholder = "" { didSet { needsDisplay = true } }
+    var placeholderColor = NSColor.placeholderTextColor { didSet { needsDisplay = true } }
+    /// Moved into a window: the session may have asked for focus before it was mounted.
+    var onWindowChange: (() -> Void)?
+
+    /// What `event` does in the composer, or nil for `NSTextView`'s own handling.
+    static func action(
+        keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags,
+        onFirstLine: Bool, onLastLine: Bool
+    ) -> Action? {
+        let mods = modifiers.intersection([.shift, .control, .option, .command])
+        let isReturn = keyCode == 36 || keyCode == 76
+        if isReturn {
+            switch mods {
+            case []: return .submit
+            case .control: return .interruptSubmit
+            case .shift, .option: return .newline
+            default: return nil
+            }
+        }
+        if mods == .control {
+            switch characters?.lowercased() {
+            case "j": return .newline
+            case "c": return .clearOrCancel
+            case "s": return .cycleSendMode
+            default: return nil
+            }
+        }
+        if mods.isEmpty {
+            if keyCode == 126, onFirstLine { return .historyPrevious }
+            if keyCode == 125, onLastLine { return .historyNext }
+        }
+        return nil
+    }
+
+    override func keyDown(with event: NSEvent) {
+        // An input method composing text gets every key, Return included.
+        if !hasMarkedText(),
+           let action = Self.action(
+               keyCode: event.keyCode,
+               characters: event.charactersIgnoringModifiers,
+               modifiers: event.modifierFlags,
+               onFirstLine: caretOnFirstLine,
+               onLastLine: caretOnLastLine)
+        {
+            if action == .newline {
+                insertNewlineIgnoringFieldEditor(nil)
+                return
+            }
+            if onAction?(action) == true { return }
+            if action == .historyPrevious || action == .historyNext {
+                return super.keyDown(with: event)
+            }
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // Ctrl+key chords arrive here first when a menu item claims them.
+        if window?.firstResponder === self,
+           event.modifierFlags.intersection([.shift, .control, .option, .command]) == .control,
+           let action = Self.action(
+               keyCode: event.keyCode, characters: event.charactersIgnoringModifiers,
+               modifiers: event.modifierFlags, onFirstLine: false, onLastLine: false),
+           action != .newline
+        {
+            return onAction?(action) == true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func paste(_ sender: Any?) {
+        let board = NSPasteboard.general
+        if board.string(forType: .string) == nil, onPasteImage?(board) == true { return }
+        pasteAsPlainText(sender)
+    }
+
+    override func didChangeText() {
+        super.didChangeText()
+        needsDisplay = true
+        onTextChange?(string, selectedRange())
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        onWindowChange?()
+    }
+
+    /// The caret's line rect in screen coordinates, for anchoring a completion menu.
+    func caretScreenRect() -> NSRect {
+        firstRect(forCharacterRange: selectedRange(), actualRange: nil)
+    }
+
+    private var caretOnFirstLine: Bool {
+        let caret = selectedRange()
+        guard caret.length == 0 else { return false }
+        return !(string as NSString).substring(to: caret.location).contains("\n") && visualLine(atEnd: false)
+    }
+
+    private var caretOnLastLine: Bool {
+        let caret = selectedRange()
+        guard caret.length == 0 else { return false }
+        return !(string as NSString).substring(from: caret.location).contains("\n") && visualLine(atEnd: true)
+    }
+
+    /// Whether the caret sits on the first (or last) wrapped line of its paragraph.
+    private func visualLine(atEnd: Bool) -> Bool {
+        let caret = firstRect(forCharacterRange: selectedRange(), actualRange: nil)
+        let edge = NSRange(location: atEnd ? (string as NSString).length : 0, length: 0)
+        let target = firstRect(forCharacterRange: edge, actualRange: nil)
+        guard caret != .zero, target != .zero else { return true }
+        return abs(caret.midY - target.midY) < max(2, caret.height / 2)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard string.isEmpty, !placeholder.isEmpty, let font else { return }
+        let origin = NSPoint(
+            x: textContainerOrigin.x + (textContainer?.lineFragmentPadding ?? 0),
+            y: textContainerOrigin.y)
+        (placeholder as NSString).draw(at: origin, withAttributes: [.font: font, .foregroundColor: placeholderColor])
+    }
+}
+
+/// The composer's scroll view and text view, made once per session and kept by it, so the
+/// draft survives switching panes (the pane's SwiftUI views are rebuilt each time).
+final class PCodeComposerEditorView: NSScrollView {
+    let textView: PCodeComposerTextView
+    /// The text's own height changed (typing, wrapping, a font change).
+    var onContentHeightChange: ((CGFloat) -> Void)?
+    private var typographySubscription: AnyCancellable?
+
+    static let verticalInset: CGFloat = 9
+
+    init() {
+        textView = PCodeComposerTextView(usingTextLayoutManager: true)
+        super.init(frame: NSRect(x: 0, y: 0, width: 400, height: 40))
+        drawsBackground = false
+        hasVerticalScroller = true
+        autohidesScrollers = true
+        borderType = .noBorder
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.allowsUndo = true
+        textView.drawsBackground = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.smartInsertDeleteEnabled = false
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainerInset = NSSize(width: 6, height: Self.verticalInset)
+        textView.textContainer?.widthTracksTextView = true
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.placeholder = "Message pcode — Enter sends, Shift+Enter adds a line"
+        textView.setAccessibilityLabel("Message")
+        documentView = textView
+        textView.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(textFrameChanged), name: NSView.frameDidChangeNotification, object: textView)
+        applyFont(PCodeTypography.shared.snapshot)
+        typographySubscription = PCodeTypography.shared.snapshotPublisher
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] snapshot in self?.applyFont(snapshot) }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func applyColors(foreground: NSColor, accent: NSColor) {
+        textView.textColor = foreground
+        textView.insertionPointColor = accent
+        textView.placeholderColor = foreground.withAlphaComponent(0.38)
+        textView.typingAttributes[.foregroundColor] = foreground
+    }
+
+    private func applyFont(_ snapshot: PCodeTypographySnapshot) {
+        let font = snapshot.proseNSFont()
+        textView.font = font
+        textView.typingAttributes[.font] = font
+        reportHeight()
+    }
+
+    /// The text's height with its insets: what the composer grows to, up to its cap.
+    var contentHeight: CGFloat {
+        let lineHeight = (textView.font.map { NSLayoutManager().defaultLineHeight(for: $0) } ?? 18)
+        var used = lineHeight
+        if let layout = textView.textLayoutManager {
+            layout.ensureLayout(for: layout.documentRange)
+            used = max(lineHeight, layout.usageBoundsForTextContainer.height)
+        }
+        return ceil(used + 2 * Self.verticalInset)
+    }
+
+    @objc private func textFrameChanged() { reportHeight() }
+
+    func reportHeight() { onContentHeightChange?(contentHeight) }
+
+    override func layout() {
+        super.layout()
+        reportHeight()
+    }
+}
+
+/// Mounts a session's editor view in SwiftUI and reports how tall its text wants to be.
+struct PCodeComposerEditor: NSViewRepresentable {
+    let editor: PCodeComposerEditorView
+    let foreground: NSColor
+    let accent: NSColor
+    @Binding var contentHeight: CGFloat
+
+    func makeNSView(context: Context) -> PCodeComposerEditorView {
+        editor.removeFromSuperview()  // Still in the pane view being torn down.
+        editor.applyColors(foreground: foreground, accent: accent)
+        editor.onContentHeightChange = { height in
+            guard abs(height - contentHeight) > 0.5 else { return }
+            DispatchQueue.main.async { contentHeight = height }
+        }
+        DispatchQueue.main.async { editor.reportHeight() }
+        return editor
+    }
+
+    func updateNSView(_ nsView: PCodeComposerEditorView, context: Context) {
+        nsView.applyColors(foreground: foreground, accent: accent)
+    }
+}
+
+/// A native-composer session pane: the transcript, and under it the composer card with its
+/// status strip, trust and failure cards. Mounted on the first frame: nothing here waits
+/// for the session host.
+struct PCodeNativeSessionPaneContent: View {
+    @EnvironmentObject var ghostty: Ghostty.App
+    @ObservedObject var pane: PCodeSessionPane
+    @ObservedObject var session: PCodeComposerSession
+    /// False for a live peek: shows the pane without taking its text view.
+    var interactive = true
+    @State private var contentHeight: CGFloat = 40
+    @State private var footprint: CGFloat = 0
+
+    private static let cornerRadius: CGFloat = 12
+
+    private var theme: PCodeTranscriptTheme {
+        PCodeTranscriptTheme.make(
+            background: NSColor(ghostty.config.backgroundColor),
+            foreground: NSColor(ghostty.config.foregroundColor))
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let horizontal = PCodeDock.horizontalLayout(in: geometry.size.width)
+            let maxEditor = max(40, geometry.size.height * 0.4)
+            ZStack(alignment: .bottomTrailing) {
+                PCodeMainWindowTranscriptView(
+                    sessionID: pane.sessionID,
+                    hostID: session.hostID,
+                    bottomContentInset: footprint,
+                    nativePane: pane)
+                VStack(spacing: PCodeDock.statusStripSpacing) {
+                    cards
+                    if let toast = session.toast {
+                        Text(toast)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(ghostty.config.foregroundColor.opacity(0.85))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(ghostty.config.backgroundColor)
+                                .shadow(color: .black.opacity(0.25), radius: 6, y: 1))
+                            .transition(.opacity)
+                    }
+                    PCodeComposerStatusStrip(
+                        status: session.composerStatus,
+                        startedAt: session.phaseStartedAt,
+                        onToggleSendMode: interactive ? { session.cycleSendMode() } : nil)
+                        .padding(.horizontal, PCodeDock.bottomMargin + 4)
+                    card(height: min(maxEditor, contentHeight))
+                }
+                .padding(.bottom, PCodeDock.bottomMargin)
+                .background(GeometryReader { proxy in
+                    Color.clear.preference(key: PCodeComposerFootprintKey.self, value: proxy.size.height)
+                })
+                .frame(width: horizontal.outerWidth)
+                .padding(.trailing, horizontal.trailingInset)
+            }
+            .onPreferenceChange(PCodeComposerFootprintKey.self) { footprint = $0 }
+            .animation(.easeOut(duration: 0.12), value: contentHeight)
+            .animation(.easeOut(duration: 0.15), value: session.toast)
+        }
+    }
+
+    private func card(height: CGFloat) -> some View {
+        Group {
+            if interactive {
+                PCodeComposerEditor(
+                    editor: session.editor,
+                    foreground: theme.foreground,
+                    accent: theme.accent,
+                    contentHeight: $contentHeight)
+            } else {
+                Text(session.editor.textView.string)
+                    .font(Font(PCodeTypography.shared.snapshot.proseNSFont()))
+                    .foregroundStyle(ghostty.config.foregroundColor)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, PCodeComposerEditorView.verticalInset)
+            }
+        }
+        .frame(height: height)
+        .background(
+            RoundedRectangle(cornerRadius: Self.cornerRadius)
+                .fill(Color(nsColor: theme.promptBackground))
+                .shadow(color: .black.opacity(0.28), radius: 18, x: 0, y: -2))
+        .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+        .padding(.horizontal, PCodeDock.bottomMargin)
+        .padding(.top, PCodeDock.topMargin)
+    }
+
+    /// Startup states the terminal used to print: trust, a failed start, a failed agent.
+    @ViewBuilder private var cards: some View {
+        switch session.connection {
+        case .needsTrust(let key, let code):
+            PCodeComposerNotice(
+                title: "Trust this repository?",
+                detail: "\(key) ships code that runs at launch with your permissions: \(code.joined(separator: ", ")).",
+                isError: false,
+                actions: [
+                    ("Trust", { session.answerTrust(true) }),
+                    ("Not now", { session.answerTrust(false) }),
+                ])
+        case .failed(let message):
+            PCodeComposerNotice(
+                title: "Session host didn't start",
+                detail: message,
+                isError: true,
+                actions: [("Reopen", { _ = session.requestRelaunch(isManual: true) })])
+        default:
+            if !session.state.startupError.isEmpty {
+                PCodeComposerNotice(
+                    title: "Agent startup failed",
+                    detail: "\(session.state.startupError)\nChoose another model with /model.",
+                    isError: true,
+                    actions: [])
+            }
+        }
+    }
+}
+
+private struct PCodeComposerFootprintKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+/// A card above the composer for a startup state, with optional buttons.
+private struct PCodeComposerNotice: View {
+    @EnvironmentObject var ghostty: Ghostty.App
+    let title: String
+    let detail: String
+    let isError: Bool
+    let actions: [(String, () -> Void)]
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Circle()
+                .fill(isError ? Color.red : Color.orange)
+                .frame(width: 7, height: 7)
+                .padding(.top, 5)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(ghostty.config.foregroundColor.opacity(0.9))
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(ghostty.config.foregroundColor.opacity(0.65))
+                    .lineLimit(8)
+                    .textSelection(.enabled)
+            }
+            Spacer(minLength: 8)
+            ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
+                Button(action.0, action: action.1)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 9)
+                .fill(ghostty.config.backgroundColor)
+                .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 3))
+        .overlay(
+            RoundedRectangle(cornerRadius: 9)
+                .strokeBorder(isError ? Color.red.opacity(0.45) : ghostty.config.splitDividerColor, lineWidth: 1))
+        .padding(.horizontal, PCodeDock.bottomMargin)
+    }
+}

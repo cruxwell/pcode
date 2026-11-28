@@ -91,6 +91,9 @@ final class PCodeLiveTranscriptController: ObservableObject {
     /// When the current timeout window started (reset on `.keepWaiting` / `.relaunched`).
     private var waitStartedAt: Date?
     private var waitingAfterStop = false
+    /// Prompts the native composer sent before its host attached (`showLocalPrompt`).
+    private var localPrompts: [(id: String, text: String)] = []
+    private var localPromptCounter = 0
 
     init(
         retryInterval: TimeInterval = 0.5,
@@ -151,6 +154,7 @@ final class PCodeLiveTranscriptController: ObservableObject {
 
         guard normalizedSession != nil || normalizedHost != nil else {
             documentView.setItems([], pinToBottom: true)
+            restoreLocalPrompts(after: [])
             // A brand-new 0-turn pane has no session/host id until pcode boots; still
             // watch for startup timeout so it can auto-relaunch if its host never appears.
             if onRequestRelaunch != nil {
@@ -160,6 +164,7 @@ final class PCodeLiveTranscriptController: ObservableObject {
         }
 
         documentView.setItems([], pinToBottom: true)
+        restoreLocalPrompts(after: [])
         // Draw the saved conversation straight from disk, as Peek does, even when
         // a host is up: its welcome takes a round trip and a pass over the journal
         // in Python. When it lands with the same history, nothing is redrawn.
@@ -203,6 +208,64 @@ final class PCodeLiveTranscriptController: ObservableObject {
                 reducer: reducer,
                 afterStop: waitingAfterStop)
         }
+    }
+
+    // MARK: - Native composer: prompts sent before the host attached
+
+    /// Show `text` as the user's message now, before the host has it. The host's echo
+    /// (`turn_started`, or `user` for steering and `!command`s) replaces it, so it shows once.
+    func showLocalPrompt(_ text: String) {
+        localPromptCounter += 1
+        let entry = (id: "local-prompt-\(localPromptCounter)", text: text)
+        localPrompts.append(entry)
+        guard let documentView else { return }
+        documentView.upsertItem(Self.localPromptItem(entry), reveal: true)
+        documentView.scrollToBottomAndPin()
+    }
+
+    /// Drop prompts that will never be echoed (Ctrl+C cleared the queue before attach).
+    func dropLocalPrompts() {
+        for entry in localPrompts { documentView?.removeItem(id: entry.id) }
+        localPrompts.removeAll()
+    }
+
+    private static func localPromptItem(_ entry: (id: String, text: String)) -> PCodeTranscriptItem {
+        PCodeTranscriptItem(
+            id: entry.id,
+            payload: .prompt(label: "", text: entry.text, isSide: false),
+            spacingAfter: 12)
+    }
+
+    /// The echoed text of a host event that draws a user row, if any.
+    static func echoedPrompt(_ event: PCodeHostEvent) -> String? {
+        switch event {
+        case .turnStarted(let prompt, let isSide, _) where !isSide: return prompt
+        case .user(let text): return text
+        default: return nil
+        }
+    }
+
+    /// Before `event` is drawn: if it echoes a local prompt, remove the stand-in row.
+    private func consumeEcho(_ event: PCodeHostEvent) {
+        guard let echoed = Self.echoedPrompt(event)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let index = localPrompts.firstIndex(where: { $0.text == echoed }) else { return }
+        documentView?.removeItem(id: localPrompts[index].id)
+        localPrompts.remove(at: index)
+    }
+
+    /// After a redraw dropped every row: put back the stand-ins `history` doesn't already
+    /// end with (a prompt the host ran before this observer connected).
+    private func restoreLocalPrompts(after history: [PCodeHostEvent]) {
+        guard !localPrompts.isEmpty else { return }
+        var recent = history.suffix(localPrompts.count * 4).compactMap(Self.echoedPrompt)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        localPrompts.removeAll { entry in
+            guard let index = recent.firstIndex(of: entry.text) else { return false }
+            recent.remove(at: index)
+            return true
+        }
+        guard let documentView else { return }
+        for entry in localPrompts { documentView.upsertItem(Self.localPromptItem(entry), reveal: false) }
     }
 
     /// Forget what a host reported, keeping only the attached session id.
@@ -265,6 +328,7 @@ final class PCodeLiveTranscriptController: ObservableObject {
                         documentView.showThinking = thinking
                     }
                     reducer.loadHistory(welcome.history)
+                    self.restoreLocalPrompts(after: welcome.history)
                     self.onHostEvent?(.history(welcome.history))
                 }
                 self.shownHistory = welcome.catchUpCalls.isEmpty ? welcome.history : nil
@@ -275,6 +339,7 @@ final class PCodeLiveTranscriptController: ObservableObject {
                 var state = PCodeHostSessionState(welcome: welcome)
                 for event in welcome.catchUpCalls {
                     state.apply(event)
+                    self.consumeEcho(event)
                     reducer.apply(event, reveal: false, isLive: true)
                     self.onHostEvent?(event)
                 }
@@ -304,7 +369,13 @@ final class PCodeLiveTranscriptController: ObservableObject {
                 guard let self, self.attachGeneration == generation else { return }
                 self.shownHistory = nil
                 self.applySessionEvent(event)
+                self.consumeEcho(event)
                 reducer.apply(event, reveal: true)
+                switch event {
+                case .history(let events): self.restoreLocalPrompts(after: events)
+                case .conversationReset: self.restoreLocalPrompts(after: [])
+                default: break
+                }
                 if self.isHydratingInspectorFromJournal {
                     self.bufferedInspectorLiveEvents.append(event)
                 }
@@ -651,6 +722,19 @@ struct PCodeLiveTranscriptRepresentable: NSViewRepresentable {
     var bottomContentInset: CGFloat = 0
     var extraBottomScrollPadding: CGFloat = 0
     weak var composerSurface: Ghostty.SurfaceView?
+    /// A native-composer pane, which has no editor surface to find it by.
+    weak var nativePane: PCodeSessionPane?
+
+    /// The pane this transcript belongs to: the native one, else the one running `composerSurface`.
+    private func paneResolver() -> () -> PCodeSessionPane? {
+        weak var composer = composerSurface
+        weak var native = nativePane
+        return {
+            if let native { return native }
+            guard let composer else { return nil }
+            return PCodeWorkspaceController.existing?.workspace.pane(for: composer)
+        }
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -662,6 +746,7 @@ struct PCodeLiveTranscriptRepresentable: NSViewRepresentable {
         scrollView.extraBottomScrollPadding = extraBottomScrollPadding
         // So a live peek of this pane scrolls this transcript, not another pane's.
         composerSurface?.pcodeTranscriptScrollView = scrollView
+        nativePane?.transcriptScrollView = scrollView
         wireFocusHandlers(on: scrollView)
         wireWorkspaceRecovery()
         context.coordinator.lastTheme = theme
@@ -713,8 +798,35 @@ struct PCodeLiveTranscriptRepresentable: NSViewRepresentable {
 
     private func wireWorkspaceRecovery() {
         weak var composer = composerSurface
+        let paneFor = paneResolver()
         controller.initialRelaunchAttempt = composer?.pcodeHostRelaunchAttempt ?? 0
         controller.maxRelaunchAttempts = PCodeWorkspace.maxHostRelaunchAttempts
+        if let session = nativePane?.composer {
+            // The native composer spawned this host and owns relaunching it.
+            controller.onRequestRelaunch = { [weak session] isManual, _ in
+                session?.requestRelaunch(isManual: isManual) ?? .keepWaiting
+            }
+            controller.onConnected = nil
+        } else {
+            wireSurfaceRecovery(composer: composer)
+        }
+        controller.onHostEvent = { event in
+            let forward: @MainActor () -> Void = {
+                guard let pane = paneFor() else { return }
+                pane.applyInspectorEvent(event)
+            }
+            if Thread.isMainThread {
+                MainActor.assumeIsolated(forward)
+            } else {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated(forward)
+                }
+            }
+        }
+    }
+
+    private func wireSurfaceRecovery(composer: Ghostty.SurfaceView?) {
+        weak var composer = composer
         controller.onRequestRelaunch = { isManual, unavailableDuration in
             guard let composer, let workspace = PCodeWorkspaceController.existing?.workspace else {
                 return .failed("The session host didn't start in time.")
@@ -728,33 +840,22 @@ struct PCodeLiveTranscriptRepresentable: NSViewRepresentable {
             guard let composer else { return }
             PCodeWorkspaceController.existing?.workspace.noteHostConnected(for: composer)
         }
-        controller.onHostEvent = { event in
-            let forward: @MainActor () -> Void = {
-                guard let composer,
-                      let pane = PCodeWorkspaceController.existing?.workspace.pane(for: composer)
-                else { return }
-                pane.applyInspectorEvent(event)
-            }
-            if Thread.isMainThread {
-                MainActor.assumeIsolated(forward)
-            } else {
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated(forward)
-                }
-            }
-        }
     }
 
     private func wireFocusHandlers(on scrollView: PCodeTranscriptScrollView) {
         weak var composer = composerSurface
+        let paneFor = paneResolver()
+        /// The view that takes typing: the editor surface, or the native composer's text view.
+        let input: () -> NSView? = { composer ?? paneFor()?.composer?.textView }
         scrollView.transcriptDocumentView.onReturnFocusToComposer = {
-            guard let composer else { return }
-            Ghostty.moveFocus(to: composer)
+            if let composer {
+                Ghostty.moveFocus(to: composer)
+            } else {
+                paneFor()?.focusInput()
+            }
         }
         scrollView.transcriptDocumentView.onInspectDiff = { callID, path in
-            guard let composer,
-                  let pane = PCodeWorkspaceController.existing?.workspace.pane(for: composer)
-            else { return }
+            guard let pane = paneFor() else { return }
             MainActor.assumeIsolated {
                 if !callID.isEmpty, let single = pane.changesStore.singleEdit(for: callID) {
                     pane.inspectorState.openChanges(filePath: single.path, scope: .singleEdit(callID: callID))
@@ -768,17 +869,13 @@ struct PCodeLiveTranscriptRepresentable: NSViewRepresentable {
             }
         }
         scrollView.transcriptDocumentView.onInspectAgent = { callID in
-            guard let composer,
-                  let pane = PCodeWorkspaceController.existing?.workspace.pane(for: composer)
-            else { return }
+            guard let pane = paneFor() else { return }
             MainActor.assumeIsolated {
                 pane.inspectorState.openAgent(callID: callID)
             }
         }
         scrollView.transcriptDocumentView.onInspectCommand = { callID, command in
-            guard let composer,
-                  let pane = PCodeWorkspaceController.existing?.workspace.pane(for: composer)
-            else { return }
+            guard let pane = paneFor() else { return }
             MainActor.assumeIsolated {
                 if pane.commandsStore.command(for: callID) != nil {
                     pane.inspectorState.openCommand(callID: callID)
@@ -791,15 +888,12 @@ struct PCodeLiveTranscriptRepresentable: NSViewRepresentable {
             }
         }
         scrollView.transcriptDocumentView.onVisibleTurnChanged = { turnID in
-            guard let composer,
-                  let pane = PCodeWorkspaceController.existing?.workspace.pane(for: composer)
-            else { return }
+            guard let pane = paneFor() else { return }
             MainActor.assumeIsolated {
                 pane.treeStore.visibleTurnID = turnID
             }
         }
-        if let composer,
-           let pane = PCodeWorkspaceController.existing?.workspace.pane(for: composer) {
+        if let pane = paneFor() {
             weak var docView = scrollView.transcriptDocumentView
             pane.onScrollToTurn = { turnID in
                 _ = docView?.scrollToTurn(turnID)
@@ -814,9 +908,11 @@ struct PCodeLiveTranscriptRepresentable: NSViewRepresentable {
             }
         }
         scrollView.composerHasSelection = {
-            composer?.surface.map(ghostty_surface_has_selection) ?? false
+            if let composer { return composer.surface.map(ghostty_surface_has_selection) ?? false }
+            guard let text = paneFor()?.composer?.textView else { return false }
+            return text.selectedRange().length > 0
         }
-        scrollView.canHandleFindShortcut = { [weak scrollView, weak composer] in
+        scrollView.canHandleFindShortcut = { [weak scrollView] in
             guard let scrollView,
                   !scrollView.isHiddenOrHasHiddenAncestor,
                   let window = scrollView.window,
@@ -826,12 +922,12 @@ struct PCodeLiveTranscriptRepresentable: NSViewRepresentable {
             if responder === scrollView || responder.isDescendant(of: scrollView) {
                 return true
             }
-            if let composer, responder === composer || responder.isDescendant(of: composer) {
+            if let view = input(), responder === view || responder.isDescendant(of: view) {
                 return true
             }
             return false
         }
-        scrollView.isPaneActiveProvider = { [weak scrollView, weak composer] in
+        scrollView.isPaneActiveProvider = { [weak scrollView] in
             guard let scrollView,
                   !scrollView.isHiddenOrHasHiddenAncestor,
                   let window = scrollView.window,
@@ -842,7 +938,7 @@ struct PCodeLiveTranscriptRepresentable: NSViewRepresentable {
             if responder === scrollView || responder.isDescendant(of: scrollView) {
                 return true
             }
-            if let composer, responder === composer || responder.isDescendant(of: composer) {
+            if let view = input(), responder === view || responder.isDescendant(of: view) {
                 return true
             }
             return false
@@ -877,8 +973,28 @@ struct PCodeMainWindowTranscriptView: View {
     var composerSurface: Ghostty.SurfaceView? = nil
     /// The pane's boot card is showing: it already says the session is starting.
     var booting = false
+    /// A native-composer pane: its composer owns the controller (to show prompts sent
+    /// before the host attached) and stands in for `composerSurface` everywhere.
+    var nativePane: PCodeSessionPane? = nil
     @ObservedObject private var typography = PCodeTypography.shared
-    @StateObject private var controller = PCodeLiveTranscriptController()
+    @StateObject private var controller: PCodeLiveTranscriptController
+
+    init(
+        sessionID: String?,
+        hostID: String? = nil,
+        bottomContentInset: CGFloat,
+        composerSurface: Ghostty.SurfaceView? = nil,
+        booting: Bool = false,
+        nativePane: PCodeSessionPane? = nil
+    ) {
+        self.sessionID = sessionID
+        self.hostID = hostID
+        self.bottomContentInset = bottomContentInset
+        self.composerSurface = composerSurface
+        self.booting = booting
+        self.nativePane = nativePane
+        _controller = StateObject(wrappedValue: nativePane?.composer?.transcript ?? PCodeLiveTranscriptController())
+    }
     @State private var pendingOverlayHeight: CGFloat = 0
 
     private var pendingScrollPadding: CGFloat {
@@ -907,7 +1023,8 @@ struct PCodeMainWindowTranscriptView: View {
                 controller: controller,
                 bottomContentInset: bottomContentInset,
                 extraBottomScrollPadding: pendingScrollPadding,
-                composerSurface: composerSurface)
+                composerSurface: composerSurface,
+                nativePane: nativePane)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if bottomContentInset > 0 {

@@ -368,6 +368,37 @@ the app working. The terminal editor stays the default until phase 5.
 Phases 0 and 1 are the first milestone: they deliver the instant startup and
 are enough to judge the native text view before building the rest.
 
+#### Phases 0 and 1 as built (2026-11-27, behind `native_composer`)
+
+- Spawning: `pcode --host --spawn-only[=ask|trust|skip]` (`pcode.app_spawn`)
+  spawns the host detached and prints one JSON line (`id`, `socket`, `log`,
+  `pid`, `existing`). The app runs it through `PCodeWorkspaceMode.launchConfig`
+  so the host gets the login-shell env and direnv. Project trust comes back as
+  `{"trust": ...}` and is asked in a native card; the app reruns with `=trust`
+  or `=skip`. No model means the host runs `PreviewRuntime`; `startup_error`
+  shows as a card above the composer.
+- Pane model: `PCodeSessionPane.surface` is optional, and a native pane has
+  `composer: PCodeComposerSession` instead. Nothing runs a hidden terminal.
+  Focus goes through `pane.focusInput()`, "is this the input" checks go through
+  `pane.ownsInput(_:)`, and size, occlusion and reconcile skip surface-less panes.
+  The bottom shell split is still a Ghostty surface.
+- Client: `PCodeHostRPCClient` attaches as a full client (protocol 2) and
+  shares socket framing with the observer (`PCodeHostLineSocket`,
+  `PCodeLineBuffer`). The transcript keeps its own `observe_transcript`
+  connection, which already handles history, catch-up and reconnects. Host
+  requests all go to `PCodeHostRequests`: `run_command` handles `/quit`,
+  `/exit` and `/redraw` and shows a toast for the rest, `choose_model` returns
+  nil, and `read_secret` opens an `NSAlert` with an `NSSecureTextField`.
+- Pre-connect queue: `PCodeComposerSession.outbox`. Prompts show at once as
+  local rows (`PCodeLiveTranscriptController.showLocalPrompt`), and the host's
+  echo (`turn_started` / `user`) replaces each one.
+- Hooks for later phases: `PCodeComposerTextView.onPasteImage`, `onTextChange`
+  and `caretScreenRect()` (completion anchor); `PCodeComposerSession.onHistory`
+  for Up/Down history, `onSessionState` for the catalog snapshot, and `state.plan`
+  for the task strip.
+- Known gap: attaching counts as a terminal, so opening a session another
+  client holds marks it seen and routes its popups to the app.
+
 Risks:
 
 - The long tail is anything a command draws that was not counted above. Any

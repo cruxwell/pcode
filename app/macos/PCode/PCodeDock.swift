@@ -562,11 +562,13 @@ private struct PCodeDockCard: View {
 /// Thin native status & steering strip perched directly above the docked editor card.
 /// Shows coarse turn status (spinner + phase + elapsed clock) on the left while busy,
 /// and live pending counts + send-mode pill (`steering` / `queue`) on the right.
-private struct PCodeComposerStatusStrip: View {
+/// The native composer passes `onToggleSendMode`, which makes the pill a button.
+struct PCodeComposerStatusStrip: View {
     @EnvironmentObject var ghostty: Ghostty.App
     @Environment(\.pcodeWindowOnScreen) private var onScreen
     let status: PCodeComposerStatus
     let startedAt: Date?
+    var onToggleSendMode: (() -> Void)? = nil
 
     private var stripColorScheme: ColorScheme {
         NSColor(ghostty.config.backgroundColor).isLightColor ? .light : .dark
@@ -651,28 +653,39 @@ private struct PCodeComposerStatusStrip: View {
                         )
                 }
 
-                Text(sendModeLabel)
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 1.5)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(Color.primary.opacity(0.06))
-                    )
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
-                    )
+                if let onToggleSendMode {
+                    Button(action: onToggleSendMode) { sendModePill }
+                        .buttonStyle(.plain)
+                        .help("Send mode for the next message (Ctrl+S)")
+                } else {
+                    sendModePill
+                }
             }
         }
         .frame(height: PCodeDock.statusStripHeight)
         .clipped()
         .background(ghostty.config.backgroundColor)
         .environment(\.colorScheme, stripColorScheme)
-        .allowsHitTesting(false)
+        .allowsHitTesting(onToggleSendMode != nil)
+    }
+
+    private var sendModePill: some View {
+        Text(sendModeLabel)
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 1.5)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.primary.opacity(0.06))
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+            )
+            .contentShape(Capsule())
     }
 
     @ViewBuilder
