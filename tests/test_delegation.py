@@ -1205,3 +1205,124 @@ def test_worker_browser_does_not_address_nested_workers():
     browser.selected = "c1:c2"
     assert browser.prefill("message") is None
     assert "parent worker" in browser.notice
+
+
+@pytest.mark.parametrize("kind", ["transient", "rate_limit"])
+def test_resumable_agent_resets_retry_budgets_after_progress(tmp_path, monkeypatch, kind):
+    from pydantic_ai.exceptions import ModelHTTPError
+
+    from pcode import delegation
+
+    monkeypatch.setattr("pcode.retries.RETRY_DELAY", 0)
+    monkeypatch.setattr(delegation, "RATE_LIMIT_BACKOFF", (0.0, 0.0, 0.0))
+    (tmp_path / "sample.txt").write_text("workspace evidence")
+    step_failures: dict[int, int] = {}
+
+    def make_error() -> Exception:
+        if kind == "transient":
+            return ClaudeConnectionError("test", DROPPED)
+        return ModelHTTPError(
+            429, "test", body={"error": {"type": "rate_limit", "message": "Too many requests"}}
+        )
+
+    async def child(messages, info):
+        if "(1)" in messages[0].parts[-1].content:
+            yield "Sibling answer"
+            return
+        step = len(returns(messages))
+        seen = step_failures.get(step, 0)
+        # Fail twice on each of three steps (6 failures total > 3-retry cap):
+        # each successful step resets the retry/backoff counter.
+        if seen < 2:
+            step_failures[step] = seen + 1
+            raise make_error()
+        if step < 2:
+            yield {
+                0: DeltaToolCall(
+                    name="read_file",
+                    json_args='{"path":"sample.txt"}',
+                    tool_call_id=f"read-{step}",
+                )
+            }
+        else:
+            yield "Child answer"
+
+    async def run():
+        events = [e async for e in worker_runtime(tmp_path, child).stream("Explore")]
+        ended = delegations(events)
+        assert ended["parent-0"].outcome == "ok"
+        assert ended["parent-0"].result == "[worker w1]\nChild answer"
+        activities = {
+            e.activity
+            for e in events
+            if isinstance(e, ToolStarted) and e.call_id == "parent-0" and e.activity
+        }
+        if kind == "transient":
+            assert {"Reconnecting 1/3", "Reconnecting 2/3"} <= activities
+            assert "Reconnecting 3/3" not in activities
+
+    asyncio.run(run())
+    assert step_failures == {0: 2, 1: 2, 2: 2}
+
+
+def test_resumable_agent_still_caps_consecutive_rate_limits_without_progress(tmp_path, monkeypatch):
+    from pydantic_ai.exceptions import ModelHTTPError
+
+    from pcode import delegation
+
+    monkeypatch.setattr(delegation, "RATE_LIMIT_BACKOFF", (0.0, 0.0, 0.0))
+    attempts = 0
+
+    async def child(messages, info):
+        nonlocal attempts
+        if "(1)" in messages[0].parts[-1].content:
+            yield "Sibling answer"
+            return
+        attempts += 1
+        raise ModelHTTPError(
+            429, "test", body={"error": {"type": "rate_limit", "message": "Too many requests"}}
+        )
+
+    async def run():
+        events = [e async for e in worker_runtime(tmp_path, child).stream("Explore")]
+        ended = delegations(events)
+        assert ended["parent-0"].outcome == "contained"
+        assert ended["parent-1"].outcome == "ok"
+
+    asyncio.run(run())
+    # Initial request + 3 rate-limit backoff retries, then contained failure.
+    assert attempts == 4
+
+
+def test_rate_limit_wait_fast_fails_on_claude_quota_and_long_reset():
+    from pcode.claude_sdk.errors import ClaudeHTTPError
+    from pcode.delegation import rate_limit_wait
+
+    quota = ClaudeHTTPError(
+        429,
+        "claude-opus-5-5",
+        {
+            "type": "error",
+            "error": {
+                "type": "rate_limit",
+                "message": "You've hit your 5-hour limit · resets 12:10am · out of usage credits",
+            },
+        },
+    )
+    assert rate_limit_wait(quota, 0) is None
+
+    long_reset = ClaudeHTTPError(
+        429,
+        "claude-opus-5-5",
+        {"type": "error", "error": {"type": "rate_limit", "message": "Too many requests"}},
+        retry_after=3600.0,
+    )
+    assert rate_limit_wait(long_reset, 0) is None
+
+    short_reset = ClaudeHTTPError(
+        429,
+        "claude-opus-5-5",
+        {"type": "error", "error": {"type": "rate_limit", "message": "Too many requests"}},
+        retry_after=30.0,
+    )
+    assert rate_limit_wait(short_reset, 0) == 30.0

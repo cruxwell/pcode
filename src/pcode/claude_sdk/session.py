@@ -197,6 +197,7 @@ class ClaudeSession:
         self._turn_done = asyncio.Event()
         self._turn_done.set()
         self._api_error: tuple[str | None, str] | None = None
+        self._rate_limit_resets_at: int | float | None = None
         self._stderr: deque[str] = deque(maxlen=20)
         self._closed = False
 
@@ -486,6 +487,7 @@ class ClaudeSession:
                     if kind == "message_start":
                         stop_reason = None
                         self._message_tools = []
+                        self._rate_limit_resets_at = None
                         wanted, self._expecting = self._expecting, False
                         if not wanted:
                             # A request of its own (a nudge after a thinking-only
@@ -534,9 +536,16 @@ class ClaudeSession:
                 elif isinstance(message, SystemMessage) and message.subtype == "init":
                     self.cli_session_id = message.data.get("session_id") or self.cli_session_id
                 elif isinstance(message, RateLimitEvent):
+                    info = message.rate_limit_info
+                    if info.status == "rejected" and info.overage_status != "allowed":
+                        resets_at = info.resets_at or (
+                            info.overage_resets_at if info.overage_status == "rejected" else None
+                        )
+                        if resets_at:
+                            self._rate_limit_resets_at = resets_at
                     # A notice is a courtesy: it must never end the turn.
                     try:
-                        claude_notices.report(message.rate_limit_info)
+                        claude_notices.report(info)
                     except Exception:
                         logger.warning("Claude rate-limit notice failed", exc_info=True)
         except asyncio.CancelledError:
@@ -669,13 +678,20 @@ class ClaudeSession:
     def _result_error(self, result) -> Exception:
         kind, text = self._api_error or (None, "")
         self._api_error = None
+        resets_at = self._rate_limit_resets_at
+        self._rate_limit_resets_at = None
         text = text or result.result or "; ".join(result.errors or []) or result.subtype
         if kind == "server_error" and not result.api_error_status:
             return ClaudeConnectionError(self.config.model, text)
         status = result.api_error_status or ERROR_STATUS.get(kind or "")
         if status:
             body = {"type": "error", "error": {"type": kind or result.subtype, "message": text}}
-            return ClaudeHTTPError(status, self.config.model, body)
+            retry_after = (
+                max(0.0, resets_at - time.time())
+                if status == 429 and resets_at is not None
+                else None
+            )
+            return ClaudeHTTPError(status, self.config.model, body, retry_after=retry_after)
         return ModelAPIError(self.config.model, f"Claude Code ended the turn: {text}")
 
     # Matching
