@@ -4780,6 +4780,8 @@ class PromptLayout:
             "btw_running": int(state.get("btw_running") or 0),
             "btw_ready": int(state.get("btw_ready") or 0),
             "cache_note": str(state.get("cache_note") or ""),
+            # Unsent text: Pcode.app doesn't hibernate a pane that would lose it.
+            "draft": bool(self.session.default_buffer.text.strip()),
         }
 
     def sync_native_composer(self, app) -> None:

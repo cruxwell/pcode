@@ -919,6 +919,53 @@ def test_a_host_stops_as_if_idle_with_a_terminal_attached_unless_busy(tmp_path, 
     asyncio.run(run())
 
 
+def test_a_released_host_stops_once_its_terminal_and_work_are_gone_keeping_the_worktree(
+    tmp_path, host_dir
+):
+    """Pcode.app hibernating a pane: the session must stay as it was, to wake again."""
+
+    async def run():
+        host = await start_host("aaaa1111", tmp_path, Script())
+        try:
+            terminal, _, _ = await attach(host)
+            host.controller.command_idle.clear()
+            assert await request_host(host.entry, "release") is True
+            assert host.keep_worktree
+            terminal.close()
+            await asyncio.sleep(0.4)
+            assert not host.stopped.is_set(), "a running command is waited out"
+            host.controller.command_idle.set()
+            await asyncio.wait_for(host.stopped.wait(), 5)
+            assert host.idle_stopped and host.keep_worktree
+        finally:
+            await stop_host(host)
+
+    asyncio.run(run())
+
+
+def test_a_terminal_attaching_calls_a_release_off(tmp_path, host_dir):
+    """The hibernated pane woke before its host had stopped: it carries on as before."""
+
+    async def run():
+        host = await start_host("aaaa1111", tmp_path, Script())
+        try:
+            first, _, _ = await attach(host)
+            host.controller.command_idle.clear()
+            await request_host(host.entry, "release")
+            first.close()
+            second, _, _ = await attach(host)
+            await until(lambda: host._release.done())
+            host.controller.command_idle.set()
+            await asyncio.sleep(0.4)
+            assert not host.stopped.is_set()
+            assert not host.keep_worktree, "a later close tidies as it would have"
+            second.close()
+        finally:
+            await stop_host(host)
+
+    asyncio.run(run())
+
+
 def test_a_host_says_what_it_is_busy_with(tmp_path, host_dir):
     async def run():
         host = await start_host("aaaa1111", tmp_path, Script())

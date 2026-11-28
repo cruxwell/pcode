@@ -15,6 +15,10 @@ struct PCodeComposerStatus: Equatable, Decodable {
     let btwRunning: Int
     let btwReady: Int
     let cacheNote: String
+    /// The editor holds unsent text (absent from an older pcode).
+    let draft: Bool?
+
+    var hasDraft: Bool { draft == true }
 
     private enum CodingKeys: String, CodingKey {
         case busy
@@ -28,6 +32,7 @@ struct PCodeComposerStatus: Equatable, Decodable {
         case btwRunning = "btw_running"
         case btwReady = "btw_ready"
         case cacheNote = "cache_note"
+        case draft
     }
 
     static func decode(base64: String) -> PCodeComposerStatus? {

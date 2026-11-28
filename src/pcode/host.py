@@ -184,6 +184,7 @@ HOST_CALLS = frozenset(
         "run",
         "stop",
         "stop_if_idle",
+        "release",
         "restart",
         "asides_read",
         "continue_interrupted",
@@ -426,6 +427,11 @@ class _Client:
         return self.host.stop_if_idle(
             require_detached=require_detached, keep_worktree=keep_worktree
         )
+
+    def release(self) -> bool:
+        """Pcode.app hibernated this session's pane (see `SessionHost.release`)."""
+        self.host.release()
+        return True
 
     def restart(self, interrupt: bool = False) -> dict:
         """`/restart all`: `{"id": successor}` once stopping, else `{"skipped": why not}`.
@@ -681,6 +687,10 @@ class SessionHost:
         # shortly after, so a streaming answer is not rendered per token.
         self._observed: dict[str, object] = {}
         self._observe_flush: asyncio.TimerHandle | None = None
+        # Waiting to stop for Pcode.app's hibernated pane (`release`), and the
+        # `keep_worktree` it overrode, restored if a terminal attaches first.
+        self._release: asyncio.Task | None = None
+        self._keep_worktree_before_release = False
 
     @property
     def socket(self) -> Path:
@@ -1449,6 +1459,36 @@ class SessionHost:
                 self.idle_stopped = True
                 self.stop()
                 return
+
+    def release(self) -> None:
+        """Stop once nobody is attached and nothing runs, leaving the session as it is.
+
+        Pcode.app hibernates a pane it is not showing to save memory, and still
+        lists the session as open: so unlike an idle stop, this keeps the
+        worktree (an untouched one would be removed, a turnless session
+        deleted) and waits out the pane's own terminal letting go and any
+        work, whatever `session_host_idle_minutes` says. A terminal attaching
+        meanwhile (the pane reopened) calls it off.
+        """
+        if self._release is not None and not self._release.done():
+            return
+        self._keep_worktree_before_release = self.keep_worktree
+        self.keep_worktree = True
+        self._release = asyncio.create_task(self._stop_when_released(set(self.clients)))
+
+    async def _stop_when_released(self, attached: set[int], every: float = 0.25) -> None:
+        # The pane's terminal is on its way out as this arrives; anyone else is new.
+        while not self.stopped.is_set():
+            if set(self.clients) - attached:
+                self.keep_worktree = self._keep_worktree_before_release
+                print("release called off: a terminal attached", file=sys.stderr, flush=True)
+                return
+            if self.idle():
+                print("released by Pcode.app; stopping", file=sys.stderr, flush=True)
+                self.idle_stopped = True
+                self.stop()
+                return
+            await asyncio.sleep(every)
 
     def held_by(self, reason: str) -> None:
         """Publish what keeps a host with no terminal from stopping, when it changes.
