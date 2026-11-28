@@ -5,6 +5,7 @@ import SwiftUI
 /// Tabs available in the right-hand Session Inspector.
 enum PCodeInspectorTab: String, CaseIterable, Identifiable, Equatable, Hashable, Sendable {
     case changes
+    case files
     case agents
     case commands
     case tree
@@ -14,6 +15,7 @@ enum PCodeInspectorTab: String, CaseIterable, Identifiable, Equatable, Hashable,
     var title: String {
         switch self {
         case .changes: return "Changes"
+        case .files: return "Files"
         case .agents: return "Agents"
         case .commands: return "Commands"
         case .tree: return "Tree"
@@ -23,6 +25,7 @@ enum PCodeInspectorTab: String, CaseIterable, Identifiable, Equatable, Hashable,
     var systemImage: String {
         switch self {
         case .changes: return "doc.text.magnifyingglass"
+        case .files: return "doc.text"
         case .agents: return "person.2"
         case .commands: return "terminal"
         case .tree: return "point.3.connected.trianglepath.dotted"
@@ -414,6 +417,7 @@ struct PCodeInspectorCommandItem: Identifiable, Equatable, Sendable {
 struct PCodeInspectorActions {
     let insertIntoComposer: @MainActor (String) -> Void
     let openInEditor: @MainActor (_ path: String, _ line: Int?) -> Void
+    let openInFilesTab: @MainActor (_ path: String, _ line: Int?, _ endLine: Int?) -> Void
     let copyToClipboard: @MainActor (String) -> Void
     let stopJob: @MainActor (_ jobID: String) -> Void
     let prefillWorkerAction: @MainActor (_ text: String) -> Void
@@ -433,6 +437,7 @@ struct PCodeInspectorActions {
     init(
         insertIntoComposer: @escaping @MainActor (String) -> Void = { _ in },
         openInEditor: @escaping @MainActor (_ path: String, _ line: Int?) -> Void = { _, _ in },
+        openInFilesTab: @escaping @MainActor (_ path: String, _ line: Int?, _ endLine: Int?) -> Void = { _, _, _ in },
         copyToClipboard: @escaping @MainActor (String) -> Void = { text in
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
@@ -454,6 +459,7 @@ struct PCodeInspectorActions {
     ) {
         self.insertIntoComposer = insertIntoComposer
         self.openInEditor = openInEditor
+        self.openInFilesTab = openInFilesTab
         self.copyToClipboard = copyToClipboard
         self.stopJob = stopJob
         self.prefillWorkerAction = prefillWorkerAction ?? insertIntoComposer
@@ -480,8 +486,20 @@ final class PCodeInspectorState: ObservableObject {
     static let sessionDiffViewModeKey = "PCodeInspectorSessionDiffViewMode"
     static let diffWrapLinesKey = "PCodeInspectorDiffWrapLines"
 
-    @Published var isOpen: Bool = true
-    @Published var activeTab: PCodeInspectorTab = .changes
+    @Published var isOpen: Bool = true {
+        didSet {
+            if !isOpen && isQuickOpenPresented {
+                isQuickOpenPresented = false
+            }
+        }
+    }
+    @Published var activeTab: PCodeInspectorTab = .changes {
+        didSet {
+            if activeTab != .files && isQuickOpenPresented {
+                isQuickOpenPresented = false
+            }
+        }
+    }
     @Published var diffScope: PCodeDiffScope = .session
     @Published var sessionDiffViewMode: PCodeSessionDiffViewMode = {
         if let raw = UserDefaults.standard.string(forKey: PCodeInspectorState.sessionDiffViewModeKey),
@@ -507,6 +525,7 @@ final class PCodeInspectorState: ObservableObject {
     @Published var focusedAgentID: String?
     @Published var focusedCommandID: String?
     @Published var collapsedFiles: Set<String> = []
+    @Published var isQuickOpenPresented: Bool = false
 
     static func shouldUseOverlay(containerWidth: CGFloat) -> Bool {
         containerWidth < splitMinContainerWidth
@@ -544,6 +563,11 @@ final class PCodeInspectorState: ObservableObject {
             collapsedFiles.remove(filePath)
         }
         activeTab = .changes
+        isOpen = true
+    }
+
+    func openFiles() {
+        activeTab = .files
         isOpen = true
     }
 

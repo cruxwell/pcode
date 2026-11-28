@@ -266,4 +266,81 @@ struct PCodeInspectorModelsTests {
         )
         #expect(wrappedWider.heights[3] < wrapped.heights[3])
     }
+
+    @Test func diffThemeGutterScalesDynamicallyWithMaxLineNumber() {
+        let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let small = PCodeDiffTheme.make(
+            isDark: true,
+            surfaceBackground: .black,
+            foreground: .white,
+            codeFont: font,
+            maxLineNumber: 42
+        )
+        let medium = PCodeDiffTheme.make(
+            isDark: true,
+            surfaceBackground: .black,
+            foreground: .white,
+            codeFont: font,
+            maxLineNumber: 999
+        )
+        let large = PCodeDiffTheme.make(
+            isDark: true,
+            surfaceBackground: .black,
+            foreground: .white,
+            codeFont: font,
+            maxLineNumber: 12_345
+        )
+
+        // Single-column unified gutter = number column + marker column.
+        #expect(small.unifiedGutterWidth == small.unifiedNumWidth + small.unifiedMarkerWidth)
+        #expect(small.unifiedNumWidth < medium.unifiedNumWidth)
+        #expect(medium.unifiedNumWidth < large.unifiedNumWidth)
+        #expect(small.sideBySideNumWidth < large.sideBySideNumWidth)
+        // Compact default: 3-digit unified gutter stays well below the old ~90pt dual-column gutter.
+        #expect(medium.unifiedGutterWidth < 45)
+    }
+
+    @Test func diffThemeMaxLineNumberInspectsHunksAndExpandedGaps() {
+        let hunk = PCodeDiffHunk(
+            id: "h1",
+            header: "@@ -10,5 +12,8 @@",
+            oldStart: 10,
+            oldCount: 5,
+            newStart: 12,
+            newCount: 8,
+            lines: [
+                PCodeDiffLine(id: "l1", kind: .context, oldLineNumber: 10, newLineNumber: 12, text: "a"),
+                PCodeDiffLine(id: "l2", kind: .added, oldLineNumber: nil, newLineNumber: 19, text: "b"),
+            ]
+        )
+        let diff = PCodeFileDiff(path: "src/foo.swift", hunks: [hunk])
+        #expect(PCodeDiffTheme.maxLineNumber(in: [diff]) == 19)
+
+        let gapKey = PCodeDiffExpandedGapKey(fileID: diff.id, gapID: "gap-1")
+        let staleKey = PCodeDiffExpandedGapKey(fileID: "src/removed.swift", gapID: "gap-stale")
+        let expanded = [
+            gapKey: [
+                PCodeDiffLine(id: "g1", kind: .context, oldLineNumber: 1200, newLineNumber: 1205, text: "x"),
+            ],
+            staleKey: [
+                PCodeDiffLine(id: "g2", kind: .context, oldLineNumber: 99_999, newLineNumber: 99_999, text: "stale"),
+            ],
+        ]
+        #expect(PCodeDiffTheme.maxLineNumber(in: [diff], expandedGaps: expanded) == 1205)
+
+        // Pure-deletion hunk where oldLineNumber > newLineNumber still drives the gutter width.
+        let deletedHunk = PCodeDiffHunk(
+            id: "h-del",
+            header: "@@ -1000,5 +0,0 @@",
+            oldStart: 1000,
+            oldCount: 5,
+            newStart: 0,
+            newCount: 0,
+            lines: [
+                PCodeDiffLine(id: "d1", kind: .deleted, oldLineNumber: 1004, newLineNumber: nil, text: "gone"),
+            ]
+        )
+        let deletedDiff = PCodeFileDiff(path: "src/deleted.swift", kind: .deleted, hunks: [deletedHunk])
+        #expect(PCodeDiffTheme.maxLineNumber(in: [deletedDiff]) == 1004)
+    }
 }

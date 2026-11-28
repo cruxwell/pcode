@@ -221,6 +221,10 @@ class ResumableAgent(WrapperAgent):
                 if handle is not None:
                     handle.messages = result.all_messages()
                 return result
+            if any(m.state not in ("incomplete", "interrupted") for m in added):
+                # Progress was made before this failure: give subsequent transient
+                # errors fresh retry and rate-limit backoff budgets.
+                attempt = waits = 0
             error = failure
             delay = None
             if isinstance(error, Exception) and checkpoint.messages is not None:

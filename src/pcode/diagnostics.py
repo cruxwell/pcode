@@ -215,6 +215,10 @@ QUOTA_MARKERS = (
     "credit balance is too low",
     "billing_hard_limit_reached",
     "exceeded your current quota",
+    "out of usage credits",
+    "5-hour limit",
+    "weekly limit",
+    "usage limit reached",
 )
 
 

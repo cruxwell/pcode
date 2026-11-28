@@ -409,6 +409,7 @@ final class PCodeTranscriptDocumentView: NSView, NSUserInterfaceValidations {
     /// Called on plain click or non-navigation typing to hand keyboard focus back to `PCodeDockCard`.
     var onReturnFocusToComposer: (() -> Void)?
     var onInspectDiff: ((_ callID: String, _ path: String) -> Void)?
+    var onInspectFile: ((_ path: String, _ startLine: Int?, _ endLine: Int?) -> Void)?
     var onInspectAgent: ((_ callID: String) -> Void)?
     var onInspectCommand: ((_ callID: String, _ command: String) -> Void)?
     /// In the `/btw` drawer, `q` hands focus back to the composer without forwarding `q` (`btw_tail`).
@@ -2689,6 +2690,10 @@ final class PCodeTranscriptDocumentView: NSView, NSUserInterfaceValidations {
             let inspectAction: (() -> Void)?
             if call.isDelegate, let onInspectAgent {
                 inspectAction = { onInspectAgent(rawCallID) }
+            } else if PCodeReadFileReference.isReadFileTool(call.name),
+                      let ref = PCodeReadFileReference.parse(detail: call.detail),
+                      let onInspectFile {
+                inspectAction = { onInspectFile(ref.path, ref.startLine, ref.endLine) }
             } else if call.isShellLike && !call.isDelegate, let onInspectCommand {
                 inspectAction = { onInspectCommand(rawCallID, call.command) }
             } else {

@@ -40,6 +40,8 @@ import contextlib
 import json
 import os
 import shutil
+import time
+import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -103,16 +105,25 @@ SIDE_REPLAY_INTRO = (
     "running in the same workspace. Its transcript so far is below for context; answer "
     "only the side question that follows and do not continue or redo the main task."
 )
-# `agy acp` tail-truncates oversized `session/prompt` payloads (observed around
-# ~180 KB in agy 1.5.13), which drops `</conversation>` and the user's prompt
-# when a replayed transcript runs past the limit. Keep replays well under that
-# ceiling so the newest turns and the prompt always arrive intact.
+# `agy acp` tail-truncates oversized `session/prompt` payloads (verified in
+# agy 1.5.18 at 191,582 B with `<truncated N bytes>`), which drops
+# `</conversation>` and the user's prompt when a replayed transcript runs past
+# the limit. Keep `REPLAY_MAX_BYTES = 100_000` / `PROMPT_BUDGET_BYTES = 140_000`
+# as the safety ceiling so the newest turns and the prompt always arrive intact.
 REPLAY_MAX_BYTES = 100_000
 PROMPT_BUDGET_BYTES = 140_000
 # Minimum byte budget needed before clipping an oversized replay entry, so a
 # clipped entry always keeps its role tag and real content instead of a stub.
 MIN_CLIP_BYTES = 64
+# Tiered replay compaction: keep this many newest messages at full fidelity
+# while shrinking or dropping older tool calls/returns first.
+REPLAY_RECENT_MESSAGES = 12
+REPLAY_OLD_TOOL_CALL_CHARS = 150
+REPLAY_OLD_TOOL_RETURN_CHARS = 200
+REPLAY_SPILL_TTL_SECONDS = 24 * 60 * 60
 REPLAY_OMITTED = "[Earlier conversation omitted to fit the replay limit.]"
+REPLAY_CONDENSED = "[Earlier tool calls/outputs were condensed to fit the replay limit.]"
+REPLAY_TOOLS_DROPPED = "[Earlier tool calls/outputs were omitted to fit the replay limit.]"
 # Seconds a side session's process is kept for a follow-up.
 SIDE_IDLE = 120.0
 # How long a cancelled turn may take to report that it stopped.
@@ -1125,6 +1136,7 @@ class AntigravityModel(Model):
                     cwd,
                     prompt_bytes=_text_bytes(prompt),
                     run_context=run_context,
+                    allow_spill=not plain_side,
                 )
                 await self._apply_effort(session, effort)
                 if not (self._side or self._worker):
@@ -1296,7 +1308,7 @@ class AntigravityModel(Model):
         if earlier and isinstance(earlier[-1], ModelRequest):
             asked = _asked(earlier[-1].parts)
         async with self._lock:
-            session, replay = await self._prepare(earlier, asked, cwd)
+            session, replay = await self._prepare(earlier, asked, cwd, allow_spill=False)
             if replay or not session.turns:
                 # A session that never saw this conversation holds none of it.
                 return None
@@ -1336,6 +1348,7 @@ class AntigravityModel(Model):
         *,
         prompt_bytes: int = 0,
         run_context: RunContext[Any] | None = None,
+        allow_spill: bool = True,
     ) -> tuple[_Session, list[dict]]:
         """The session to prompt, and any replay to send before the new prompt.
 
@@ -1459,7 +1472,12 @@ class AntigravityModel(Model):
         if replay and earlier:
             budget = min(REPLAY_MAX_BYTES, PROMPT_BUDGET_BYTES - prompt_bytes)
             intro = SIDE_REPLAY_INTRO if self._side else REPLAY_INTRO
-            text = replay_text(earlier, intro=intro, max_bytes=budget) if budget > 0 else ""
+            spill = _spill_replay if allow_spill else None
+            text = (
+                replay_text(earlier, intro=intro, max_bytes=budget, spill=spill)
+                if budget > 0
+                else ""
+            )
             if text:
                 blocks = [{"type": "text", "text": text}]
         return self._session, blocks
@@ -1643,9 +1661,67 @@ def _clip_bytes(text: str, limit: int) -> str:
     return f"{prefix}{suffix}" if prefix else ""
 
 
-def _replay_entries(messages: list[ModelMessage]) -> list[str]:
+def _replay_spill_dir() -> Path:
+    return _state_dir() / "replays"
+
+
+def _spill_replay(text: str) -> Path | None:
+    """Write the full unbounded replay transcript to a private file and sweep old ones."""
+    try:
+        directory = _replay_spill_dir()
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(directory, 0o700)
+        cutoff = time.time() - REPLAY_SPILL_TTL_SECONDS
+        with contextlib.suppress(OSError):
+            for existing in directory.iterdir():
+                if existing.suffix != ".txt":
+                    continue
+                with contextlib.suppress(OSError):
+                    if existing.stat().st_mtime < cutoff:
+                        existing.unlink()
+        path = directory / f"{uuid.uuid4().hex}.txt"
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            handle = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            with contextlib.suppress(OSError):
+                path.unlink()
+            raise
+        try:
+            with handle:
+                handle.write(text)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                path.unlink()
+            raise
+        os.chmod(path, 0o600)
+        return path
+    except OSError:
+        return None
+
+
+def _replay_notice(notice: str, spill_path: Path | None) -> str:
+    if spill_path is None:
+        return notice
+    return (
+        f"{notice} [Full transcript saved to {spill_path} — "
+        "use read_file or grep if exact earlier details are needed.]"
+    )
+
+
+def _replay_entries(
+    messages: list[ModelMessage],
+    *,
+    recent_messages: int | None = None,
+    old_tool_call_chars: int | None = None,
+    old_tool_return_chars: int | None = None,
+    drop_old_tools: bool = False,
+) -> list[str]:
+    cutoff = 0 if recent_messages is None else max(0, len(messages) - recent_messages)
     entries: list[str] = []
-    for message in messages:
+    for index, message in enumerate(messages):
+        older = index < cutoff
         for part in message.parts:
             if isinstance(part, UserPromptPart):
                 items = [part.content] if isinstance(part.content, str) else list(part.content)
@@ -1664,10 +1740,23 @@ def _replay_entries(messages: list[ModelMessage]) -> list[str]:
             elif isinstance(part, TextPart) and part.content.strip():
                 entries.append(f"[Assistant]\n{part.content}")
             elif isinstance(part, (NativeToolCallPart, ToolCallPart)):
-                args = _clip(json.dumps(part.args, default=str), 500)
+                if older and drop_old_tools:
+                    continue
+                limit = old_tool_call_chars if older and old_tool_call_chars is not None else 500
+                raw_args = (
+                    part.args if isinstance(part.args, str) else json.dumps(part.args, default=str)
+                )
+                args = _clip(raw_args, limit)
                 entries.append(f"[Assistant ran {part.tool_name}: {args}]")
             elif isinstance(part, (NativeToolReturnPart, ToolReturnPart)):
-                entries.append(f"[{part.tool_name} returned: {_clip(part.model_response_str())}]")
+                if older and drop_old_tools:
+                    continue
+                limit = (
+                    old_tool_return_chars if older and old_tool_return_chars is not None else 2000
+                )
+                entries.append(
+                    f"[{part.tool_name} returned: {_clip(part.model_response_str(), limit)}]"
+                )
     return entries
 
 
@@ -1676,29 +1765,76 @@ def replay_text(
     *,
     intro: str = REPLAY_INTRO,
     max_bytes: int | None = REPLAY_MAX_BYTES,
+    spill: Callable[[str], Path | None] | None = None,
 ) -> str:
     """Earlier turns as a transcript, for a session that never saw them.
 
-    When `max_bytes` is set and the full transcript would exceed it, drops the
-    oldest entries first so the newest turns stay intact within the budget.
+    When `max_bytes` is set and the full transcript would exceed it, compacts
+    in tiers before dropping turns:
+    1. Condense older tool calls/returns while keeping the newest messages,
+       user prompts, assistant prose, and background worker results intact.
+    2. Drop older tool calls/returns altogether while preserving prose and
+       the newest messages.
+    3. Fall back to keeping the newest entries that fit within `max_bytes`.
     """
-    entries = _replay_entries(messages)
+    full_entries = _replay_entries(messages)
     header = f"{intro}\n\n<conversation>\n"
     footer = "\n</conversation>"
-    body = "\n\n".join(entries)
+    body = "\n\n".join(full_entries)
     full = f"{header}{body}{footer}" if body else f"{header}</conversation>"
     if max_bytes is None or _utf8_len(full) <= max_bytes:
         return full
 
-    omitted_header = f"{header}{REPLAY_OMITTED}\n\n"
+    minimal_plain = f"{header}{REPLAY_OMITTED}{footer}"
+    if _utf8_len(minimal_plain) > max_bytes:
+        return ""
+
+    spill_path = spill(full) if spill is not None else None
+    tail_entries = full_entries
+
+    if len(messages) > REPLAY_RECENT_MESSAGES:
+        condensed_entries = _replay_entries(
+            messages,
+            recent_messages=REPLAY_RECENT_MESSAGES,
+            old_tool_call_chars=REPLAY_OLD_TOOL_CALL_CHARS,
+            old_tool_return_chars=REPLAY_OLD_TOOL_RETURN_CHARS,
+        )
+        condensed_notice = _replay_notice(REPLAY_CONDENSED, spill_path)
+        condensed_body = "\n\n".join(condensed_entries)
+        condensed = (
+            f"{header}{condensed_notice}\n\n{condensed_body}{footer}"
+            if condensed_body
+            else f"{header}{condensed_notice}{footer}"
+        )
+        if _utf8_len(condensed) <= max_bytes:
+            return condensed
+
+        dropped_entries = _replay_entries(
+            messages,
+            recent_messages=REPLAY_RECENT_MESSAGES,
+            drop_old_tools=True,
+        )
+        dropped_notice = _replay_notice(REPLAY_TOOLS_DROPPED, spill_path)
+        dropped_body = "\n\n".join(dropped_entries)
+        dropped = (
+            f"{header}{dropped_notice}\n\n{dropped_body}{footer}"
+            if dropped_body
+            else f"{header}{dropped_notice}{footer}"
+        )
+        if _utf8_len(dropped) <= max_bytes:
+            return dropped
+        tail_entries = dropped_entries
+
+    omitted_notice = _replay_notice(REPLAY_OMITTED, spill_path)
+    omitted_header = f"{header}{omitted_notice}\n\n"
     budget = max_bytes - _utf8_len(omitted_header) - _utf8_len(footer)
     if budget <= 0:
-        minimal = f"{header}{REPLAY_OMITTED}{footer}"
-        return minimal if _utf8_len(minimal) <= max_bytes else ""
+        minimal = f"{header}{omitted_notice}{footer}"
+        return minimal if _utf8_len(minimal) <= max_bytes else minimal_plain
 
     kept: list[str] = []
     used = 0
-    for entry in reversed(entries):
+    for entry in reversed(tail_entries):
         sep = 2 if kept else 0
         size = _utf8_len(entry) + sep
         if used + size > budget:
@@ -1714,7 +1850,7 @@ def replay_text(
     if kept:
         kept.reverse()
         return f"{omitted_header}{'\n\n'.join(kept)}{footer}"
-    return f"{header}{REPLAY_OMITTED}{footer}"
+    return f"{header}{omitted_notice}{footer}"
 
 
 def _tool_args(update: dict) -> dict:

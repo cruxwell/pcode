@@ -941,6 +941,7 @@ final class PCodeSessionPane: ObservableObject, Identifiable {
     /// Per-session right-hand Inspector state and live stores.
     let inspectorState: PCodeInspectorState
     let changesStore: PCodeSessionChangesStore
+    let filesStore: PCodeInspectorFilesStore
     let agentsStore: PCodeInspectorAgentsStore
     let commandsStore: PCodeInspectorCommandsStore
     let treeStore: PCodeConversationTreeStore
@@ -956,9 +957,17 @@ final class PCodeSessionPane: ObservableObject, Identifiable {
             return
         }
         changesStore.apply(event)
+        filesStore.apply(event)
         agentsStore.apply(event)
         commandsStore.apply(event)
         treeStore.apply(event)
+    }
+
+    @MainActor
+    func openFileInInspector(path: String, line: Int? = nil, endLine: Int? = nil) {
+        filesStore.ensureTreeAndIndexLoaded()
+        _ = filesStore.openFile(path: path, line: line, endLine: endLine)
+        inspectorState.openFiles()
     }
 
     convenience init(surface: Ghostty.SurfaceView, directory: String, projectPath: String? = nil, sessionID: String?) {
@@ -987,6 +996,7 @@ final class PCodeSessionPane: ObservableObject, Identifiable {
             (
                 PCodeInspectorState(),
                 PCodeSessionChangesStore(sessionDirectory: directory),
+                PCodeInspectorFilesStore(sessionDirectory: directory),
                 PCodeInspectorAgentsStore(),
                 PCodeInspectorCommandsStore(),
                 PCodeConversationTreeStore(sessionID: sessionID)
@@ -994,9 +1004,10 @@ final class PCodeSessionPane: ObservableObject, Identifiable {
         }
         self.inspectorState = inspectorBundle.0
         self.changesStore = inspectorBundle.1
-        self.agentsStore = inspectorBundle.2
-        self.commandsStore = inspectorBundle.3
-        self.treeStore = inspectorBundle.4
+        self.filesStore = inspectorBundle.2
+        self.agentsStore = inspectorBundle.3
+        self.commandsStore = inspectorBundle.4
+        self.treeStore = inspectorBundle.5
         hostSubscription = $sessionID
             .combineLatest(PCodeHostWatcher.shared.$statuses)
             .map { sessionID, statuses in sessionID.flatMap { statuses[$0] } }
@@ -3200,6 +3211,16 @@ final class PCodeWorkspace: ObservableObject {
         }
     }
 
+    func openQuickFilePicker() {
+        guard !showingDirectoryPicker else { return }
+        guard let pane = selectedPane else { return }
+        MainActor.assumeIsolated {
+            pane.filesStore.ensureTreeAndIndexLoaded()
+            pane.inspectorState.openFiles()
+            pane.inspectorState.isQuickOpenPresented = true
+        }
+    }
+
     func toggleShell() {
         guard let pane = selectedPane else { return }
         if pane.shell == nil {
@@ -3636,12 +3657,16 @@ struct PCodeWorkspaceView: View {
                     .keyboardShortcut("i", modifiers: .command)
                 Button("") { workspace.selectInspectorTab(.changes) }
                     .keyboardShortcut("1", modifiers: [.command, .option])
-                Button("") { workspace.selectInspectorTab(.agents) }
+                Button("") { workspace.selectInspectorTab(.files) }
                     .keyboardShortcut("2", modifiers: [.command, .option])
-                Button("") { workspace.selectInspectorTab(.commands) }
+                Button("") { workspace.selectInspectorTab(.agents) }
                     .keyboardShortcut("3", modifiers: [.command, .option])
-                Button("") { workspace.selectInspectorTab(.tree) }
+                Button("") { workspace.selectInspectorTab(.commands) }
                     .keyboardShortcut("4", modifiers: [.command, .option])
+                Button("") { workspace.selectInspectorTab(.tree) }
+                    .keyboardShortcut("5", modifiers: [.command, .option])
+                Button("") { workspace.openQuickFilePicker() }
+                    .keyboardShortcut("p", modifiers: .command)
                 Button("") { workspace.toggleInspectorExpanded() }
                     .keyboardShortcut("f", modifiers: [.command, .shift])
             }
@@ -5190,8 +5215,8 @@ struct PCodeSessionPaneView: View {
 
 /// Custom opaque top title bar that sits in the window's traffic-light strip
 /// (`.fullSizeContentView` + hidden system title, no NSToolbar / no glass).
-/// Shows the active session's activity indicator, title, and project/worktree pill
-/// on the left, with model, context usage, and subscription quota pills on the right.
+/// Uses a three-zone layout: project/worktree pill on the left, centered active
+/// session title + activity indicator, and model + telemetry pills on the right.
 private struct PCodeWindowTitleBar: View {
     @EnvironmentObject var ghostty: Ghostty.App
     @ObservedObject var workspace: PCodeWorkspace
@@ -5222,7 +5247,7 @@ private struct PCodeWindowTitleBar: View {
                     HStack {
                         Spacer(minLength: leadingClearance)
                         Text("pcode")
-                            .font(.system(size: 12.5, weight: .medium))
+                            .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(.secondary)
                         Spacer(minLength: 16)
                     }
@@ -5242,6 +5267,142 @@ private struct PCodeWindowTitleBar: View {
     }
 }
 
+/// Pure horizontal layout math for the three-zone window title bar:
+/// places leading and trailing pill clusters at the outer edges, centers the
+/// session title over the full window when there is room, and smoothly shifts
+/// it into the available gap when the window narrows.
+enum PCodeTitleBarGeometry {
+    struct Placement: Equatable {
+        let leadingX: CGFloat
+        let leadingWidth: CGFloat
+        let centerX: CGFloat
+        let centerWidth: CGFloat
+        let trailingX: CGFloat
+        let trailingWidth: CGFloat
+    }
+
+    static func resolve(
+        availableWidth: CGFloat,
+        leadingInset: CGFloat,
+        trailingInset: CGFloat,
+        leadingIdeal: CGFloat,
+        centerIdeal: CGFloat,
+        trailingIdeal: CGFloat,
+        leadingMin: CGFloat = 0,
+        trailingMin: CGFloat = 0,
+        spacing: CGFloat = 12
+    ) -> Placement {
+        let avail = max(0, availableWidth)
+        let hasLeading = leadingIdeal > 0
+        let hasCenter = centerIdeal > 0
+        let hasTrailing = trailingIdeal > 0
+
+        let minCenter = hasCenter ? min(centerIdeal, 180) : 0
+        let effectiveLeadingMin = hasLeading ? min(leadingIdeal, max(0, leadingMin)) : 0
+        let effectiveTrailingMin = hasTrailing ? min(trailingIdeal, max(0, trailingMin)) : 0
+        let reservedLeading = hasLeading ? max(effectiveLeadingMin, min(leadingIdeal, 80)) : 0
+
+        let gapForLeading: CGFloat = (hasLeading && hasCenter) ? spacing : 0
+        let gapForTrailing: CGFloat = (hasTrailing && (hasCenter || hasLeading)) ? spacing : 0
+
+        let trailingBudget = max(0, avail - minCenter - reservedLeading - gapForLeading - gapForTrailing)
+        let trailingWidth: CGFloat
+        if !hasTrailing || (effectiveTrailingMin > 0 && trailingBudget < effectiveTrailingMin) {
+            trailingWidth = 0
+        } else {
+            trailingWidth = min(trailingIdeal, trailingBudget)
+        }
+
+        let gapAfterTrailing: CGFloat = (trailingWidth > 0 && (hasCenter || hasLeading)) ? spacing : 0
+        let leadingBudget = max(0, avail - trailingWidth - minCenter - gapForLeading - gapAfterTrailing)
+        let leadingWidth: CGFloat
+        if !hasLeading || (effectiveLeadingMin > 0 && leadingBudget < effectiveLeadingMin) {
+            leadingWidth = 0
+        } else {
+            leadingWidth = min(leadingIdeal, leadingBudget)
+        }
+
+        let leftEdge = leadingWidth + (leadingWidth > 0 && hasCenter ? spacing : 0)
+        let rightEdge = avail - trailingWidth - (trailingWidth > 0 && hasCenter ? spacing : 0)
+        let centerSlotWidth = max(0, rightEdge - leftEdge)
+        let centerWidth = min(centerIdeal, centerSlotWidth)
+
+        // True geometric center of the full window expressed in content-bounds coordinates.
+        let totalWindowWidth = avail + leadingInset + trailingInset
+        let idealCenterX = (totalWindowWidth / 2) - leadingInset
+        let centeredX = idealCenterX - (centerWidth / 2)
+        let centerX = min(max(centeredX, leftEdge), max(leftEdge, rightEdge - centerWidth))
+
+        return Placement(
+            leadingX: 0,
+            leadingWidth: leadingWidth,
+            centerX: centerX,
+            centerWidth: centerWidth,
+            trailingX: avail - trailingWidth,
+            trailingWidth: trailingWidth
+        )
+    }
+}
+
+/// Three-zone horizontal SwiftUI Layout backed by `PCodeTitleBarGeometry`.
+private struct PCodeTitleBarLayout: Layout {
+    let leadingInset: CGFloat
+    let trailingInset: CGFloat
+    var spacing: CGFloat = 12
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let height = sizes.map(\.height).max() ?? 0
+        if let proposedWidth = proposal.width {
+            return CGSize(width: proposedWidth, height: height)
+        }
+        let nonEmptyWidths = sizes.map(\.width).filter { $0 > 0 }
+        let gaps = CGFloat(max(0, nonEmptyWidths.count - 1)) * spacing
+        return CGSize(width: nonEmptyWidths.reduce(0, +) + gaps, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 3 else { return }
+        let leading = subviews[0]
+        let center = subviews[1]
+        let trailing = subviews[2]
+
+        let leadingSize = leading.sizeThatFits(.unspecified)
+        let centerSize = center.sizeThatFits(.unspecified)
+        let trailingSize = trailing.sizeThatFits(.unspecified)
+        let leadingMinWidth = leading.sizeThatFits(.zero).width
+        let trailingMinWidth = trailing.sizeThatFits(.zero).width
+
+        let p = PCodeTitleBarGeometry.resolve(
+            availableWidth: bounds.width,
+            leadingInset: leadingInset,
+            trailingInset: trailingInset,
+            leadingIdeal: leadingSize.width,
+            centerIdeal: centerSize.width,
+            trailingIdeal: trailingSize.width,
+            leadingMin: leadingMinWidth,
+            trailingMin: trailingMinWidth,
+            spacing: spacing
+        )
+
+        leading.place(
+            at: CGPoint(x: bounds.minX + p.leadingX, y: bounds.midY),
+            anchor: .leading,
+            proposal: ProposedViewSize(width: p.leadingWidth, height: bounds.height)
+        )
+        center.place(
+            at: CGPoint(x: bounds.minX + p.centerX + p.centerWidth / 2, y: bounds.midY),
+            anchor: .center,
+            proposal: ProposedViewSize(width: p.centerWidth, height: bounds.height)
+        )
+        trailing.place(
+            at: CGPoint(x: bounds.minX + p.trailingX + p.trailingWidth, y: bounds.midY),
+            anchor: .trailing,
+            proposal: ProposedViewSize(width: p.trailingWidth, height: bounds.height)
+        )
+    }
+}
+
 /// Observes the active pane directly so title (`/rename`, auto-title) and activity
 /// changes refresh the title bar without re-rendering the whole workspace.
 private struct PCodeActiveSessionTitleContent: View {
@@ -5255,6 +5416,7 @@ private struct PCodeActiveSessionTitleContent: View {
     @State private var usageClock = Date()
 
     private static let usageRefreshTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+    private static let trailingInset: CGFloat = 12
 
     private var savedInfo: PCodeSessionInfo? {
         workspace.info(for: pane)
@@ -5301,95 +5463,87 @@ private struct PCodeActiveSessionTitleContent: View {
         return .secondary
     }
 
-    var body: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 7) {
-                PCodeActivityIndicator(activity: pane.activity, unseen: false)
-                    .frame(width: 10, height: 10)
+    private var hasContext: Bool { !pane.contextUsage.isEmpty }
+    private var hasUsage: Bool { !usageWindows.isEmpty }
 
-                Text(title)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(.primary.opacity(0.92))
+    private var projectPill: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "folder.fill")
+                .font(.system(size: 9.5))
+                .foregroundStyle(.secondary.opacity(0.8))
+            Text(projectName)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if let worktreeName, !worktreeName.isEmpty {
+                Text("/")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.tertiary)
+                Text(worktreeName)
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(.secondary.opacity(0.85))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .layoutPriority(1)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2.5)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Color.primary.opacity(0.06))
+        )
+    }
 
+    private var titleCluster: some View {
+        HStack(spacing: 7) {
+            PCodeActivityIndicator(activity: pane.activity, unseen: false)
+                .frame(width: 10, height: 10)
+
+            Text(title)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+    }
+
+    private var trailingCluster: some View {
+        HStack(spacing: 6) {
+            if !modelParts.name.isEmpty {
                 HStack(spacing: 4) {
-                    Image(systemName: "folder.fill")
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(.secondary.opacity(0.85))
-                    Text(projectName)
+                    if let provider = modelParts.provider {
+                        Text(provider)
+                            .font(.system(size: 10.5, weight: .regular))
+                            .foregroundStyle(.secondary.opacity(0.65))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    Text(modelParts.name)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                    if let worktreeName, !worktreeName.isEmpty {
-                        Text("/")
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(.tertiary)
-                        Text(worktreeName)
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundStyle(.secondary.opacity(0.9))
+                        .layoutPriority(1)
+                    if let effortLabel {
+                        Text("(\(effortLabel))")
+                            .font(.system(size: 10.5, weight: .regular))
+                            .foregroundStyle(.secondary.opacity(0.65))
                             .lineLimit(1)
-                            .truncationMode(.tail)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                 }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2.5)
                 .background(
                     Capsule(style: .continuous)
-                        .fill(Color.primary.opacity(0.07))
-                )
-                .overlay(
-                    Capsule(style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+                        .fill(Color.primary.opacity(0.06))
                 )
             }
-            .frame(minWidth: 0)
 
-            Spacer(minLength: 12)
-
-            if !modelParts.name.isEmpty || !pane.contextUsage.isEmpty || !usageWindows.isEmpty {
-                HStack(spacing: 6) {
-                    if !modelParts.name.isEmpty {
-                        HStack(spacing: 3) {
-                            if let provider = modelParts.provider {
-                                Text(provider)
-                                    .font(.system(size: 10.5, weight: .regular))
-                                    .foregroundStyle(.secondary.opacity(0.75))
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                                Text(":")
-                                    .font(.system(size: 10.5, weight: .regular))
-                                    .foregroundStyle(.secondary.opacity(0.45))
-                            }
-                            Text(modelParts.name)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .layoutPriority(1)
-                            if let effortLabel {
-                                Text("(\(effortLabel))")
-                                    .font(.system(size: 10.5, weight: .regular))
-                                    .foregroundStyle(.secondary.opacity(0.75))
-                                    .lineLimit(1)
-                                    .fixedSize(horizontal: true, vertical: false)
-                            }
-                        }
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Color.primary.opacity(0.06))
-                        )
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
-                        )
-                    }
-
-                    if !pane.contextUsage.isEmpty {
+            if hasContext || hasUsage {
+                HStack(spacing: 7) {
+                    if hasContext {
                         HStack(spacing: 5) {
                             if let ratio = contextRatio {
                                 let barWidth: CGFloat = 24
@@ -5411,20 +5565,15 @@ private struct PCodeActiveSessionTitleContent: View {
                                 .lineLimit(1)
                                 .fixedSize(horizontal: true, vertical: false)
                         }
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Color.primary.opacity(0.06))
-                        )
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
-                        )
-                        .layoutPriority(1)
                     }
 
-                    if !usageWindows.isEmpty {
+                    if hasContext && hasUsage {
+                        Rectangle()
+                            .fill(Color.primary.opacity(0.14))
+                            .frame(width: 1, height: 9)
+                    }
+
+                    if hasUsage {
                         HStack(spacing: 5) {
                             ForEach(Array(usageWindows.enumerated()), id: \.offset) { index, window in
                                 if index > 0 {
@@ -5444,23 +5593,31 @@ private struct PCodeActiveSessionTitleContent: View {
                         }
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Color.primary.opacity(0.06))
-                        )
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
-                        )
-                        .layoutPriority(1)
                     }
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2.5)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.primary.opacity(0.06))
+                )
+                .layoutPriority(1)
             }
         }
+    }
+
+    var body: some View {
+        PCodeTitleBarLayout(
+            leadingInset: leadingClearance,
+            trailingInset: Self.trailingInset,
+            spacing: 12
+        ) {
+            projectPill.clipped()
+            titleCluster.clipped()
+            trailingCluster.clipped()
+        }
         .padding(.leading, leadingClearance)
-        .padding(.trailing, 12)
+        .padding(.trailing, Self.trailingInset)
         .onAppear {
             syncWindowTitle()
             wasRunning = pane.activity == .running

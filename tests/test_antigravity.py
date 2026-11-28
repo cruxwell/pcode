@@ -1235,6 +1235,300 @@ def test_btw_caps_replayed_transcript_and_shrinks_for_large_prompts(
     assert "big-end" in sent[2][0]["text"]
 
 
+def test_replay_text_does_not_double_encode_json_string_tool_args():
+    raw_json = '{"path": "src/app.py", "lines": [1, 20]}'
+    text = replay_text(
+        [
+            ModelRequest(parts=[UserPromptPart("inspect app")]),
+            ModelResponse(
+                parts=[
+                    ToolCallPart("read_file", raw_json, tool_call_id="tc-1"),
+                    NativeToolCallPart("run_command", {"command": "make"}),
+                    TextPart("checked"),
+                ]
+            ),
+        ]
+    )
+    assert f"[Assistant ran read_file: {raw_json}]" in text
+    assert '\\"path\\"' not in text
+    assert '[Assistant ran run_command: {"command": "make"}]' in text
+
+
+def test_replay_text_tiered_compaction_condenses_older_tools_before_dropping_turns(tmp_path):
+    from dataclasses import dataclass
+
+    from pydantic_ai.messages import CapabilityPartRendering, DataCapabilityPart, OperatorSource
+
+    @dataclass(kw_only=True)
+    class FakeBgResult(
+        DataCapabilityPart[str], namespace="test_replay", tag="bg_result", _register=False
+    ):
+        tool_name: str = "delegate_task"
+        outcome: str = "success"
+
+    history: list = [
+        ModelRequest(parts=[UserPromptPart("early-user-requirements")]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "read_file",
+                    '{"path": "old.py", "pad": "' + ("c" * 300) + '", "end": "OLD_CALL_TAIL"}',
+                    tool_call_id="old-1",
+                ),
+                TextPart("early-architectural-plan"),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    "read_file",
+                    "OLD_RET_HEAD " + ("r" * 1400) + " OLD_RET_TAIL",
+                    tool_call_id="old-1",
+                ),
+                FakeBgResult(
+                    content="BG_WORKER_REPORT " + ("w" * 350) + " BG_WORKER_TAIL",
+                    source=OperatorSource(),
+                    rendering=CapabilityPartRendering(voice="data", tag="bg_result"),
+                ),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                ToolCallPart("grep", '{"q": "' + ("g" * 300) + '"}', tool_call_id="old-2"),
+                TextPart("early-follow-up"),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    "grep", "GREP_HEAD " + ("m" * 1400) + " GREP_TAIL", tool_call_id="old-2"
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart("older-summary")]),
+    ]
+    # Add REPLAY_RECENT_MESSAGES (12) recent messages, including a recent large tool call/return.
+    for i in range(5):
+        history.append(ModelRequest(parts=[UserPromptPart(f"recent-user-{i}")]))
+        history.append(ModelResponse(parts=[TextPart(f"recent-asst-{i}")]))
+    history.append(
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "read_file",
+                    '{"path": "new.py", "pad": "' + ("n" * 240) + '", "end": "RECENT_CALL_TAIL"}',
+                    tool_call_id="new-1",
+                )
+            ]
+        )
+    )
+    history.append(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    "read_file",
+                    "RECENT_RET_HEAD " + ("z" * 600) + " RECENT_RET_TAIL",
+                    tool_call_id="new-1",
+                )
+            ]
+        )
+    )
+
+    full = replay_text(history, max_bytes=None)
+    spilled: list[str] = []
+    spill_file = tmp_path / "spill.txt"
+
+    def record_spill(text: str) -> Path:
+        spilled.append(text)
+        spill_file.write_text(text, encoding="utf-8")
+        return spill_file
+
+    # Budget smaller than full (~5.5 KB), large enough for Pass 1 (~3.4 KB).
+    max_bytes = len(full.encode("utf-8")) - 1500
+    compacted = replay_text(history, max_bytes=max_bytes, spill=record_spill)
+    assert len(compacted.encode("utf-8")) <= max_bytes
+    assert antigravity.REPLAY_CONDENSED in compacted
+    assert antigravity.REPLAY_OMITTED not in compacted
+    assert str(spill_file) in compacted
+    assert spilled == [full]
+    # Earlier user prompts, assistant prose, and DataCapabilityPart stay intact.
+    assert "early-user-requirements" in compacted
+    assert "early-architectural-plan" in compacted
+    assert "BG_WORKER_REPORT" in compacted and "BG_WORKER_TAIL" in compacted
+    # Older tool calls/returns are condensed rather than dropped whole.
+    assert "OLD_RET_HEAD" in compacted and "OLD_RET_TAIL" not in compacted
+    assert "OLD_CALL_TAIL" not in compacted
+    # Newest 12 messages remain at full fidelity.
+    assert "RECENT_CALL_TAIL" in compacted
+    assert "RECENT_RET_TAIL" in compacted
+
+
+def test_replay_text_pass_two_drops_older_tools_before_dropping_prose():
+    history: list = []
+    # 10 older messages heavy with tool calls/returns plus essential user/assistant prose.
+    for i in range(5):
+        history.append(
+            ModelRequest(
+                parts=[
+                    UserPromptPart(f"older-user-{i}"),
+                    ToolReturnPart(
+                        "old_tool",
+                        f"OLD_TOOL_RET_{i} " + ("x" * 180),
+                        tool_call_id=f"old-{i}",
+                    ),
+                ]
+            )
+        )
+        history.append(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "old_tool",
+                        f'{{"i": {i}, "pad": "' + ("y" * 120) + '"}',
+                        tool_call_id=f"old-{i}",
+                    ),
+                    TextPart(f"older-prose-{i}"),
+                ]
+            )
+        )
+    # 12 newest messages kept at full fidelity.
+    for i in range(6):
+        history.append(ModelRequest(parts=[UserPromptPart(f"recent-u-{i}")]))
+        history.append(
+            ModelResponse(
+                parts=[
+                    ToolCallPart("recent_tool", f'{{"step": {i}}}', tool_call_id=f"r-{i}"),
+                    TextPart(f"recent-a-{i}"),
+                ]
+            )
+        )
+
+    # Pass 1 keeps all 10 older tool calls/returns (~2.2 KB of condensed tool text);
+    # pick a budget that fits Pass 2 (all prose + 12 recent messages) but not Pass 1.
+    full = replay_text(history, max_bytes=None)
+    pass1_approx = len(full.encode("utf-8"))
+    # Older tool calls (~160 B) + returns (~220 B) across 5 turns add ~1,900 B even after Pass 1.
+    budget = pass1_approx - 1200
+    dropped = replay_text(history, max_bytes=budget)
+    assert len(dropped.encode("utf-8")) <= budget
+    assert antigravity.REPLAY_TOOLS_DROPPED in dropped
+    assert antigravity.REPLAY_OMITTED not in dropped
+    # Older user prompts, older prose, and recent tools are preserved.
+    for i in range(5):
+        assert f"older-user-{i}" in dropped
+        assert f"older-prose-{i}" in dropped
+    assert "[Assistant ran old_tool:" not in dropped
+    assert "[old_tool returned:" not in dropped
+    assert '[Assistant ran recent_tool: {"step": 5}]' in dropped
+
+
+def test_replay_spill_file_permissions_and_plain_side_skip(fake_agy, tmp_path, monkeypatch):
+    import stat
+
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setattr(antigravity, "REPLAY_MAX_BYTES", 1500)
+    monkeypatch.setattr(antigravity, "PROMPT_BUDGET_BYTES", 4000)
+
+    short_earlier = [
+        ModelRequest(parts=[UserPromptPart("hi")]),
+        ModelResponse(parts=[TextPart("hello")], provider_name="google"),
+    ]
+    large_earlier: list = []
+    for i in range(10):
+        large_earlier.append(ModelRequest(parts=[UserPromptPart(f"turn-{i} " + "u" * 60)]))
+        large_earlier.append(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "read_file", '{"path": "' + ("p" * 200) + '"}', tool_call_id=f"t{i}"
+                    ),
+                    TextPart(f"reply-{i} " + "a" * 60),
+                ],
+                provider_name="google",
+            )
+        )
+        large_earlier.append(
+            ModelRequest(
+                parts=[ToolReturnPart("read_file", f"ret-{i} " + "r" * 400, tool_call_id=f"t{i}")]
+            )
+        )
+    large_earlier.append(ModelResponse(parts=[TextPart("all done")], provider_name="google"))
+
+    replays_dir = state_home / "pcode" / "replays"
+
+    async def go():
+        # 1. Full replay fits: no spill file written.
+        await agent_for(AntigravityModel("fake-neon"), tmp_path).run(
+            "next", message_history=short_earlier
+        )
+        assert not replays_dir.exists() or list(replays_dir.glob("*.txt")) == []
+
+        # 2. Plain side completion (no tools): skips spilling even when truncated/condensed.
+        plain_model = AntigravityModel("fake-neon", side=True)
+        await Agent(
+            plain_model,
+            instructions="Summarize.",
+            model_settings={CWD_SETTING: str(tmp_path)},
+        ).run("go", message_history=large_earlier)
+        assert not replays_dir.exists() or list(replays_dir.glob("*.txt")) == []
+
+        # 3. Main session with oversized replay: writes private 0o600 spill file.
+        await agent_for(AntigravityModel("fake-neon"), tmp_path).run(
+            "continue", message_history=large_earlier
+        )
+
+    run(go())
+    spills = list(replays_dir.glob("*.txt"))
+    assert len(spills) == 1
+    spill_path = spills[0]
+    assert stat.S_IMODE(replays_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(spill_path.stat().st_mode) == 0o600
+    assert spill_path.read_text(encoding="utf-8") == replay_text(large_earlier, max_bytes=None)
+    sent = prompts(fake_agy)
+    # Third prompt is the main session with oversized replay; its replay block cites the spill file.
+    assert str(spill_path) in sent[2][0]["text"]
+    assert len(sent[2][0]["text"].encode("utf-8")) <= 1500
+
+    # Unwritable state directory fails gracefully and returns None.
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a dir")
+    monkeypatch.setenv("XDG_STATE_HOME", str(blocked))
+    assert antigravity._spill_replay("transcript") is None
+
+
+def test_replay_spill_sweeps_files_older_than_24_hours(tmp_path, monkeypatch):
+    import stat
+    import time
+
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    replays_dir = state_home / "pcode" / "replays"
+    replays_dir.mkdir(parents=True)
+
+    stale = replays_dir / "stale.txt"
+    fresh = replays_dir / "fresh.txt"
+    other = replays_dir / "keep.log"
+    stale.write_text("old")
+    fresh.write_text("recent")
+    other.write_text("unrelated")
+
+    now = time.time()
+    old_mtime = now - antigravity.REPLAY_SPILL_TTL_SECONDS - 3600
+    recent_mtime = now - 3600
+    os.utime(stale, (old_mtime, old_mtime))
+    os.utime(fresh, (recent_mtime, recent_mtime))
+    os.utime(other, (old_mtime, old_mtime))
+
+    written = antigravity._spill_replay("new full transcript")
+    assert written is not None and written.exists()
+    assert written.read_text(encoding="utf-8") == "new full transcript"
+    assert stat.S_IMODE(written.stat().st_mode) == 0o600
+    assert not stale.exists()
+    assert fresh.exists()
+    assert other.exists()
+
+
 def test_compact_asks_antigravity_and_is_not_a_turn(fake_agy, tmp_path):
     async def go():
         model = AntigravityModel("fake-neon")

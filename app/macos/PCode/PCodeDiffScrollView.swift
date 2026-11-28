@@ -48,25 +48,66 @@ struct PCodeDiffTheme: Equatable {
 
     let lineRowHeight: CGFloat
     let charAdvance: CGFloat
-    let unifiedOldNumWidth: CGFloat
-    let unifiedNewNumWidth: CGFloat
+    let unifiedNumWidth: CGFloat
     let unifiedMarkerWidth: CGFloat
     let sideBySideNumWidth: CGFloat
     let sideBySideMarkerWidth: CGFloat
 
     var unifiedGutterWidth: CGFloat {
-        unifiedOldNumWidth + unifiedNewNumWidth + unifiedMarkerWidth
+        unifiedNumWidth + unifiedMarkerWidth
     }
 
     var sideBySideHalfGutterWidth: CGFloat {
         sideBySideNumWidth + sideBySideMarkerWidth
     }
 
+    /// Highest line number displayed across `diffs` and any loaded `expandedGaps`,
+    /// used to size the line-number gutter dynamically without reserving 5 digits for small files.
+    static func maxLineNumber(
+        in diffs: [PCodeFileDiff],
+        expandedGaps: [PCodeDiffExpandedGapKey: [PCodeDiffLine]] = [:]
+    ) -> Int {
+        var highest = 0
+        for diff in diffs {
+            for hunk in diff.hunks {
+                if hunk.oldCount > 0 {
+                    highest = max(highest, hunk.oldStart + hunk.oldCount - 1)
+                } else {
+                    highest = max(highest, hunk.oldStart)
+                }
+                if hunk.newCount > 0 {
+                    highest = max(highest, hunk.newStart + hunk.newCount - 1)
+                } else {
+                    highest = max(highest, hunk.newStart)
+                }
+                if let last = hunk.lines.last {
+                    if let old = last.oldLineNumber { highest = max(highest, old) }
+                    if let new = last.newLineNumber { highest = max(highest, new) }
+                }
+            }
+        }
+        if !expandedGaps.isEmpty {
+            let activeFileIDs = Set(diffs.map(\.id))
+            for (key, lines) in expandedGaps where activeFileIDs.contains(key.fileID) {
+                if let first = lines.first {
+                    if let old = first.oldLineNumber { highest = max(highest, old) }
+                    if let new = first.newLineNumber { highest = max(highest, new) }
+                }
+                if let last = lines.last {
+                    if let old = last.oldLineNumber { highest = max(highest, old) }
+                    if let new = last.newLineNumber { highest = max(highest, new) }
+                }
+            }
+        }
+        return highest
+    }
+
     static func make(
         isDark: Bool,
         surfaceBackground: NSColor,
         foreground: NSColor?,
-        codeFont: NSFont
+        codeFont: NSFont,
+        maxLineNumber: Int = 999
     ) -> PCodeDiffTheme {
         let concreteFg = foreground ?? (isDark ? NSColor(white: 0.90, alpha: 1.0) : NSColor(white: 0.12, alpha: 1.0))
         let secondaryFg = concreteFg.withAlphaComponent(0.62)
@@ -82,9 +123,12 @@ struct PCodeDiffTheme: Equatable {
         let rowHeight = ceil(codeFont.pointSize * 1.32) + 1
         let sampleWidth = ("M" as NSString).size(withAttributes: [.font: codeFont]).width
         let charAdvance = max(6.0, sampleWidth)
-        let fiveDigitWidth = ceil(("99999" as NSString).size(withAttributes: [.font: gutterFont]).width)
-        let numColWidth = max(34, fiveDigitWidth + 9)
-        let markerWidth = max(12, ceil(("+" as NSString).size(withAttributes: [.font: gutterFont]).width) + 4)
+        let digits = max(2, String(max(1, maxLineNumber)).count)
+        let digitsSample = String(repeating: "9", count: digits)
+        let digitsWidth = ceil((digitsSample as NSString).size(withAttributes: [.font: gutterFont]).width)
+        // 3.5pt left (clears the 2.5pt selection bar) + 3.5pt right before the +/- marker.
+        let numColWidth = max(20, digitsWidth + 7)
+        let markerWidth = max(11, ceil(("+" as NSString).size(withAttributes: [.font: gutterFont]).width) + 3)
 
         let primaryTintBase = isDark ? NSColor.white : NSColor.black
         let headerBase = surfaceBackground.blended(
@@ -129,11 +173,10 @@ struct PCodeDiffTheme: Equatable {
             fillerCellFill: primaryTintBase.withAlphaComponent(isDark ? 0.035 : 0.025),
             lineRowHeight: rowHeight,
             charAdvance: charAdvance,
-            unifiedOldNumWidth: numColWidth,
-            unifiedNewNumWidth: numColWidth,
+            unifiedNumWidth: numColWidth,
             unifiedMarkerWidth: markerWidth,
             sideBySideNumWidth: numColWidth,
-            sideBySideMarkerWidth: max(11, markerWidth - 1)
+            sideBySideMarkerWidth: max(10, markerWidth - 1)
         )
     }
 }
@@ -888,10 +931,12 @@ final class PCodeDiffFileHeaderRowView: NSView, PCodeDiffReusableRowView {
     private var isCopied = false
 
     var onToggleCollapse: ((String, String) -> Void)?
+    var onEditInFilesTab: ((PCodeFileDiff) -> Void)?
     var onOpenInEditor: ((PCodeFileDiff) -> Void)?
     var onCopyPath: ((String) -> Void)?
 
     private let dotView = PCodeDiffPulsingDotLayerView(frame: .zero)
+    private let editButton = NSButton(frame: .zero)
     private let openButton = NSButton(frame: .zero)
     private let copyButton = NSButton(frame: .zero)
 
@@ -900,7 +945,12 @@ final class PCodeDiffFileHeaderRowView: NSView, PCodeDiffReusableRowView {
         wantsLayer = true
         addSubview(dotView)
 
-        configureIconButton(openButton, symbol: "arrow.up.forward.square", tooltip: "Open in Editor (⌘O)")
+        configureIconButton(editButton, symbol: "pencil.line", tooltip: "Edit in Files tab")
+        editButton.target = self
+        editButton.action = #selector(handleEditClick)
+        addSubview(editButton)
+
+        configureIconButton(openButton, symbol: "arrow.up.forward.square", tooltip: "Open in External Editor (⌘O)")
         openButton.target = self
         openButton.action = #selector(handleOpenClick)
         addSubview(openButton)
@@ -927,6 +977,7 @@ final class PCodeDiffFileHeaderRowView: NSView, PCodeDiffReusableRowView {
         super.prepareForReuse()
         diff = nil
         onToggleCollapse = nil
+        onEditInFilesTab = nil
         onOpenInEditor = nil
         onCopyPath = nil
         dotView.configure(color: .clear, active: false)
@@ -947,6 +998,8 @@ final class PCodeDiffFileHeaderRowView: NSView, PCodeDiffReusableRowView {
         self.isCopied = isCopied
         self.theme = theme
 
+        editButton.contentTintColor = theme.secondaryForeground
+        editButton.isHidden = onEditInFilesTab == nil
         openButton.contentTintColor = theme.secondaryForeground
         copyButton.image = NSImage(
             systemSymbolName: isCopied ? "checkmark" : "doc.on.doc",
@@ -973,11 +1026,14 @@ final class PCodeDiffFileHeaderRowView: NSView, PCodeDiffReusableRowView {
         let btnSize: CGFloat = 20
         let copyX = max(0, w - 10 - btnSize)
         let openX = max(0, copyX - 4 - btnSize)
+        let editX = max(0, openX - 4 - btnSize)
         copyButton.frame = CGRect(x: copyX, y: (h - btnSize) * 0.5, width: btnSize, height: btnSize)
         openButton.frame = CGRect(x: openX, y: (h - btnSize) * 0.5, width: btnSize, height: btnSize)
+        editButton.frame = CGRect(x: editX, y: (h - btnSize) * 0.5, width: btnSize, height: btnSize)
 
+        let leftmostButtonX = editButton.isHidden ? openX : editX
         if !dotView.isHidden, let diff, let theme {
-            let dotX = computeDotOriginX(diff: diff, theme: theme, openButtonMinX: openX)
+            let dotX = computeDotOriginX(diff: diff, theme: theme, openButtonMinX: leftmostButtonX)
             dotView.frame = CGRect(x: dotX, y: (h - 12) * 0.5, width: 12, height: 12)
         }
     }
@@ -1006,8 +1062,14 @@ final class PCodeDiffFileHeaderRowView: NSView, PCodeDiffReusableRowView {
         guard let diff else { return }
         let pt = convert(event.locationInWindow, from: nil)
         // Ignore clicks on the trailing action buttons.
-        if pt.x >= openButton.frame.minX - 4 { return }
+        let actionMinX = editButton.isHidden ? openButton.frame.minX : editButton.frame.minX
+        if pt.x >= actionMinX - 4 { return }
         onToggleCollapse?(diff.id, diff.path)
+    }
+
+    @objc private func handleEditClick() {
+        guard let diff else { return }
+        onEditInFilesTab?(diff)
     }
 
     @objc private func handleOpenClick() {
@@ -1084,7 +1146,7 @@ final class PCodeDiffFileHeaderRowView: NSView, PCodeDiffReusableRowView {
 
         // Compute right-hand stats area so title/path truncate cleanly before stats + buttons.
         let statFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
-        var rightCursor = openButton.frame.minX - 6
+        var rightCursor = (editButton.isHidden ? openButton.frame.minX : editButton.frame.minX) - 6
 
         if diff.removed > 0 {
             let remStr = "-\(diff.removed)" as NSString
@@ -1506,25 +1568,19 @@ private final class PCodeDiffUnifiedLineRowView: NSView, PCodeDiffReusableRowVie
             ctx.fill(CGRect(x: 0, y: 0, width: 2.5, height: bounds.height))
         }
 
-        // Pinned line-number gutter (aligned to the first visual line when wrapped)
-        let gutterAttrs: [NSAttributedString.Key: Any] = [
-            .font: theme.gutterFont,
-            .foregroundColor: theme.secondaryForeground.withAlphaComponent(0.75),
-        ]
+        // Pinned single-column line-number gutter (aligned to the first visual line when wrapped).
+        // Uses newLineNumber when present, falling back to oldLineNumber (slightly softer) for deletions.
         let midY = theme.lineRowHeight * 0.5
-        if let oldNum = line.oldLineNumber {
-            let s = String(oldNum) as NSString
+        if let displayNum = line.referenceLineNumber {
+            let isOldOnly = (line.newLineNumber == nil)
+            let gutterAttrs: [NSAttributedString.Key: Any] = [
+                .font: theme.gutterFont,
+                .foregroundColor: theme.secondaryForeground.withAlphaComponent(isOldOnly ? 0.50 : 0.75),
+            ]
+            let s = String(displayNum) as NSString
             let sz = s.size(withAttributes: gutterAttrs)
             s.draw(
-                at: CGPoint(x: theme.unifiedOldNumWidth - 5 - sz.width, y: midY - sz.height * 0.5),
-                withAttributes: gutterAttrs
-            )
-        }
-        if let newNum = line.newLineNumber {
-            let s = String(newNum) as NSString
-            let sz = s.size(withAttributes: gutterAttrs)
-            s.draw(
-                at: CGPoint(x: theme.unifiedOldNumWidth + theme.unifiedNewNumWidth - 6 - sz.width, y: midY - sz.height * 0.5),
+                at: CGPoint(x: theme.unifiedNumWidth - 3.5 - sz.width, y: midY - sz.height * 0.5),
                 withAttributes: gutterAttrs
             )
         }
@@ -1545,7 +1601,7 @@ private final class PCodeDiffUnifiedLineRowView: NSView, PCodeDiffReusableRowVie
             ]
             let s = marker as NSString
             let sz = s.size(withAttributes: markerAttrs)
-            let mx = theme.unifiedOldNumWidth + theme.unifiedNewNumWidth + (theme.unifiedMarkerWidth - sz.width) * 0.5
+            let mx = theme.unifiedNumWidth + (theme.unifiedMarkerWidth - sz.width) * 0.5
             s.draw(at: CGPoint(x: mx, y: midY - sz.height * 0.5), withAttributes: markerAttrs)
         }
 
@@ -1791,7 +1847,7 @@ private final class PCodeDiffSideBySideRowView: NSView, PCodeDiffReusableRowView
             let s = String(num) as NSString
             let sz = s.size(withAttributes: attrs)
             s.draw(
-                at: CGPoint(x: rect.minX + theme.sideBySideNumWidth - 5 - sz.width, y: midY - sz.height * 0.5),
+                at: CGPoint(x: rect.minX + theme.sideBySideNumWidth - 3.5 - sz.width, y: midY - sz.height * 0.5),
                 withAttributes: attrs
             )
         }
@@ -1907,6 +1963,7 @@ final class PCodeDiffDocumentView: NSView {
 
     // Callbacks wired by Coordinator
     var onToggleCollapse: ((String, String) -> Void)?
+    var onEditInFilesTab: ((PCodeFileDiff) -> Void)?
     var onOpenInEditor: ((PCodeFileDiff) -> Void)?
     var onCopyPath: ((String) -> Void)?
     var onExpandGap: ((PCodeDiffExpandGapPayload) -> Void)?
@@ -2381,6 +2438,7 @@ final class PCodeDiffDocumentView: NSView {
                 self?.window?.makeFirstResponder(self)
                 self?.onToggleCollapse?(id, path)
             }
+            headerView.onEditInFilesTab = onEditInFilesTab
             headerView.onOpenInEditor = onOpenInEditor
             headerView.onCopyPath = onCopyPath
             headerView.configure(
@@ -2461,6 +2519,7 @@ final class PCodeDiffDocumentView: NSView {
               case .fileHeader(let diff, let isCollapsed, let isFocused, let hasUnseen, let isCopied) = snapshot.rows[rowIndex]
         else { return }
         headerView.onToggleCollapse = onToggleCollapse
+        headerView.onEditInFilesTab = onEditInFilesTab
         headerView.onOpenInEditor = onOpenInEditor
         headerView.onCopyPath = onCopyPath
         headerView.configure(
@@ -2680,6 +2739,7 @@ struct PCodeNativeDiffScrollView: NSViewRepresentable {
     let syntaxStore: PCodeDiffSyntaxStore
 
     let onToggleCollapse: (String, String) -> Void
+    let onEditInFilesTab: (PCodeFileDiff) -> Void
     let onOpenInEditor: (PCodeFileDiff) -> Void
     let onCopyPath: (String) -> Void
     let onExpandGap: (PCodeDiffExpandGapPayload) -> Void
@@ -2713,6 +2773,7 @@ struct PCodeNativeDiffScrollView: NSViewRepresentable {
         scrollView.backgroundColor = theme.background
 
         doc.onToggleCollapse = onToggleCollapse
+        doc.onEditInFilesTab = onEditInFilesTab
         doc.onOpenInEditor = onOpenInEditor
         doc.onCopyPath = onCopyPath
         doc.onExpandGap = onExpandGap

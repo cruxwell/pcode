@@ -602,7 +602,8 @@ struct PCodeChangesInspectorView: View {
             isDark: isDark,
             surfaceBackground: NSColor(surfaceBackground),
             foreground: foregroundColor,
-            codeFont: resolvedCodeFont
+            codeFont: resolvedCodeFont,
+            maxLineNumber: PCodeDiffTheme.maxLineNumber(in: diffs, expandedGaps: expandedGaps)
         )
     }
 
@@ -631,6 +632,11 @@ struct PCodeChangesInspectorView: View {
                         onToggleCollapse: { diffID, diffPath in
                             state.toggleCollapsed(filePath: diffID)
                             updatedUnseenFiles.remove(diffPath)
+                        },
+                        onEditInFilesTab: { diff in
+                            let targetPath = diff.absolutePath ?? diff.path
+                            let line = (selection?.path == diff.path ? selection?.startLine : nil) ?? diff.firstChangedLine
+                            actions.openInFilesTab(targetPath, line, line)
                         },
                         onOpenInEditor: { diff in
                             let targetPath = diff.absolutePath ?? diff.path

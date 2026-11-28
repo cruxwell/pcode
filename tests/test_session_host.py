@@ -3384,6 +3384,7 @@ def test_a_booting_host_shows_observers_the_conversation_it_is_resuming(tmp_path
     # Once loaded, boot's replay skips observers already shown that journal...
     sent = []
     booting.controller.runtime = SimpleNamespace(session=saved)
+    booting.settled_end = saved.journal_size()
     booting.transcript_observers = [SimpleNamespace(_send_encoded=sent.append)]
     booting._read_settled_history = lambda: SessionHost._read_settled_history(booting)
     SessionHost._replay_to_observers(booting, "replay_conversation")
@@ -3391,6 +3392,37 @@ def test_a_booting_host_shows_observers_the_conversation_it_is_resuming(tmp_path
     # ...and any later replay sends it.
     SessionHost._replay_to_observers(booting, "replay_conversation")
     assert len(sent) == 1 and b'"history"' in sent[0] and b"earlier" in sent[0]
+
+
+def test_observe_transcript_does_not_duplicate_first_turn_when_settled_end_is_none(tmp_path):
+    """On a brand-new session, turn 1 creates the journal after `reset_buffer()` left
+    `settled_end` as `None`. Observers connecting during or after turn 1 must get turn 1
+    only from the catch-up buffer, not also from `history`."""
+    from types import SimpleNamespace
+
+    (tmp_path / "transcript.jsonl").write_text(
+        json.dumps({"version": 1, "kind": "turn_started", "prompt": "first", "run_id": "r1"})
+        + "\n"
+        + json.dumps({"version": 1, "kind": "Message", "markdown": "answer", "run_id": "r1"})
+        + "\n"
+    )
+    session = SimpleNamespace(
+        directory=tmp_path,
+        tree=SimpleNamespace(nodes={}),
+        journal_size=lambda: (tmp_path / "transcript.jsonl").stat().st_size,
+    )
+    host = SimpleNamespace(
+        controller=SimpleNamespace(runtime=SimpleNamespace(session=session), _saved_session=None),
+        settled_end=None,
+        boot_history_end=None,
+    )
+    # Before turn 2 resets the buffer, `settled_end` is None: everything in the journal
+    # is still in `host.buffer`, so settled history must be empty.
+    assert SessionHost._read_settled_history(host) == []
+    # Once turn 2 resets the buffer, `settled_end` covers turn 1 and history returns it.
+    host.settled_end = session.journal_size()
+    history = SessionHost._read_settled_history(host)
+    assert [r["kind"] for r in history] == ["turn_started", "Message"]
 
 
 def test_host_starts_without_a_model_and_activates_one_later(tmp_path, host_dir, monkeypatch):

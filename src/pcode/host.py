@@ -883,6 +883,8 @@ class SessionHost:
         """The settled journal (up to `settled_end`) as a transcript observer draws it."""
         session = getattr(self.controller.runtime, "session", None)
         if session is not None:
+            if not self.settled_end:
+                return []
             return observer_history(session, self.settled_end)
         # Still booting: the conversation being resumed is on disk already. Without
         # this, an observer that connects first is told the session is empty.

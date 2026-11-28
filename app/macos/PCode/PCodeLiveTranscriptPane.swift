@@ -909,6 +909,14 @@ struct PCodeLiveTranscriptRepresentable: NSViewRepresentable {
                 }
             }
         }
+        scrollView.transcriptDocumentView.onInspectFile = { path, startLine, endLine in
+            guard let composer,
+                  let pane = PCodeWorkspaceController.existing?.workspace.pane(for: composer)
+            else { return }
+            MainActor.assumeIsolated {
+                pane.openFileInInspector(path: path, line: startLine, endLine: endLine)
+            }
+        }
         scrollView.transcriptDocumentView.onInspectAgent = { callID in
             guard let pane = paneFor() else { return }
             MainActor.assumeIsolated {

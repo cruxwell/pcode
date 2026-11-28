@@ -1876,7 +1876,9 @@ final class PCodeToolCardView: NSView, PCodeTranscriptRowHosting {
             let symCfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
             inspectButton.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: "Open in Inspector")?
                 .withSymbolConfiguration(symCfg)
-            inspectButton.toolTip = call.isDelegate ? "Open agent in Inspector" : "Open command in Inspector"
+            inspectButton.toolTip = call.isDelegate
+                ? "Open agent in Inspector"
+                : (PCodeReadFileReference.isReadFileTool(call.name) ? "Open file in Inspector" : "Open command in Inspector")
             inspectButton.contentTintColor = theme.secondaryForeground
             cursorX -= inspectWidth
             inspectButton.frame = CGRect(x: max(leftPad, cursorX), y: 3, width: inspectWidth, height: 20)
