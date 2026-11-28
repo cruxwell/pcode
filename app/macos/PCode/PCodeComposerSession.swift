@@ -134,6 +134,8 @@ final class PCodeComposerSession: ObservableObject {
     let existingHostID: String?
     /// The secret prompt open for this pane's host, if any (`PCodeHostRequests.readSecret`).
     var secretAlert: NSAlert?
+    /// The pane's `/btw` drawer (`PCodeComposerSession+Btw.swift`, `PCodeNativeBtwDrawer`).
+    lazy var btwDrawer = PCodeDrawer(onFocusInput: { [weak self] in self?.focus() })
     /// The model picker open for this pane's host (`choose_model`), cancelled with the pane.
     var modelPicker: PCodePicker?
     /// When busy was set before the host confirmed it; cleared by the host's own `busy`.
@@ -148,7 +150,9 @@ final class PCodeComposerSession: ObservableObject {
     private var client: PCodeHostRPCClient?
     private var socketPath: String?
     private var hostPID: Int32?
-    private var asides: [String: [String: Any]] = [:]
+    /// The side questions (`aside_state` dicts) by id, and their ids oldest first.
+    var asides: [String: [String: Any]] = [:]
+    var asideOrder: [String] = []
     private var successor: String?
     private var connectDeadline = Date.distantFuture
     private var spawnAttempts = 0
@@ -209,6 +213,7 @@ final class PCodeComposerSession: ObservableObject {
         }
         modelPicker?.cancel()
         modelPicker = nil
+        btwDrawer.close()
         client?.close()
         client = nil
     }
@@ -484,8 +489,12 @@ final class PCodeComposerSession: ObservableObject {
         if next.plan.isEmpty { tasksShown = false }
         startDebugPlanFeed()
         asides = [:]
+        asideOrder = []
         for aside in (welcome["asides"] as? [[String: Any]]) ?? [] {
-            if let id = aside["id"] as? String { asides[id] = aside }
+            if let id = aside["id"] as? String {
+                asides[id] = aside
+                asideOrder.append(id)
+            }
         }
         next.applyAsides(asides)
         setState(next)
@@ -576,10 +585,10 @@ final class PCodeComposerSession: ObservableObject {
             if next.plan.isEmpty, tasksShown { tasksShown = false }
         case "aside_changed", "aside_answered":
             guard let aside = args.first as? [String: Any], let id = aside["id"] as? String else { return }
+            if asides[id] == nil { asideOrder.append(id) }
             asides[id] = aside
-            var next = state
-            next.applyAsides(asides)
-            setState(next)
+            refreshAsideCounts()
+            asideChanged(aside, answered: method == "aside_answered")
         case "conversation_reset":
             var next = state
             next.sessionID = ""
@@ -608,6 +617,27 @@ final class PCodeComposerSession: ObservableObject {
         }
     }
 
+    /// The strip's /btw counts, after `asides` changed.
+    func refreshAsideCounts() {
+        var next = state
+        next.applyAsides(asides)
+        setState(next)
+    }
+
+    /// A host intent, sent only while attached (dropped otherwise).
+    func sendIntent(_ method: String, _ args: [Any]) {
+        guard connection == .attached else { return }
+        client?.notify(method, args)
+    }
+
+    /// A host call that answers; `completion` runs on main, with an error when not attached.
+    func request(_ method: String, _ args: [Any], completion: @escaping (Any?, String?) -> Void) {
+        guard let client, connection == .attached else {
+            return completion(nil, "The session host isn't connected yet.")
+        }
+        client.request(method, args) { result, error in DispatchQueue.main.async { completion(result, error) } }
+    }
+
     private func setState(_ next: PCodeHostClientState) {
         guard next != state else { return }
         state = next
@@ -622,6 +652,9 @@ final class PCodeComposerSession: ObservableObject {
     func submit(_ raw: String, interrupt: Bool = false) -> Bool {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return false }
+        // With a /btw thread open, Enter answers the thread (`PreviewApp.btw_submit`).
+        if !interrupt, let taken = btwSubmit(text) { return taken }
+        if interrupt { closeBtw() }
         if text.hasPrefix("/"), !Self.isPathPrompt(text, catalog: completion.catalog) {
             switch completion.catalog.handling(for: text) {
             case .session: send(.command(text))
@@ -828,9 +861,15 @@ final class PCodeComposerSession: ObservableObject {
             tasksShown = !tasksShown && !state.plan.isEmpty
             return true
         case .escape:
-            guard tasksShown else { return false }
-            tasksShown = false
+            if tasksShown {
+                tasksShown = false
+                return true
+            }
+            guard btwDrawer.isOpen else { return false }
+            closeBtw()
             return true
+        case .nextThread:
+            return nextBtwThread()
         case .complete:
             completion.reopen(text: textView.string, caret: textView.selectedRange().location)
             // One candidate: take it, as prompt_toolkit inserts the common part.

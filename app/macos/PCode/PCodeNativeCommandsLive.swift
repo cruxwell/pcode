@@ -109,8 +109,7 @@ extension PCodeNativeCommands {
         case .restartHost:
             _ = session.requestRelaunch(isManual: true)
         case .btw:
-            // Native panes have no drawer yet (`PCodeDrawer` hangs off a terminal surface).
-            toast("The /btw drawer isn't in native panes yet.")
+            session.openBtw()
         }
     }
 

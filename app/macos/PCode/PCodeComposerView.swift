@@ -16,6 +16,7 @@ import SwiftUI
 /// | Tab | open completion (with the menu open: take the selected or first row) |
 /// | Cmd+Shift+A | insert a file reference from a picker |
 /// | Cmd+Shift+K | show the plan's checklist |
+/// | Ctrl+\ | next /btw thread (Escape closes the drawer) |
 ///
 /// Ctrl+D is left to `NSTextView` (delete forward): the terminal's "exit on an empty
 /// prompt" has no place in a pane you close with ⌘W, and its busy-cancel is Ctrl+C's.
@@ -43,8 +44,10 @@ final class PCodeComposerTextView: NSTextView {
         case complete
         /// Cmd+Shift+K: show or hide the plan's checklist.
         case toggleTasks
-        /// Escape with the menu closed: close the checklist if open, else `NSTextView`'s.
+        /// Escape with the menu closed: close the checklist or the /btw drawer, else `NSTextView`'s.
         case escape
+        /// Ctrl+\: the next /btw thread, while the drawer shows one.
+        case nextThread
     }
 
     var onAction: ((Action) -> Bool)?
@@ -100,6 +103,7 @@ final class PCodeComposerTextView: NSTextView {
             case "j": return .newline
             case "c": return .clearOrCancel
             case "s": return .cycleSendMode
+            case "\\": return .nextThread
             default: return nil
             }
         }
@@ -126,7 +130,7 @@ final class PCodeComposerTextView: NSTextView {
                 return
             }
             if onAction?(action) == true { return }
-            if action == .historyPrevious || action == .historyNext || action == .escape {
+            if action == .historyPrevious || action == .historyNext || action == .escape || action == .nextThread {
                 return super.keyDown(with: event)
             }
             return
@@ -430,6 +434,14 @@ struct PCodeNativeSessionPaneContent: View {
                 .frame(width: horizontal.outerWidth)
                 .padding(.trailing, horizontal.trailingInset)
             }
+            .overlay(alignment: .topTrailing) {
+                // The /btw drawer: full height above the composer card, which keeps the keyboard.
+                if interactive {
+                    PCodeNativeBtwDrawer(
+                        drawer: session.btwDrawer,
+                        size: CGSize(width: geometry.size.width, height: max(0, geometry.size.height - footprint)))
+                }
+            }
             .onPreferenceChange(PCodeComposerFootprintKey.self) { footprint = $0 }
             .animation(.easeOut(duration: 0.12), value: contentHeight)
             .animation(.easeOut(duration: 0.15), value: session.toast)
@@ -575,6 +587,57 @@ private struct PCodeComposerPickerSheet: View {
             .shadow(color: .black.opacity(0.45), radius: 18, x: 0, y: 6)
             .environment(\.colorScheme, NSColor(ghostty.config.backgroundColor).isLightColor ? .light : .dark)
         }
+    }
+}
+
+/// A native pane's `/btw` drawer (`PCodeDrawer` driven by the composer), drawn as the
+/// terminal path draws it (`PCodeDrawerSurface`) but over the pane above the composer.
+private struct PCodeNativeBtwDrawer: View {
+    @EnvironmentObject var ghostty: Ghostty.App
+    @ObservedObject var drawer: PCodeDrawer
+    let size: CGSize
+    @State private var dragStart: CGFloat?
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.clear.allowsHitTesting(false)
+            if let thread = drawer.thread {
+                let width = PCodeDrawer.width(in: size.width, fraction: drawer.fraction)
+                HStack(spacing: 0) {
+                    Rectangle()
+                        .fill(ghostty.config.splitDividerColor)
+                        .frame(width: 1)
+                        .overlay(
+                            Color.clear.frame(width: 8).contentShape(Rectangle())
+                                .gesture(DragGesture(coordinateSpace: .global)
+                                    .onChanged { gesture in
+                                        guard size.width > 0 else { return }
+                                        let start = dragStart ?? (width / size.width)
+                                        dragStart = start
+                                        let minFraction = min(1, PCodeDrawer.minWidth / size.width)
+                                        drawer.fraction = min(PCodeDrawer.maxFraction,
+                                                              max(minFraction, start - gesture.translation.width / size.width))
+                                    }
+                                    .onEnded { _ in dragStart = nil }))
+                    PCodeBtwDrawerContent(
+                        model: thread,
+                        docked: false,
+                        fonts: drawer.fonts,
+                        onFocusTerminal: { drawer.focusTerminal() },
+                        onClose: { drawer.close() },
+                        onContentView: { drawer.contentView = $0 })
+                        .id(ObjectIdentifier(thread))
+                }
+                .frame(width: width, height: size.height)
+                .background(ghostty.config.backgroundColor.shadow(color: .black.opacity(0.35), radius: 8, x: -2, y: 2))
+                .offset(x: drawer.visible ? 0 : width + 16)
+                .opacity(drawer.visible ? 1 : 0)
+                .allowsHitTesting(drawer.visible)
+            }
+        }
+        .frame(width: size.width, height: size.height, alignment: .topTrailing)
+        .clipped()
+        .animation(.easeOut(duration: 0.18), value: drawer.visible)
     }
 }
 

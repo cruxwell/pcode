@@ -46,9 +46,17 @@ final class PCodeDrawer: NSObject, ObservableObject {
     }
 
     weak var surfaceView: Ghostty.SurfaceView?
+    /// A native-composer pane's drawer has no terminal: this gives its composer the keyboard.
+    var onFocusInput: (() -> Void)?
 
     init(surfaceView: Ghostty.SurfaceView) {
         self.surfaceView = surfaceView
+    }
+
+    /// A drawer for a native-composer pane (`PCodeNativeBtwDrawer`), driven by its composer
+    /// rather than by APCs.
+    init(onFocusInput: @escaping () -> Void) {
+        self.onFocusInput = onFocusInput
     }
 
     deinit {
@@ -80,7 +88,7 @@ final class PCodeDrawer: NSObject, ObservableObject {
         }
     }
 
-    private func show(host: String, thread name: String) {
+    func show(host: String, thread name: String) {
         if let thread, thread.host == host {
             // Another thread of the same host keeps the connection.
             if thread.thread != name { thread.thread = name }
@@ -104,8 +112,11 @@ final class PCodeDrawer: NSObject, ObservableObject {
     }
 
     func focusTerminal() {
-        guard let surfaceView else { return }
-        Ghostty.moveFocus(to: surfaceView)
+        if let surfaceView {
+            Ghostty.moveFocus(to: surfaceView)
+        } else {
+            onFocusInput?()
+        }
     }
 
     private var contentHasFocus: Bool {
