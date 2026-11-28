@@ -21,16 +21,17 @@ import os
 import tempfile
 import webbrowser
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.providers.openai_codex import (
-    OpenAICodexCredentials,
-    OpenAICodexCredentialSource,
-    OpenAICodexOAuthFlow,
-)
 
 from pcode.auth import LoginError
 from pcode.preferences import config_dir
+
+if TYPE_CHECKING:
+    # Imported where used: the provider loads the OpenAI SDK (~50 MB), and every
+    # session's model picker and sandbox only need `credentials_path`.
+    from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexOAuthFlow
 
 LOGIN_TIMEOUT_SECONDS = 300.0
 _MAX_FILE_BYTES = 1024 * 1024
@@ -59,6 +60,8 @@ def _token(value: object) -> str | None:
 
 def read_credentials(path: Path) -> OpenAICodexCredentials:
     """Load pcode's own stored Codex credential, never the CLI's auth file."""
+    from pydantic_ai.providers.openai_codex import OpenAICodexCredentials
+
     try:
         with path.open("r", encoding="utf-8-sig") as source:
             contents = source.read(_MAX_FILE_BYTES + 1)
@@ -120,8 +123,11 @@ def delete_credentials(path: Path) -> bool:
         raise LoginError(f"Could not remove the stored OpenAI Codex login: {path}") from None
 
 
-class CredentialStore(OpenAICodexCredentialSource):
-    """pcode's credential file as the provider's storage, so refreshes persist."""
+class CredentialStore:
+    """pcode's credential file as the provider's storage, so refreshes persist.
+
+    An `OpenAICodexCredentialSource`, a protocol, so it need not subclass it.
+    """
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path if path is not None else credentials_path()
@@ -156,6 +162,8 @@ async def login(
     flow: OpenAICodexOAuthFlow | None = None,
 ) -> OpenAICodexCredentials:
     """Run the browser sign-in and store the resulting credential."""
+    from pydantic_ai.providers.openai_codex import OpenAICodexOAuthFlow
+
     path = path if path is not None else credentials_path()
     flow = flow if flow is not None else OpenAICodexOAuthFlow()
     url = flow.authorization_url()
