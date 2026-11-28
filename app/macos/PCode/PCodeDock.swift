@@ -571,6 +571,9 @@ struct PCodeComposerStatusStrip: View {
     var onToggleSendMode: (() -> Void)? = nil
     /// The native composer's `@` file picker (Cmd+Shift+A).
     var onOpenFiles: (() -> Void)? = nil
+    /// The native composer's plan: a summary that opens the checklist (`PCodeTaskStrip`).
+    var tasks: [PCodePlanItem] = []
+    var tasksShown: Binding<Bool>? = nil
 
     private var stripColorScheme: ColorScheme {
         NSColor(ghostty.config.backgroundColor).isLightColor ? .light : .dark
@@ -628,6 +631,11 @@ struct PCodeComposerStatusStrip: View {
                     }
                 }
                 .layoutPriority(1)
+            }
+
+            if !tasks.isEmpty, let tasksShown {
+                PCodeTaskStripSummary(items: tasks, isPresented: tasksShown)
+                    .layoutPriority(0.5)
             }
 
             if !status.cacheNote.isEmpty {

@@ -15,6 +15,7 @@ import SwiftUI
 /// | Ctrl+S | cycle the send mode for the next send (steering, queue, interrupt) |
 /// | Tab | open completion (with the menu open: take the selected or first row) |
 /// | Cmd+Shift+A | insert a file reference from a picker |
+/// | Cmd+Shift+K | show the plan's checklist |
 ///
 /// Ctrl+D is left to `NSTextView` (delete forward): the terminal's "exit on an empty
 /// prompt" has no place in a pane you close with ⌘W, and its busy-cancel is Ctrl+C's.
@@ -40,6 +41,10 @@ final class PCodeComposerTextView: NSTextView {
         case openFilePicker
         /// Tab with the menu closed: open completion, never type a tab.
         case complete
+        /// Cmd+Shift+K: show or hide the plan's checklist.
+        case toggleTasks
+        /// Escape with the menu closed: close the checklist if open, else `NSTextView`'s.
+        case escape
     }
 
     var onAction: ((Action) -> Bool)?
@@ -78,7 +83,9 @@ final class PCodeComposerTextView: NSTextView {
             }
         }
         if mods == [.command, .shift], characters?.lowercased() == "a" { return .openFilePicker }
+        if mods == [.command, .shift], characters?.lowercased() == "k" { return .toggleTasks }
         if keyCode == 48, mods.isEmpty { return .complete }
+        if keyCode == 53, mods.isEmpty { return .escape }
         let isReturn = keyCode == 36 || keyCode == 76
         if isReturn {
             switch mods {
@@ -119,7 +126,7 @@ final class PCodeComposerTextView: NSTextView {
                 return
             }
             if onAction?(action) == true { return }
-            if action == .historyPrevious || action == .historyNext {
+            if action == .historyPrevious || action == .historyNext || action == .escape {
                 return super.keyDown(with: event)
             }
             return
@@ -395,8 +402,20 @@ struct PCodeNativeSessionPaneContent: View {
                         status: session.composerStatus,
                         startedAt: session.phaseStartedAt,
                         onToggleSendMode: interactive ? { session.cycleSendMode() } : nil,
-                        onOpenFiles: interactive ? { session.openFilePicker() } : nil)
+                        onOpenFiles: interactive ? { session.openFilePicker() } : nil,
+                        tasks: session.state.plan,
+                        tasksShown: interactive ? $session.tasksShown : nil)
                         .padding(.horizontal, PCodeDock.bottomMargin + 4)
+                        .overlay(alignment: .bottomLeading) {
+                            // Above the strip, outside layout: the transcript never moves.
+                            if interactive, session.tasksShown, !session.state.plan.isEmpty {
+                                PCodeTaskListCard(items: session.state.plan)
+                                    .padding(.leading, PCodeDock.bottomMargin)
+                                    .offset(y: -(PCodeDock.statusStripHeight + 6))
+                                    .transition(.opacity)
+                            }
+                        }
+                        .zIndex(1)
                     card(height: min(maxEditor, contentHeight))
                         .overlay(alignment: .topLeading) {
                             if interactive {

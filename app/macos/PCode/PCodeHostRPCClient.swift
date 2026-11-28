@@ -272,13 +272,16 @@ final class PCodeHostRPCClient {
 }
 
 /// One step of the conversation's plan, as the welcome's `plan` and `plan_changed` carry it
-/// (`PlanItem.model_dump`). For the task strip a later phase draws.
+/// (`PlanItem.model_dump`), for the task strip (`PCodeTaskStrip.swift`).
 struct PCodePlanItem: Equatable {
     let id: String
     let content: String
     let status: String
     let activeForm: String
     let size: String?
+    /// The step this one is a subtask of, if any.
+    var parentID: String? = nil
+    var dependsOn: [String] = []
 
     static func decode(_ raw: Any?) -> [PCodePlanItem] {
         guard let items = raw as? [[String: Any]] else { return [] }
@@ -288,7 +291,9 @@ struct PCodePlanItem: Equatable {
                 content: (item["content"] as? String) ?? "",
                 status: (item["status"] as? String) ?? "pending",
                 activeForm: (item["active_form"] as? String) ?? "",
-                size: item["size"] as? String)
+                size: item["size"] as? String,
+                parentID: item["parent_id"] as? String,
+                dependsOn: (item["depends_on"] as? [String]) ?? [])
         }
     }
 }

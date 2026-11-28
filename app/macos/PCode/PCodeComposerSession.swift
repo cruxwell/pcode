@@ -118,6 +118,10 @@ final class PCodeComposerSession: ObservableObject {
     let history: PCodePromptHistory
     /// The `@` file picker while it is open.
     @Published var filePicker: PCodePicker?
+    /// The task checklist popover (Cmd+Shift+K or a click on the strip's summary).
+    @Published var tasksShown = false
+    /// `PCODE_DEBUG_PLAN_FILE`'s poller (`startDebugPlanFeed`).
+    var debugPlanTimer: Timer?
     var draftTimer: Timer?
     /// The text the last draft save saw, so an idle composer writes nothing.
     var lastDraftText = ""
@@ -193,6 +197,8 @@ final class PCodeComposerSession: ObservableObject {
         saveDrafts()
         draftTimer?.invalidate()
         draftTimer = nil
+        debugPlanTimer?.invalidate()
+        debugPlanTimer = nil
         filePicker?.cancel()
         stopped = true
         // A secret prompt for this pane must not outlive it: cancelling answers the host nil.
@@ -471,6 +477,8 @@ final class PCodeComposerSession: ObservableObject {
         var next = state
         if let activity = welcome["activity"] as? [String: Any] { next.applyActivity(activity) }
         next.plan = PCodePlanItem.decode(welcome["plan"])
+        if next.plan.isEmpty { tasksShown = false }
+        startDebugPlanFeed()
         asides = [:]
         for aside in (welcome["asides"] as? [[String: Any]]) ?? [] {
             if let id = aside["id"] as? String { asides[id] = aside }
@@ -560,6 +568,8 @@ final class PCodeComposerSession: ObservableObject {
             var next = state
             next.plan = PCodePlanItem.decode(args.first)
             setState(next)
+            // A reset plan has nothing to show: the popover goes with the summary.
+            if next.plan.isEmpty, tasksShown { tasksShown = false }
         case "aside_changed", "aside_answered":
             guard let aside = args.first as? [String: Any], let id = aside["id"] as? String else { return }
             asides[id] = aside
@@ -808,6 +818,14 @@ final class PCodeComposerSession: ObservableObject {
             return true
         case .openFilePicker:
             openFilePicker()
+            return true
+        case .toggleTasks:
+            // Only with a plan to show: the summary it hangs from is hidden otherwise.
+            tasksShown = !tasksShown && !state.plan.isEmpty
+            return true
+        case .escape:
+            guard tasksShown else { return false }
+            tasksShown = false
             return true
         case .complete:
             completion.reopen(text: textView.string, caret: textView.selectedRange().location)

@@ -446,4 +446,59 @@ struct PCodeComposerTests {
         while !index.paths.contains("new.txt"), Date() < deadline { usleep(20_000) }
         #expect(index.paths.contains("new.txt"))
     }
+
+    // MARK: Task strip (phase 4)
+
+    private func step(_ id: String, _ status: String, size: String? = nil, parent: String? = nil,
+                      active: String = "") -> PCodePlanItem {
+        PCodePlanItem(id: id, content: "Do \(id)", status: status, activeForm: active, size: size, parentID: parent)
+    }
+
+    @Test func progressWeighsLikeTheTerminal() {
+        // plan_sizes.plan_progress: S1 M3 L8, unsized as M, cancelled out, running half.
+        let items = [step("a", "completed", size: "S"), step("b", "in_progress", size: "L"),
+                     step("c", "pending"), step("d", "cancelled", size: "L")]
+        let fraction = PCodePlanProgress.fraction(items)!
+        #expect(abs(fraction - (1 + 4) / 12.0) < 1e-9)
+        #expect(PCodePlanProgress.fraction([]) == nil)
+        #expect(PCodePlanProgress.fraction([step("x", "cancelled")]) == nil)
+        #expect(PCodePlanProgress.fraction([step("x", "completed")]) == 1)
+    }
+
+    @Test func summaryCountsAndNamesTheStepInFlight() {
+        let items = [step("a", "completed"), step("b", "in_progress", active: "Doing b"), step("c", "cancelled")]
+        #expect(PCodePlanProgress.count(items) == (1, 3))  // panel_title: completed / all.
+        #expect(PCodePlanProgress.current(items) == "Doing b")
+        #expect(PCodePlanProgress.current([step("b", "in_progress")]) == "Do b")
+        #expect(PCodePlanProgress.current([step("a", "pending")]) == nil)
+        #expect(PCodePlanProgress.glyph("completed") == "✔")
+        #expect(PCodePlanProgress.glyph("cancelled") == "–")
+        #expect(PCodePlanProgress.glyph("in_progress") == "↺")
+        #expect(PCodePlanProgress.glyph("pending") == "○")
+    }
+
+    @Test func rowsNestByParent() {
+        let items = [step("a", "pending"), step("c", "pending", parent: "a"), step("b", "pending"),
+                     step("d", "pending", parent: "c"), step("e", "pending", parent: "missing")]
+        let rows = PCodePlanProgress.rows(items)
+        #expect(rows.map(\.item.id) == ["a", "c", "d", "b", "e"])
+        #expect(rows.map(\.depth) == [0, 1, 2, 0, 0])
+        // A parent cycle still lists every step once.
+        let cycle = [step("x", "pending", parent: "y"), step("y", "pending", parent: "x")]
+        #expect(Set(PCodePlanProgress.rows(cycle).map(\.item.id)) == ["x", "y"])
+        #expect(PCodePlanProgress.rows(cycle).count == 2)
+    }
+
+    @Test func planDecodesParentsAndDependencies() {
+        let plan = PCodePlanItem.decode([["id": "b", "content": "B", "status": "pending",
+                                          "parent_id": "a", "depends_on": ["a"], "size": NSNull()]])
+        #expect(plan.first?.parentID == "a")
+        #expect(plan.first?.dependsOn == ["a"])
+        #expect(plan.first?.size == nil)
+    }
+
+    @Test func tasksKeyIsCmdShiftK() {
+        #expect(action(40, "k", [.command, .shift]) == .toggleTasks)
+        #expect(action(53, "\u{1b}") == .escape)  // Menu closed: closes the checklist, else NSTextView's.
+    }
 }
