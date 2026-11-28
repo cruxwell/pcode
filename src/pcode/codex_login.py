@@ -31,7 +31,11 @@ from pcode.preferences import config_dir
 if TYPE_CHECKING:
     # Imported where used: the provider loads the OpenAI SDK (~50 MB), and every
     # session's model picker and sandbox only need `credentials_path`.
-    from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexOAuthFlow
+    from pydantic_ai.providers.openai_codex import (
+        OpenAICodexCredentials,
+        OpenAICodexCredentialSource,
+        OpenAICodexOAuthFlow,
+    )
 
 LOGIN_TIMEOUT_SECONDS = 300.0
 _MAX_FILE_BYTES = 1024 * 1024
@@ -137,6 +141,10 @@ class CredentialStore:
 
     async def save(self, credentials: OpenAICodexCredentials) -> None:
         await asyncio.to_thread(write_credentials, self.path, credentials)
+
+
+if TYPE_CHECKING:
+    _conforms: OpenAICodexCredentialSource = CredentialStore()
 
 
 def credential_source(path: Path | None = None) -> CredentialStore | None:

@@ -77,6 +77,10 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+def __dir__() -> list[str]:
+    return sorted({*globals(), *_MODEL_NAMES})
+
+
 __all__ = [
     "CLI_ENV",
     "CWD_SETTING",
