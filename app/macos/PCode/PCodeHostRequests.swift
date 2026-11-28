@@ -8,9 +8,8 @@ import Foundation
 /// `choose_model`, `read_secret`, `browse_jobs`, `read_asides`. Every request gets a
 /// reply, or the host's command would wait on it forever.
 ///
-/// Phase 1 answers what it can and says plainly what isn't native yet. Later phases
-/// route the commands with native views here (`/tools`, `/diffs`, `/agents`, `/tree`,
-/// `/resume`, `/config`, the model picker...).
+/// Terminal commands and popups go to the native router (`PCodeNativeCommands`); what
+/// it has no native answer for is said plainly in a toast.
 ///
 /// Which commands are the session's and which the composer's is the command catalog's
 /// call (`PCodeCommandCatalog.handling(for:)`); this runs the composer's.
@@ -22,12 +21,21 @@ enum PCodeHostRequests {
         switch method {
         case "run_command":
             let text = (args.first as? String) ?? (kwargs["text"] as? String) ?? ""
-            runTerminalCommand(text, session: session)
+            runTerminalCommand(text, session: session, client: client)
             client.reply(id: id, result: nil)
         case "choose_model":
-            // Nil is "cancelled", as when a terminal's picker is closed.
-            session.showToast("The model picker isn't in the native composer yet: type /model NAME.")
-            client.reply(id: id, result: nil)
+            let values = (args.first as? [String]) ?? []
+            let providers = (args.count > 1 ? args[1] as? [String] : nil) ?? []
+            let current = args.count > 2 ? args[2] as? String : nil
+            session.modelPicker?.cancel()
+            session.modelPicker = PCodeNativeCommands.chooseModel(
+                values: values, providers: providers, current: current,
+                context: .live(session: session, client: client)
+            ) { [weak session] choice in
+                session?.modelPicker = nil
+                // Nil is "cancelled", as when a terminal's picker is closed.
+                client.reply(id: id, result: choice)
+            }
         case "read_secret":
             let title = (args.first as? String) ?? "pcode"
             let prompt = (args.count > 1 ? args[1] as? String : nil) ?? ""
@@ -35,29 +43,24 @@ enum PCodeHostRequests {
             readSecret(title: title, prompt: prompt, detail: detail, session: session) { secret in
                 client.reply(id: id, result: secret)
             }
-        case "browse_jobs", "read_asides":
-            session.showToast(method == "browse_jobs"
-                ? "/jobs isn't in the native composer yet."
-                : "The /btw viewer isn't in the native composer yet.")
+        case "browse_jobs":
+            // Replied at once: the host's command queue must not wait on the sheet.
+            PCodeNativeCommands.browseJobs(context: .live(session: session, client: client))
+            client.reply(id: id, result: nil)
+        case "read_asides":
+            PCodeNativeCommands.readAsides(context: .live(session: session, client: client))
             client.reply(id: id, result: nil)
         default:
             client.replyError(id: id, type: "PermissionError", message: "\(method) is not supported by Pcode.app's composer.")
         }
     }
 
-    /// A terminal command typed in the composer, or handed back by the host.
-    static func runTerminalCommand(_ text: String, session: PCodeComposerSession) {
-        let name = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            .split(maxSplits: 1, whereSeparator: \.isWhitespace).first.map(String.init) ?? text
-        switch name {
-        case "/quit", "/exit":
-            session.onCloseRequested?()
-        case "/redraw":
-            break  // Nothing native to repaint.
-        case "/paste-image":
-            // Unlike ⌘V, an explicit ask: the image wins even beside text.
-            if !session.pasteImage(from: .general) { session.showToast("The clipboard holds no image.") }
-        default:
+    /// A terminal command typed in the composer, or handed back by the host: run
+    /// natively (`PCodeNativeCommands`), else say it isn't. `client` is nil before attach.
+    static func runTerminalCommand(_ text: String, session: PCodeComposerSession, client: PCodeHostRPCClient?) {
+        if !PCodeNativeCommands.run(text, context: .live(session: session, client: client)) {
+            let name = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                .split(maxSplits: 1, whereSeparator: \.isWhitespace).first.map(String.init) ?? text
             session.showToast("\(name) isn't in the native composer yet.")
         }
     }

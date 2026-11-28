@@ -134,6 +134,8 @@ final class PCodeComposerSession: ObservableObject {
     let existingHostID: String?
     /// The secret prompt open for this pane's host, if any (`PCodeHostRequests.readSecret`).
     var secretAlert: NSAlert?
+    /// The model picker open for this pane's host (`choose_model`), cancelled with the pane.
+    var modelPicker: PCodePicker?
     /// When busy was set before the host confirmed it; cleared by the host's own `busy`.
     private var optimisticBusySince: Date?
     /// How long a stopped host (or its `/restart` successor) gets to come back.
@@ -205,6 +207,8 @@ final class PCodeComposerSession: ObservableObject {
         if let alert = secretAlert, let parent = alert.window.sheetParent {
             parent.endSheet(alert.window, returnCode: .alertSecondButtonReturn)
         }
+        modelPicker?.cancel()
+        modelPicker = nil
         client?.close()
         client = nil
     }
@@ -621,7 +625,7 @@ final class PCodeComposerSession: ObservableObject {
         if text.hasPrefix("/"), !Self.isPathPrompt(text, catalog: completion.catalog) {
             switch completion.catalog.handling(for: text) {
             case .session: send(.command(text))
-            case .terminal, .native: PCodeHostRequests.runTerminalCommand(text, session: self)
+            case .terminal, .native: PCodeHostRequests.runTerminalCommand(text, session: self, client: client)
             }
             return true
         }

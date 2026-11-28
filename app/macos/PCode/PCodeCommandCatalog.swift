@@ -186,7 +186,7 @@ struct PCodeCommandCatalog: Equatable, Sendable {
         guard let first = parts.first else { return .session }
         let name = String(first)
         // `background_prompt`: `/new` with a prompt; bare `/new` resets the session.
-        if name == "/new", parts.count == 2, !parts[1].allSatisfy(\.isWhitespace) { return .terminal }
+        if name == "/new", parts.count == 2, !parts[1].allSatisfy(\.isWhitespace) { return .native }
         let terminal = Self.terminalCommands.first { $0.name == name || $0.aliases.contains(name) }
         return terminal?.handling ?? .session
     }
@@ -275,22 +275,23 @@ struct PCodeCommandCatalog: Equatable, Sendable {
     /// descriptions, arguments and groups from their `Command(...)`
     /// registrations in `PcodeApp.__init__` (`src/pcode/app.py`). Keep in sync.
     ///
-    /// `.native` marks the ones dev/native-app-plan.md (3b) gives a native view,
-    /// pick list or composer action; the rest still need pcode's terminal.
+    /// `.native` marks the ones `PCodeNativeCommands.route(for:)` answers natively (the
+    /// "Native command routes" table in dev/native-app-plan.md); `.terminal` the ones it
+    /// can only explain in a toast. A test keeps the two in step.
     /// `/syntax` takes Pygments style names, which pcode lists at run time, and
     /// `/config` lists every setting key; only its subcommands are here.
     static let terminalCommands: [PCodeCommand] = {
         let onOff = ["on", "off"]
         let modes = ["off", "activity-panel", "scrollback"]  // THINKING_MODES, COMMAND_MODES
         return [
-            PCodeCommand("/help", "List commands and keyboard shortcuts", aliases: ["/commands"], group: "App", handling: .terminal),
+            PCodeCommand("/help", "List commands and keyboard shortcuts", aliases: ["/commands"], group: "App", handling: .native),
             PCodeCommand(
                 "/config", "Browse saved settings, or use list / diff / get KEY / set KEY VALUE / unset KEY",
                 arguments: ["list", "diff", "get", "set", "unset"], freeArguments: true, group: "App", handling: .native),
             PCodeCommand("/bind", "List, set, or reset prompt keybindings; bind KEY /command [args]", freeArguments: true, group: "App", completer: "complete_bind", handling: .terminal),
             PCodeCommand("/unbind", "Disable a prompt binding; /bind reset KEY restores its default", freeArguments: true, group: "App", handling: .terminal),
-            PCodeCommand("/quit", "Exit pcode", aliases: ["/exit"], group: "App", handling: .terminal),
-            PCodeCommand("/status", "Show model, workspace, session, and context usage", group: "Inspect", handling: .terminal),
+            PCodeCommand("/quit", "Exit pcode", aliases: ["/exit"], group: "App", handling: .native),
+            PCodeCommand("/status", "Show model, workspace, session, and context usage", group: "Inspect", handling: .native),
             PCodeCommand("/tools", "Browse tool calls and results; 'failed' or 'edits' narrows them", arguments: ["failed", "edits"], group: "Inspect", handling: .native),
             PCodeCommand("/diffs", "Git diff of this worktree's branch, or of files edited this session", group: "Inspect", handling: .native),
             PCodeCommand("/links", "Pick a URL from this conversation and open it in the browser", group: "Inspect", handling: .native),
@@ -307,20 +308,20 @@ struct PCodeCommandCatalog: Equatable, Sendable {
                 freeArguments: true, group: "Session", handling: .terminal),
             PCodeCommand(
                 "/restart", "Restart this background session's host on the pcode installed now, continuing a running turn; all: every host on older code",
-                arguments: ["all"], group: "Session", handling: .terminal),
-            PCodeCommand("/stop", "End this background session's host and quit, as any exit does", group: "Session", handling: .terminal),
+                arguments: ["all"], group: "Session", handling: .native),
+            PCodeCommand("/stop", "End this background session's host and quit, as any exit does", group: "Session", handling: .native),
             PCodeCommand("/detach", "Quit, leaving this session's background host running; a session running here moves into a host instead", group: "Session", handling: .terminal),
             PCodeCommand("/show-activity", "Activity panel (thinking, tool calls, tasks, commands): on / off; bare toggles", arguments: onOff, group: "Display", handling: .terminal),
             PCodeCommand("/show-tasks", "Task list in the activity panel: on / off; bare toggles", arguments: onOff, group: "Display", handling: .terminal),
             PCodeCommand("/autohide-tasks", "Hide the task list when a turn ends: on / off; bare toggles", arguments: onOff, group: "Display", handling: .terminal),
-            PCodeCommand("/show-thinking", "Where thinking shows: off / activity-panel / scrollback; bare cycles", arguments: modes, freeArguments: true, group: "Display", handling: .terminal),
+            PCodeCommand("/show-thinking", "Where thinking shows: off / activity-panel / scrollback; bare cycles", arguments: modes, freeArguments: true, group: "Display", handling: .native),
             PCodeCommand("/show-edits", "Edit diffs and previews in scrollback: on / off; bare toggles", arguments: onOff, group: "Display", handling: .terminal),
             PCodeCommand("/show-commands", "Where shell command output shows: off / activity-panel / scrollback; bare cycles", arguments: modes, freeArguments: true, group: "Display", handling: .terminal),
-            PCodeCommand("/group-tools", "Fold runs of tool calls into one scrollback line: on / off; bare toggles", arguments: onOff, group: "Display", handling: .terminal),
+            PCodeCommand("/group-tools", "Fold runs of tool calls into one scrollback line: on / off; bare toggles", arguments: onOff, group: "Display", handling: .native),
             PCodeCommand("/theme", "Set the palette: dark / light / auto; bare toggles dark/light", arguments: ["dark", "light", "auto"], group: "Display", handling: .terminal),
             PCodeCommand("/syntax", "Set the code, menu and prompt style for the active palette", group: "Display", handling: .terminal),
             PCodeCommand("/theme-preview", "Sample output plus every syntax style and how to select one", group: "Display", handling: .terminal),
-            PCodeCommand("/redraw", "Rebuild scrollback at the current width and display settings", group: "Display", handling: .terminal),
+            PCodeCommand("/redraw", "Rebuild scrollback at the current width and display settings", group: "Display", handling: .native),
         ]
     }()
 }

@@ -176,9 +176,9 @@ struct PCodeComposerTests {
         #expect(!PCodeComposerSession.isShellCommand("!!"))
         #expect(!PCodeComposerSession.isShellCommand("hi !there"))
         let catalog = PCodeCommandCatalog()
-        #expect(catalog.handling(for: "/help") == .terminal)
+        #expect(catalog.handling(for: "/help") == .native)
         #expect(catalog.handling(for: "/paste-image") == .native)
-        #expect(catalog.handling(for: "/new write the docs") == .terminal)
+        #expect(catalog.handling(for: "/new write the docs") == .native)
         #expect(catalog.handling(for: "/new") == .session)
         #expect(catalog.handling(for: "/compact") == .session)
     }
@@ -500,5 +500,25 @@ struct PCodeComposerTests {
     @Test func tasksKeyIsCmdShiftK() {
         #expect(action(40, "k", [.command, .shift]) == .toggleTasks)
         #expect(action(53, "\u{1b}") == .escape)  // Menu closed: closes the checklist, else NSTextView's.
+    }
+
+    // MARK: Phase 5 routing
+
+    /// The catalog's `.native` / `.terminal` marks and the router agree: a `.native`
+    /// command has a real native route, a `.terminal` one only a toast.
+    @Test func catalogMarksMatchTheRouter() {
+        for command in PCodeCommandCatalog.terminalCommands {
+            for name in [command.name] + command.aliases {
+                let route = PCodeNativeCommands.route(for: name)
+                if case .unsupported = route {
+                    #expect(command.handling == .terminal, "\(name) has no native route but is marked native")
+                } else {
+                    #expect(route != nil, "\(name) is a terminal command the router doesn't know")
+                    #expect(command.handling == .native, "\(name) is routed natively but marked terminal")
+                }
+            }
+        }
+        #expect(PCodeNativeCommands.route(for: "/new fix it") == .action(.newSession(prompt: "fix it")))
+        #expect(PCodeCommandCatalog().handling(for: "/new fix it") == .native)
     }
 }
