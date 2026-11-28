@@ -1,9 +1,9 @@
 """Model-aware output defaults, separate from reasoning effort and visibility."""
 
+import sys
 from dataclasses import replace
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.models.anthropic import AnthropicModel
 
 from pcode.model_metadata import catalog, refresh_context
 
@@ -24,7 +24,10 @@ class ModelOutputLimits(AbstractCapability):
     """
 
     async def before_model_request(self, ctx, request_context):
-        if not isinstance(request_context.model, AnthropicModel):
+        # Looked up, not imported: an Anthropic model has loaded its module
+        # already, and importing it for any other model costs ~80 MB.
+        anthropic = sys.modules.get("pydantic_ai.models.anthropic")
+        if anthropic is None or not isinstance(request_context.model, anthropic.AnthropicModel):
             return request_context
         settings = request_context.model_settings or {}
         if settings.get("max_tokens") is not None:
