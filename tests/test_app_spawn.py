@@ -62,7 +62,7 @@ def test_spawns_a_host_and_prints_where_it_is(monkeypatch, capsys, tmp_path, hos
     assert kwargs["model"] is None
 
 
-def test_continue_resumes_in_the_sessions_workspace(monkeypatch, capsys, tmp_path):
+def test_continue_resumes_in_the_sessions_workspace(monkeypatch, capsys, tmp_path, host_dir):
     root = tmp_path / "sessions"
     saved = SavedSession.create("test:local", tmp_path, root)
     identity = saved.info.id
@@ -119,7 +119,7 @@ def test_untrusted_project_code_is_asked_about_before_spawning(monkeypatch, caps
     assert not project_trust.is_trusted(repo)
 
 
-def test_trust_answer_records_trust_and_spawns(monkeypatch, capsys, tmp_path):
+def test_trust_answer_records_trust_and_spawns(monkeypatch, capsys, tmp_path, host_dir):
     repo = make_untrusted_repo(tmp_path / "repo")
     monkeypatch.setattr(sys, "argv", ["pcode", "--host", "--spawn-only=trust", "-C", str(repo)])
     with fake_spawn() as spawn, pytest.raises(SystemExit) as exit_info:
@@ -130,7 +130,7 @@ def test_trust_answer_records_trust_and_spawns(monkeypatch, capsys, tmp_path):
     assert project_trust.is_trusted(repo)
 
 
-def test_skip_answer_spawns_without_trusting(monkeypatch, capsys, tmp_path):
+def test_skip_answer_spawns_without_trusting(monkeypatch, capsys, tmp_path, host_dir):
     repo = make_untrusted_repo(tmp_path / "repo")
     monkeypatch.setattr(sys, "argv", ["pcode", "--host", "--spawn-only=skip", "-C", str(repo)])
     with fake_spawn() as spawn, pytest.raises(SystemExit):
