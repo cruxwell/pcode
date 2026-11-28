@@ -157,11 +157,12 @@ final class PCodeFileIndex: @unchecked Sendable {
     /// True once a listing has been read.
     var isLoaded: Bool { lock.withLock { _loadedAt != nil } }
 
-    /// Start a background refresh unless one is running or the listing is fresh.
-    func refreshIfStale(now: Date = Date()) {
+    /// Start a background refresh unless one is running or the listing is fresh:
+    /// younger than `maxAge` (default `cacheSeconds`).
+    func refreshIfStale(now: Date = Date(), maxAge: TimeInterval? = nil) {
         let start: (generation: Int, useGit: Bool)? = lock.withLock {
             if _refreshing { return nil }
-            if let loaded = _loadedAt, now.timeIntervalSince(loaded) < cacheSeconds { return nil }
+            if let loaded = _loadedAt, now.timeIntervalSince(loaded) < (maxAge ?? cacheSeconds) { return nil }
             _refreshing = true
             _started += 1
             return (_started, !_gitUnavailable)

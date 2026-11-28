@@ -608,7 +608,7 @@ final class PCodeComposerSession: ObservableObject {
     func submit(_ raw: String, interrupt: Bool = false) -> Bool {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return false }
-        if text.hasPrefix("/") {
+        if text.hasPrefix("/"), !Self.isPathPrompt(text, catalog: completion.catalog) {
             switch completion.catalog.handling(for: text) {
             case .session: send(.command(text))
             case .terminal, .native: PCodeHostRequests.runTerminalCommand(text, session: self)
@@ -624,6 +624,15 @@ final class PCodeComposerSession: ObservableObject {
         }
         send(.submit(text: text, mode: mode))
         return true
+    }
+
+    /// A prompt that starts with an absolute path (`/tmp/shot.png what is this?`, as
+    /// `/paste-image` into an empty composer leaves), not a command: its first word is
+    /// no command the catalog knows and holds another `/`.
+    static func isPathPrompt(_ text: String, catalog: PCodeCommandCatalog) -> Bool {
+        guard let first = text.split(maxSplits: 1, whereSeparator: \.isWhitespace).first.map(String.init),
+              first.hasPrefix("/"), first.dropFirst().contains("/") else { return false }
+        return catalog.find(first) == nil
     }
 
     /// `pcode.shell_mode.shell_command`: `!cmd`, but not `!` alone or `!!`.
@@ -799,6 +808,11 @@ final class PCodeComposerSession: ObservableObject {
             return true
         case .openFilePicker:
             openFilePicker()
+            return true
+        case .complete:
+            completion.reopen(text: textView.string, caret: textView.selectedRange().location)
+            // One candidate: take it, as prompt_toolkit inserts the common part.
+            if completion.rows.count == 1, let only = completion.rows.first { take(only) }
             return true
         }
     }

@@ -56,6 +56,11 @@ final class PCodeComposerCompletion: ObservableObject {
         }
         if let token = PCodeFileIndex.activeToken(in: text, caret: caret) {
             guard let files else { return show([]) }
+            if rows.isEmpty {
+                // The menu is opening: a file made a moment ago should be in it. The
+                // refresh lands in the background, and `onUpdate` ranks again.
+                files.refreshIfStale(maxAge: Self.openRefreshAge)
+            }
             let wanted = generation
             files.matches(token.fragment) { [weak self] items in
                 guard let self, self.generation == wanted else { return }
@@ -97,6 +102,16 @@ final class PCodeComposerCompletion: ObservableObject {
             return
         }
         selected = (current + delta + rows.count) % rows.count
+    }
+
+    /// How old the file listing may be when an `@` menu opens.
+    static let openRefreshAge: TimeInterval = 2
+
+    /// Tab with the menu closed: open it for the text around the caret, even if Escape
+    /// closed it (prompt_toolkit's Tab starts completion; it never types a tab).
+    func reopen(text: String, caret: Int) {
+        dismissed = nil
+        update(text: text, caret: caret)
     }
 
     /// Escape: close until the text changes.

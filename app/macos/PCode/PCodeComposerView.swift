@@ -13,6 +13,8 @@ import SwiftUI
 /// | Ctrl+Enter | interrupt the turn and send |
 /// | Ctrl+C | clear the draft; with nothing typed, interrupt a busy session |
 /// | Ctrl+S | cycle the send mode for the next send (steering, queue, interrupt) |
+/// | Tab | open completion (with the menu open: take the selected or first row) |
+/// | Cmd+Shift+A | insert a file reference from a picker |
 ///
 /// Ctrl+D is left to `NSTextView` (delete forward): the terminal's "exit on an empty
 /// prompt" has no place in a pane you close with ⌘W, and its busy-cancel is Ctrl+C's.
@@ -36,6 +38,8 @@ final class PCodeComposerTextView: NSTextView {
         case menuClose
         /// Cmd+Shift+A: browse the workspace for a file to name.
         case openFilePicker
+        /// Tab with the menu closed: open completion, never type a tab.
+        case complete
     }
 
     var onAction: ((Action) -> Bool)?
@@ -74,6 +78,7 @@ final class PCodeComposerTextView: NSTextView {
             }
         }
         if mods == [.command, .shift], characters?.lowercased() == "a" { return .openFilePicker }
+        if keyCode == 48, mods.isEmpty { return .complete }
         let isReturn = keyCode == 36 || keyCode == 76
         if isReturn {
             switch mods {

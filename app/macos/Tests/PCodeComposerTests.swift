@@ -282,7 +282,7 @@ struct PCodeComposerTests {
         #expect(open(53, "\u{1b}", []) == .menuClose)
         #expect(open(36, "\r", []) == .submit)  // The session decides: take a selection or send.
         #expect(action(126, nil, first: true) == .historyPrevious)  // Closed: history again.
-        #expect(action(48, "\t") == nil)
+        #expect(action(48, "\t") == .complete)  // Closed: Tab opens completion, never types a tab.
         #expect(action(0, "a", [.command, .shift]) == .openFilePicker)
     }
 
@@ -411,5 +411,39 @@ struct PCodeComposerTests {
 
     @Test func unencodableReplyIsAnError() {
         #expect(PCodeHostRPCClient.encode(["type": "reply", "id": 1, "result": Date()]) == nil)
+    }
+
+    // MARK: Owner decisions (B)
+
+    @Test func aLeadingPathIsAPromptNotACommand() {
+        let catalog = PCodeCommandCatalog(snapshot: .init(commands: [PCodeCommand("/compact", "")]))
+        #expect(PCodeComposerSession.isPathPrompt("/tmp/shot.png what is this", catalog: catalog))
+        #expect(PCodeComposerSession.isPathPrompt("/Users/me/a b", catalog: catalog))
+        #expect(!PCodeComposerSession.isPathPrompt("/compact", catalog: catalog))
+        #expect(!PCodeComposerSession.isPathPrompt("/unknown arg/with/slash", catalog: catalog))  // First word has none.
+        #expect(!PCodeComposerSession.isPathPrompt("hello /tmp/x", catalog: catalog))
+    }
+
+    @Test func tabReopensADismissedMenu() {
+        let menu = PCodeComposerCompletion(catalog: catalog(), files: nil)
+        menu.update(text: "/", caret: 1)
+        menu.dismiss()
+        #expect(!menu.isOpen)
+        menu.reopen(text: "/", caret: 1)
+        #expect(menu.isOpen)
+    }
+
+    @Test func fileIndexRefreshesWhenOlderThanAsked() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("composer-index-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let index = PCodeFileIndex(root: dir, cacheSeconds: 600)
+        index.refreshNow()
+        try Data().write(to: dir.appendingPathComponent("new.txt"))
+        index.refreshIfStale(now: Date().addingTimeInterval(1))  // Fresh by the 600s cache: nothing.
+        index.refreshIfStale(now: Date().addingTimeInterval(3), maxAge: 2)
+        let deadline = Date().addingTimeInterval(5)
+        while !index.paths.contains("new.txt"), Date() < deadline { usleep(20_000) }
+        #expect(index.paths.contains("new.txt"))
     }
 }
