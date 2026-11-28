@@ -16,7 +16,7 @@ struct PCodeComposerStatus: Equatable, Decodable {
     let btwReady: Int
     let cacheNote: String
     /// The editor holds unsent text (absent from an older pcode).
-    let draft: Bool?
+    var draft: Bool? = nil
 
     var hasDraft: Bool { draft == true }
 
