@@ -132,6 +132,71 @@ struct PCodeFileIndexTests {
         #expect(Set(listed) == [".gitignore", "kept.py", "dir with space/file.md"])
     }
 
+    @Test func workspacesResolveLikePython() {
+        #expect(PCodeFileIndex.canonical(URL(fileURLWithPath: "/tmp")).path == "/private/tmp")
+        #expect(PCodeFileIndex.canonical(URL(fileURLWithPath: "/no/such/dir/")).path == "/no/such/dir")
+        #expect(PCodeFileIndex.shared(for: "/tmp") === PCodeFileIndex.shared(for: "/private/tmp/"))
+    }
+
+    @Test func gitUnavailableIsReportedSoTheIndexStopsAsking() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try touch(root, "a.txt")
+        #expect(PCodeFileIndex.git(root: root) == .unavailable)
+        let result = PCodeFileIndex.listing(root: root, useGit: true)
+        #expect(result.paths == ["a.txt"])
+        #expect(result.gitUnavailable)
+        #expect(PCodeFileIndex.listing(root: root, useGit: false).paths == ["a.txt"])
+    }
+
+    @Test @MainActor func updatesOnlyWhenTheListingChanges() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try touch(root, "a.txt")
+        let index = PCodeFileIndex(root: root)
+        final class Counter: @unchecked Sendable { var count = 0 }
+        let counter = Counter()
+        index.onUpdate = { counter.count += 1 }
+        index.refreshNow()
+        index.refreshNow()
+        try touch(root, "b.txt")
+        index.refreshNow()
+        // The callbacks were queued on main; let them run.
+        for _ in 0..<5 { await Task.yield() }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(counter.count == 2)
+        #expect(index.paths == ["a.txt", "b.txt"])
+    }
+
+    @Test func aStaleBackgroundListingCannotOverwriteANewerOne() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try touch(root, "a.txt")
+        let index = PCodeFileIndex(root: root, cacheSeconds: 0)
+        // Start a background refresh, then land a newer synchronous one; whichever
+        // order they finish in, the newest generation's listing stays.
+        index.refreshIfStale()
+        try touch(root, "b.txt")
+        index.refreshNow()
+        Thread.sleep(forTimeInterval: 0.3)
+        #expect(index.paths == ["a.txt", "b.txt"])
+    }
+
+    @Test func asyncMatchesCallBackOnMain() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try touch(root, "notes.md")
+        let index = PCodeFileIndex(root: root)
+        index.refreshNow()
+        let paths: [String] = await withCheckedContinuation { continuation in
+            index.matches("note") { items in
+                #expect(Thread.isMainThread)
+                continuation.resume(returning: items.map(\.path))
+            }
+        }
+        #expect(paths == ["notes.md"])
+    }
+
     @Test func humanSizes() {
         #expect(PCodeFileIndex.humanSize(10) == "10 B")
         #expect(PCodeFileIndex.humanSize(1536) == "1.5 KB")

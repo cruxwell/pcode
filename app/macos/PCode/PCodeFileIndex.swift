@@ -11,8 +11,8 @@ import Foundation
 ///
 /// Reads are cheap and never block: `matches` answers from the cached listing
 /// and starts a background refresh once it is older than `cacheSeconds`.
-/// `onUpdate` runs on the main queue when a refresh lands, so an open menu can
-/// re-query.
+/// `onUpdate` runs on the main queue when a refresh changes the listing, so an
+/// open menu can re-query.
 final class PCodeFileIndex: @unchecked Sendable {
     /// One file a reference can name.
     struct Item: Equatable, Sendable {
@@ -35,6 +35,54 @@ final class PCodeFileIndex: @unchecked Sendable {
         let fragment: String
     }
 
+    /// A listed path with what ranking needs, folded once per refresh rather
+    /// than once per keystroke.
+    struct Entry: Sendable {
+        let path: String
+        /// Casefolded path and basename, as UTF-8.
+        let folded: [UInt8]
+        let foldedName: [UInt8]
+        /// Characters in the path, for the shorter-first tie-break.
+        let length: Int
+        /// `/` count, for the empty query's shallowest-first order.
+        let depth: Int
+
+        init(_ path: String) {
+            self.path = path
+            folded = Array(PCodePickMatch.casefold(path).utf8)
+            let slash = folded.lastIndex(of: UInt8(ascii: "/")).map { $0 + 1 } ?? 0
+            foldedName = Array(folded[slash...])
+            length = path.count
+            depth = path.utf8.reduce(0) { $1 == UInt8(ascii: "/") ? $0 + 1 : $0 }
+        }
+    }
+
+    /// A rankable listing: entries in listing order, and their indices
+    /// shallowest first for the empty query.
+    struct Listing: Sendable {
+        let entries: [Entry]
+        let shallowest: [Int]
+
+        init(_ paths: [String]) {
+            let entries = paths.map(Entry.init)
+            self.entries = entries
+            shallowest = entries.indices.sorted { lhs, rhs in
+                let a = entries[lhs], b = entries[rhs]
+                return a.depth != b.depth ? a.depth < b.depth : PCodeFileIndex.pythonOrder(a.path, b.path)
+            }
+        }
+
+        var paths: [String] { entries.map(\.path) }
+    }
+
+    /// What `git ls-files` gave.
+    enum GitResult: Equatable {
+        case listed([String])
+        /// git did not run or refused: not a checkout, or no command-line tools.
+        case unavailable
+        case timedOut
+    }
+
     // Same values as file_refs.py.
     static let ignoredDirectories: Set<String> = [
         ".git", ".hg", ".svn", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox",
@@ -47,22 +95,40 @@ final class PCodeFileIndex: @unchecked Sendable {
 
     let root: URL
     let cacheSeconds: TimeInterval
-    /// Runs on the main queue after each refresh.
+    /// Runs on the main queue after a refresh that changed the listing.
     var onUpdate: (() -> Void)? {
         get { lock.withLock { _onUpdate } }
         set { lock.withLock { _onUpdate = newValue } }
     }
 
     private let lock = NSLock()
-    private var _paths: [String] = []
+    private var _listing = Listing([])
     private var _loadedAt: Date?
     private var _refreshing = false
+    /// Bumped as each refresh starts; a result older than the one applied is dropped.
+    private var _started = 0
+    private var _applied = 0
+    /// git could not list this root. Not retried for this index: without the
+    /// command-line tools, `/usr/bin/git` offers an install dialog on every run.
+    /// A timeout is retried.
+    private var _gitUnavailable = false
     private var _onUpdate: (() -> Void)?
     private static let queue = DispatchQueue(label: "pcode.file-index", qos: .userInitiated, attributes: .concurrent)
 
     init(root: URL, cacheSeconds: TimeInterval = PCodeFileIndex.cacheSeconds) {
-        self.root = root.standardizedFileURL
+        self.root = Self.canonical(root)
         self.cacheSeconds = cacheSeconds
+    }
+
+    /// The workspace as Python's `Path.resolve()` names it, so `/tmp/x` and
+    /// `/private/tmp/x` are one workspace. `realpath(3)`, not Foundation's
+    /// `resolvingSymlinksInPath`, which strips a leading `/private` where
+    /// Python keeps it. A path that does not exist is only standardized.
+    static func canonical(_ url: URL) -> URL {
+        let standardized = url.standardizedFileURL
+        guard let resolved = realpath(standardized.path, nil) else { return standardized }
+        defer { free(resolved) }
+        return URL(fileURLWithPath: String(cString: resolved))
     }
 
     // MARK: Per-workspace cache
@@ -72,7 +138,7 @@ final class PCodeFileIndex: @unchecked Sendable {
 
     /// The index for `workspace`, created (and its first listing started) on first use.
     static func shared(for workspace: String) -> PCodeFileIndex {
-        let url = URL(fileURLWithPath: workspace).standardizedFileURL
+        let url = canonical(URL(fileURLWithPath: workspace))
         let index = sharedLock.withLock {
             if let existing = sharedIndexes[url.path] { return existing }
             let created = PCodeFileIndex(root: url)
@@ -86,52 +152,89 @@ final class PCodeFileIndex: @unchecked Sendable {
     // MARK: Listing
 
     /// The cached listing, possibly empty before the first refresh lands.
-    var paths: [String] { lock.withLock { _paths } }
+    var paths: [String] { lock.withLock { _listing }.paths }
 
     /// True once a listing has been read.
     var isLoaded: Bool { lock.withLock { _loadedAt != nil } }
 
     /// Start a background refresh unless one is running or the listing is fresh.
     func refreshIfStale(now: Date = Date()) {
-        let start: Bool = lock.withLock {
-            if _refreshing { return false }
-            if let loaded = _loadedAt, now.timeIntervalSince(loaded) < cacheSeconds { return false }
+        let start: (generation: Int, useGit: Bool)? = lock.withLock {
+            if _refreshing { return nil }
+            if let loaded = _loadedAt, now.timeIntervalSince(loaded) < cacheSeconds { return nil }
             _refreshing = true
-            return true
+            _started += 1
+            return (_started, !_gitUnavailable)
         }
-        guard start else { return }
+        guard let start else { return }
         Self.queue.async { [self] in
-            let listed = Self.listing(root: root)
-            let callback: (() -> Void)? = lock.withLock {
-                _paths = listed
-                _loadedAt = Date()
-                _refreshing = false
-                return _onUpdate
+            let result = Self.listing(root: root, useGit: start.useGit)
+            if let callback = apply(result, generation: start.generation, background: true) {
+                DispatchQueue.main.async(execute: callback)
             }
-            if let callback { DispatchQueue.main.async(execute: callback) }
         }
     }
 
-    /// Read the listing now, on the calling thread. For tests and callers already off main.
+    /// Read the listing now, on the calling thread (keep it off main: it runs
+    /// git). A background refresh already running cannot overwrite it.
     func refreshNow() {
-        let listed = Self.listing(root: root)
-        lock.withLock {
-            _paths = listed
+        let start: (generation: Int, useGit: Bool) = lock.withLock {
+            _started += 1
+            return (_started, !_gitUnavailable)
+        }
+        let result = Self.listing(root: root, useGit: start.useGit)
+        if let callback = apply(result, generation: start.generation, background: false) {
+            DispatchQueue.main.async(execute: callback)
+        }
+    }
+
+    /// Store a listing unless a newer one landed first; returns the update
+    /// callback when what is listed changed.
+    private func apply(
+        _ result: (paths: [String], gitUnavailable: Bool), generation: Int, background: Bool
+    ) -> (() -> Void)? {
+        // Folding 20k paths is the slow part, so it happens outside the lock.
+        let unchanged = lock.withLock { _listing }.paths == result.paths
+        let listing = unchanged ? nil : Listing(result.paths)
+        return lock.withLock {
+            if background { _refreshing = false }
+            if result.gitUnavailable { _gitUnavailable = true }
+            guard generation > _applied else { return nil }
+            _applied = generation
             _loadedAt = Date()
+            guard let listing, _listing.paths != result.paths else { return nil }
+            _listing = listing
+            return _onUpdate
         }
     }
 
     /// git's listing, else the walk; an empty git listing (a wholly ignored
     /// directory) falls through to the walk as pcode's does.
     static func listing(root: URL) -> [String] {
-        if let listed = gitFiles(root: root), !listed.isEmpty {
-            return Array(listed.prefix(maxFiles))
+        listing(root: root, useGit: true).paths
+    }
+
+    /// `listing(root:)`, skipping git when `useGit` is false, and whether git
+    /// was unavailable (so the caller stops asking).
+    static func listing(root: URL, useGit: Bool) -> (paths: [String], gitUnavailable: Bool) {
+        guard useGit else { return (walkedFiles(root: root), true) }
+        switch git(root: root, timeout: gitTimeout) {
+        case .listed(let listed) where !listed.isEmpty:
+            return (Array(listed.prefix(maxFiles)), false)
+        case .listed, .timedOut:
+            return (walkedFiles(root: root), false)
+        case .unavailable:
+            return (walkedFiles(root: root), true)
         }
-        return walkedFiles(root: root)
     }
 
     /// Tracked and untracked files below root, or nil outside a checkout or on timeout.
     static func gitFiles(root: URL, timeout: TimeInterval = gitTimeout) -> [String]? {
+        if case .listed(let paths) = git(root: root, timeout: timeout) { return paths }
+        return nil
+    }
+
+    static func git(root: URL, timeout: TimeInterval = gitTimeout) -> GitResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", root.path, "ls-files", "--cached", "--others", "--exclude-standard", "-z"]
@@ -139,7 +242,7 @@ final class PCodeFileIndex: @unchecked Sendable {
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         process.standardInput = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
+        do { try process.run() } catch { return .unavailable }
         // Read concurrently so a large listing cannot fill the pipe and stall git.
         final class Box: @unchecked Sendable { var data = Data() }
         let box = Box()
@@ -152,9 +255,9 @@ final class PCodeFileIndex: @unchecked Sendable {
         }
         if done.wait(timeout: .now() + timeout) == .timedOut {
             process.terminate()
-            return nil
+            return .timedOut
         }
-        guard process.terminationStatus == 0 else { return nil }
+        guard process.terminationStatus == 0 else { return .unavailable }
         // A file staged for deletion is still cached and can be listed twice;
         // keep the first of each.
         var seen = Set<String>()
@@ -164,7 +267,7 @@ final class PCodeFileIndex: @unchecked Sendable {
                   seen.insert(path).inserted else { continue }
             paths.append(path)
         }
-        return paths
+        return .listed(paths)
     }
 
     /// Files below root, as `os.walk` with sorted entries lists them in
@@ -209,10 +312,29 @@ final class PCodeFileIndex: @unchecked Sendable {
     // MARK: Matching
 
     /// Paths for `query` (an `@fragment`, with or without the `@`), best first.
-    /// Triggers a background refresh when the listing is stale.
+    /// Starts a background refresh when the listing is stale.
+    ///
+    /// Safe on any thread, including main: it copies the listing (folded once
+    /// per refresh) under the lock and ranks it with byte comparisons, a few
+    /// milliseconds for `maxFiles` paths. `matches(_:limit:completion:)` ranks
+    /// off main instead.
     func matches(_ query: String, limit: Int = PCodeFileIndex.maxCompletions) -> [Item] {
         refreshIfStale()
-        return Self.rank(paths, query: query, limit: limit).map(Item.init(path:))
+        let listing = lock.withLock { _listing }
+        return Self.rank(listing, query: query, limit: limit).map(Item.init(path:))
+    }
+
+    /// `matches`, ranked on a background queue; `completion` runs on main.
+    func matches(_ query: String, limit: Int = PCodeFileIndex.maxCompletions, completion: @escaping @Sendable ([Item]) -> Void) {
+        Self.queue.async { [self] in
+            let items = matches(query, limit: limit)
+            DispatchQueue.main.async { completion(items) }
+        }
+    }
+
+    /// `rank` over plain paths, folding them first (tests and one-off callers).
+    static func rank(_ paths: [String], query: String, limit: Int) -> [String] {
+        rank(Listing(paths), query: query, limit: limit)
     }
 
     /// pcode's ranking, widened with `PCodePickMatch`'s word-prefix matching.
@@ -221,42 +343,59 @@ final class PCodeFileIndex: @unchecked Sendable {
     /// earlier hit outranks a later one, then shorter paths win, so `ui.py`
     /// offers `src/pcode/ui.py` before `tests/test_ui.py`. Paths that only
     /// match fuzzily (`ed_ui` for `edit_ui.py`) follow, shortest first. An
-    /// empty query lists the shallowest paths first.
-    static func rank(_ paths: [String], query: String, limit: Int) -> [String] {
+    /// empty query lists the shallowest paths first. Hit positions are UTF-8
+    /// offsets, which order like pcode's character offsets for ASCII paths.
+    static func rank(_ listing: Listing, query: String, limit: Int) -> [String] {
         var trimmed = Substring(query)
         while trimmed.hasPrefix("@") { trimmed = trimmed.dropFirst() }
         if trimmed.hasPrefix("./") { trimmed = trimmed.dropFirst(2) }
-        let needle = PCodePickMatch.casefold(String(trimmed))
-        if needle.isEmpty {
-            let depths: [(depth: Int, path: String)] = paths.map { path in
-                (path.utf8.filter { $0 == UInt8(ascii: "/") }.count, path)
-            }
-            let shallowest = depths.sorted { lhs, rhs in
-                lhs.depth != rhs.depth ? lhs.depth < rhs.depth : pythonOrder(lhs.path, rhs.path)
-            }
-            return shallowest.prefix(limit).map(\.path)
+        let folded = PCodePickMatch.casefold(String(trimmed))
+        if folded.isEmpty {
+            return listing.shallowest.prefix(limit).map { listing.entries[$0].path }
         }
-        let terms = PCodePickMatch.terms(needle)
-        typealias Ranked = (tier: Int, position: Int, length: Int, path: String)
+        let needle = Array(folded.utf8)
+        let terms = PCodePickMatch.terms(folded)
+        // The query's word characters in order: what any fuzzy match needs at least.
+        let wordBytes = needle.filter { (0x61...0x7A).contains($0) || (0x30...0x39).contains($0) }
+        typealias Ranked = (tier: Int, position: Int, entry: Int)
         var ranked: [Ranked] = []
-        for path in paths {
-            let folded = PCodePickMatch.casefold(path)
-            let name = folded.split(separator: "/", omittingEmptySubsequences: false).last.map(String.init) ?? folded
-            if let position = offset(of: needle, in: name) {
-                ranked.append((0, position, path.count, path))
-            } else if let position = offset(of: needle, in: folded) {
-                ranked.append((1, position, path.count, path))
-            } else if PCodePickMatch.matches([folded], terms: terms, fuzzy: true) {
-                ranked.append((2, 0, path.count, path))
+        for (index, entry) in listing.entries.enumerated() {
+            if let position = find(needle, in: entry.foldedName) {
+                ranked.append((0, position, index))
+            } else if let position = find(needle, in: entry.folded) {
+                ranked.append((1, position, index))
+            } else if !wordBytes.isEmpty, isSubsequence(wordBytes, of: entry.folded),
+                      PCodePickMatch.matches([String(decoding: entry.folded, as: UTF8.self)], terms: terms, fuzzy: true) {
+                ranked.append((2, 0, index))
             }
         }
         ranked.sort {
             if $0.tier != $1.tier { return $0.tier < $1.tier }
             if $0.position != $1.position { return $0.position < $1.position }
-            if $0.length != $1.length { return $0.length < $1.length }
-            return pythonOrder($0.path, $1.path)
+            let a = listing.entries[$0.entry], b = listing.entries[$1.entry]
+            if a.length != b.length { return a.length < b.length }
+            return pythonOrder(a.path, b.path)
         }
-        return ranked.prefix(limit).map(\.path)
+        return ranked.prefix(limit).map { listing.entries[$0.entry].path }
+    }
+
+    private static func find(_ needle: [UInt8], in haystack: [UInt8]) -> Int? {
+        guard !needle.isEmpty, needle.count <= haystack.count else { return nil }
+        let first = needle[0]
+        for start in 0...(haystack.count - needle.count)
+        where haystack[start] == first && haystack[start..<(start + needle.count)].elementsEqual(needle) {
+            return start
+        }
+        return nil
+    }
+
+    private static func isSubsequence(_ needle: [UInt8], of haystack: [UInt8]) -> Bool {
+        var index = 0
+        for byte in haystack where byte == needle[index] {
+            index += 1
+            if index == needle.count { return true }
+        }
+        return false
     }
 
     /// The file's size ("1.2 KB"), shown beside a reference; "file" if unreadable.
@@ -304,11 +443,5 @@ final class PCodeFileIndex: @unchecked Sendable {
     /// Python's code-point string order, which `sorted()` uses.
     static func pythonOrder(_ lhs: String, _ rhs: String) -> Bool {
         lhs.unicodeScalars.lexicographicallyPrecedes(rhs.unicodeScalars)
-    }
-
-    /// Character offset of the first `needle` in `haystack`, like `str.find`.
-    private static func offset(of needle: String, in haystack: String) -> Int? {
-        guard let range = haystack.range(of: needle, options: .literal) else { return nil }
-        return haystack.distance(from: haystack.startIndex, to: range.lowerBound)
     }
 }

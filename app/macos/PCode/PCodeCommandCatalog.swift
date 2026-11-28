@@ -51,19 +51,53 @@ struct PCodeCommand: Codable, Equatable, Sendable {
         self.handling = handling
     }
 
-    /// Lenient: the host may add keys, and an older one may lack some.
+    /// Lenient: the host may add keys, an older one may lack some, and a
+    /// malformed field falls back to its default. Only a missing or non-string
+    /// `name` fails, which drops this command from a snapshot.
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         name = try values.decode(String.self, forKey: .name)
-        description = try values.decodeIfPresent(String.self, forKey: .description) ?? ""
-        arguments = try values.decodeIfPresent([String].self, forKey: .arguments) ?? []
-        aliases = try values.decodeIfPresent([String].self, forKey: .aliases) ?? []
-        freeArguments = try values.decodeIfPresent(Bool.self, forKey: .freeArguments) ?? false
-        group = try values.decodeIfPresent(String.self, forKey: .group) ?? "Other"
-        argumentDescriptions = try values.decodeIfPresent([String: String].self, forKey: .argumentDescriptions) ?? [:]
-        completer = try values.decodeIfPresent(String.self, forKey: .completer)
-        models = try values.decodeIfPresent(Bool.self, forKey: .models) ?? false
-        handling = try values.decodeIfPresent(Handling.self, forKey: .handling) ?? .session
+        description = (try? values.decodeIfPresent(String.self, forKey: .description)) ?? ""
+        arguments = values.lossyStrings(.arguments)
+        aliases = values.lossyStrings(.aliases)
+        freeArguments = (try? values.decodeIfPresent(Bool.self, forKey: .freeArguments)) ?? false
+        group = (try? values.decodeIfPresent(String.self, forKey: .group)) ?? "Other"
+        argumentDescriptions = values.lossyStringMap(.argumentDescriptions)
+        completer = (try? values.decodeIfPresent(String.self, forKey: .completer)) ?? nil
+        models = (try? values.decodeIfPresent(Bool.self, forKey: .models)) ?? false
+        handling = (try? values.decodeIfPresent(Handling.self, forKey: .handling)) ?? .session
+    }
+}
+
+/// Decodes to nil instead of failing, so one bad element drops alone.
+private struct Lossy<Value: Decodable>: Decodable {
+    let value: Value?
+
+    init(from decoder: Decoder) throws {
+        value = try? Value(from: decoder)
+    }
+}
+
+private extension KeyedDecodingContainer {
+    /// The strings of an array, skipping other elements; empty if absent or not an array.
+    func lossyStrings(_ key: Key) -> [String] {
+        ((try? decodeIfPresent([Lossy<String>].self, forKey: key)) ?? nil)?.compactMap(\.value) ?? []
+    }
+
+    /// The string values of an object, skipping others.
+    func lossyStringMap(_ key: Key) -> [String: String] {
+        ((try? decodeIfPresent([String: Lossy<String>].self, forKey: key)) ?? nil)?.compactMapValues(\.value) ?? [:]
+    }
+
+    /// An object of string lists, skipping non-list values and non-string elements.
+    func lossyLists(_ key: Key) -> [String: [String]] {
+        let decoded = (try? decodeIfPresent([String: Lossy<[Lossy<String>]>].self, forKey: key)) ?? nil
+        return decoded?.compactMapValues { $0.value?.compactMap(\.value) } ?? [:]
+    }
+
+    /// The elements of an array that decode, skipping the rest.
+    func lossyArray<Element: Decodable>(_ key: Key) -> [Element] {
+        ((try? decodeIfPresent([Lossy<Element>].self, forKey: key)) ?? nil)?.compactMap(\.value) ?? []
     }
 }
 
@@ -90,11 +124,12 @@ struct PCodeCommandCatalog: Equatable, Sendable {
         }
 
         init(from decoder: Decoder) throws {
+            // Lenient throughout: a malformed command or value drops alone.
             let values = try decoder.container(keyedBy: CodingKeys.self)
-            commands = try values.decodeIfPresent([PCodeCommand].self, forKey: .commands) ?? []
-            arguments = try values.decodeIfPresent([String: [String]].self, forKey: .arguments) ?? [:]
-            skills = try values.decodeIfPresent([String].self, forKey: .skills) ?? []
-            models = try values.decodeIfPresent([String].self, forKey: .models) ?? []
+            commands = values.lossyArray(.commands)
+            arguments = values.lossyLists(.arguments)
+            skills = values.lossyStrings(.skills)
+            models = values.lossyStrings(.models)
         }
 
         /// From a `session_state` payload already parsed with `JSONSerialization`;
@@ -140,6 +175,20 @@ struct PCodeCommandCatalog: Equatable, Sendable {
     /// The command for a name or alias.
     func find(_ name: String) -> PCodeCommand? {
         commands.first { $0.name == name || $0.aliases.contains(name) }
+    }
+
+    /// Who runs a submitted command line, as `runs_in_terminal` in
+    /// `src/pcode/controller.py` decides: a terminal command by name or alias,
+    /// and `/new PROMPT` (which starts a host beside this one), are not the
+    /// session's. Everything else, unknown commands included, goes to the host.
+    func handling(for line: String) -> PCodeCommand.Handling {
+        let parts = line.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+        guard let first = parts.first else { return .session }
+        let name = String(first)
+        // `background_prompt`: `/new` with a prompt; bare `/new` resets the session.
+        if name == "/new", parts.count == 2, !parts[1].allSatisfy(\.isWhitespace) { return .terminal }
+        let terminal = Self.terminalCommands.first { $0.name == name || $0.aliases.contains(name) }
+        return terminal?.handling ?? .session
     }
 
     /// Completions for the composer's text around the caret, as pcode's `/` menu offers them.
@@ -189,9 +238,21 @@ struct PCodeCommandCatalog: Equatable, Sendable {
         return ([btw.name] + btw.aliases).contains(first)
     }
 
-    /// `aside_completions` for `$model` words; `+effort` words complete nothing here.
+    /// `pcode.preferences.EFFORTS`, which `+effort` words complete from.
+    static let efforts = ["low", "medium", "high", "xhigh", "default"]
+
+    /// `aside_completions`: after a `+` (bare, or ending a `$model` word) the
+    /// effort levels; otherwise models for a `$model` word.
     private func modelCompletions(_ text: String) -> [Completion] {
-        guard let word = Self.typedWord(text), word.hasPrefix("$"), !word.contains("+") else { return [] }
+        guard let word = Self.typedWord(text) else { return [] }
+        if let plus = word.lastIndex(of: "+") {
+            let effort = String(word[word.index(after: plus)...])
+            let folded = PCodePickMatch.casefold(effort)
+            let length = (effort as NSString).length
+            return Self.efforts.filter { $0.hasPrefix(folded) }
+                .map { Completion(text: $0, replaceLength: length, display: "+" + $0, meta: "") }
+        }
+        guard word.hasPrefix("$") else { return [] }
         let fragment = String(word.dropFirst())
         let needle = PCodePickMatch.casefold(fragment)
         let length = (word as NSString).length
@@ -288,9 +349,10 @@ struct PCodeCatalogStore: Sendable {
 
     static let lastName = "last.json"
 
-    /// The workspace's file name: the SHA-256 of its standardized path, in hex.
+    /// The workspace's file name: the SHA-256 of its resolved path (as
+    /// Python's `Path.resolve()`, so `/tmp/x` and `/private/tmp/x` agree), in hex.
     static func fileName(for workspace: String) -> String {
-        let path = URL(fileURLWithPath: workspace).standardizedFileURL.path
+        let path = PCodeFileIndex.canonical(URL(fileURLWithPath: workspace)).path
         let digest = SHA256.hash(data: Data(path.utf8))
         return digest.map { String(format: "%02x", $0) }.joined() + ".json"
     }

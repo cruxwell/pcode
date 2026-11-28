@@ -88,6 +88,39 @@ struct PCodePastedImageTests {
         #expect(PCodePastedImage.insertion("~/a.png", before: "look") == " ~/a.png ")
     }
 
+    @Test func textWinsOverAnImage() {
+        let board = NSPasteboard(name: .init("pcode-test-\(UUID().uuidString)"))
+        defer { board.releaseGlobally() }
+        board.clearContents()
+        #expect(!PCodePastedImage.prefersImage(board))
+        board.declareTypes([.string, .png], owner: nil)
+        board.setString("copied text", forType: .string)
+        board.setData(png(width: 1, height: 1), forType: .png)
+        #expect(!PCodePastedImage.prefersImage(board))
+        board.clearContents()
+        board.setData(png(width: 1, height: 1), forType: .png)
+        #expect(PCodePastedImage.prefersImage(board))
+    }
+
+    @Test func asyncPasteSavesOffMainAndCallsBackOnMain() async {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let board = NSPasteboard(name: .init("pcode-test-\(UUID().uuidString)"))
+        defer { board.releaseGlobally() }
+        board.clearContents()
+        board.setData(png(width: 2, height: 2), forType: .png)
+        let pasted: [PCodePastedImage.Pasted] = await withCheckedContinuation { continuation in
+            PCodePastedImage.paste(from: board, directory: directory) { pasted in
+                #expect(Thread.isMainThread)
+                continuation.resume(returning: pasted)
+            }
+        }
+        #expect(pasted.count == 1)
+        #expect(pasted.first?.savedPath.map { FileManager.default.fileExists(atPath: $0.path) } == true)
+        // No `.tmp` left behind.
+        #expect((try? FileManager.default.contentsOfDirectory(atPath: directory.path))?.count == 1)
+    }
+
     @Test func pasteboardImageAndFiles() throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -146,8 +146,60 @@ struct PCodeCommandCatalogTests {
         #expect(catalog.completions(before: "!echo $gpt").isEmpty)
         #expect(catalog.completions(before: "/compact $gpt").isEmpty)
         #expect(catalog.completions(before: "hi $gpt", after: "x").isEmpty)
-        // An effort word is pcode's; nothing here, and no `/` menu either.
-        #expect(catalog.completions(before: "/btw +hi").isEmpty)
+    }
+
+    @Test func effortWordsComplete() throws {
+        let catalog = try catalog()
+        let completions = catalog.completions(before: "/btw +hi")
+        #expect(completions == [.init(text: "high", replaceLength: 2, display: "+high", meta: "")])
+        #expect(texts(catalog.completions(before: "why $gpt+")) == PCodeCommandCatalog.efforts)
+        #expect(texts(catalog.completions(before: "why +X")) == ["xhigh"])
+        #expect(catalog.completions(before: "why +zzz").isEmpty)
+    }
+
+    // MARK: Handling
+
+    @Test func handlingMirrorsRunsInTerminal() throws {
+        let catalog = try catalog()
+        #expect(catalog.handling(for: "/diffs") == .native)
+        #expect(catalog.handling(for: "  /switch host-1 ") == .native)
+        #expect(catalog.handling(for: "/exit") == .terminal)
+        #expect(catalog.handling(for: "/theme dark") == .terminal)
+        #expect(catalog.handling(for: "/new fix the build") == .terminal)
+        #expect(catalog.handling(for: "/new") == .session)
+        #expect(catalog.handling(for: "/new   ") == .session)
+        #expect(catalog.handling(for: "/compact now") == .session)
+        #expect(catalog.handling(for: "/unknown") == .session)
+        #expect(catalog.handling(for: "") == .session)
+    }
+
+    // MARK: Lenient decoding
+
+    @Test func malformedEntriesDropAlone() throws {
+        let json = """
+        {"commands": [
+            {"name": "/ok", "arguments": ["a", 3, null, "b"], "aliases": "nope",
+             "argument_descriptions": {"a": "A", "b": 2}, "free_arguments": "yes", "group": 7},
+            {"description": "no name"},
+            {"name": 5},
+            "garbage",
+            {"name": "/also"}
+         ],
+         "arguments": {"/ok": ["x", 1], "/bad": "x", "/null": null},
+         "skills": ["/s", false],
+         "models": "not a list"}
+        """
+        let snapshot = try PCodeCommandCatalog.Snapshot(sessionStateJSON: Data(json.utf8))
+        #expect(snapshot.commands.map(\.name) == ["/ok", "/also"])
+        let ok = snapshot.commands[0]
+        #expect(ok.arguments == ["a", "b"])
+        #expect(ok.aliases.isEmpty)
+        #expect(ok.argumentDescriptions == ["a": "A"])
+        #expect(!ok.freeArguments)
+        #expect(ok.group == "Other")
+        #expect(snapshot.arguments == ["/ok": ["x"]])
+        #expect(snapshot.skills == ["/s"])
+        #expect(snapshot.models.isEmpty)
     }
 
     // MARK: Snapshots
@@ -181,6 +233,8 @@ struct PCodeCommandCatalogTests {
         let name = PCodeCatalogStore.fileName(for: "/tmp/a")
         #expect(name.count == 64 + 5)
         #expect(name == PCodeCatalogStore.fileName(for: "/tmp/a/"))
+        // `/tmp` is a link to `/private/tmp`; Python's resolve() names the latter.
+        #expect(PCodeCatalogStore.fileName(for: "/tmp") == PCodeCatalogStore.fileName(for: "/private/tmp"))
         #expect(name != PCodeCatalogStore.fileName(for: "/tmp/b"))
     }
 }

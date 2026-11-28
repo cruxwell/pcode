@@ -21,7 +21,7 @@ enum PCodePastedImage {
     /// `pcode.images.MAX_IMAGE_SIDE`.
     static let maxImageSide = 8000
 
-    struct Pasted: Equatable {
+    struct Pasted: Equatable, Sendable {
         /// What to insert at the caret (see `insertion(_:before:)`).
         let reference: String
         /// The saved file, nil when the pasteboard named an existing file.
@@ -42,9 +42,21 @@ enum PCodePastedImage {
         !fileURLs(pasteboard).isEmpty || pasteboard.availableType(from: [.png, .tiff]) != nil
     }
 
+    /// Whether ⌘V should take `paste(from:)` rather than the text view's own
+    /// paste. Text wins whenever there is any: copying from a browser or a
+    /// document often puts a picture of the selection beside its text, and the
+    /// user meant the text. Only a pasteboard with no `.string` goes this way.
+    static func prefersImage(_ pasteboard: NSPasteboard) -> Bool {
+        pasteboard.availableType(from: [.string]) == nil && canPaste(pasteboard)
+    }
+
     /// The references for `pasteboard`: its file URLs as they are (as a terminal
     /// types a dropped file's path), else its image saved as a PNG. Empty when
     /// it holds neither.
+    ///
+    /// Off main only: converting, hashing and shrinking a Retina screenshot
+    /// takes a noticeable moment. Read the pasteboard on main and use
+    /// `paste(from:completion:)`, which does the rest on a background queue.
     static func paste(from pasteboard: NSPasteboard, directory: URL = pastesDirectory) -> [Pasted] {
         let urls = fileURLs(pasteboard)
         if !urls.isEmpty {
@@ -55,12 +67,34 @@ enum PCodePastedImage {
         return [pasted]
     }
 
+    /// `paste(from:)` for the main thread: the pasteboard is read here, saving
+    /// happens on a background queue, and `completion` runs on main.
+    static func paste(
+        from pasteboard: NSPasteboard, directory: URL = pastesDirectory,
+        completion: @escaping @Sendable ([Pasted]) -> Void
+    ) {
+        let urls = fileURLs(pasteboard)
+        if !urls.isEmpty {
+            completion(urls.map { Pasted(reference: reference($0), savedPath: nil, unsendable: nil) })
+            return
+        }
+        guard let data = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) else {
+            completion([])
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let pasted = save(data, directory: directory).map { [$0] } ?? []
+            DispatchQueue.main.async { completion(pasted) }
+        }
+    }
+
     private static func fileURLs(_ pasteboard: NSPasteboard) -> [URL] {
         (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
     }
 
     /// `prompt_images.paste`: save image data (PNG, or anything `NSBitmapImageRep`
     /// reads, converted to PNG), shrinking it if it is too large to send.
+    /// Off main only (see `paste(from:)`).
     static func save(_ data: Data, directory: URL = pastesDirectory, now: Date = Date()) -> Pasted? {
         guard let png = pngData(data) else { return nil }
         let manager = FileManager.default
@@ -148,16 +182,21 @@ enum PCodePastedImage {
         }
     }
 
-    /// Write with mode 0600: a screenshot can hold anything that was on screen.
+    /// Write with mode 0600 (a screenshot can hold anything that was on
+    /// screen) through a `.tmp` sibling and a rename, so a prompt already
+    /// naming the file never reads it half written.
     private static func write(_ data: Data, to path: URL) -> Bool {
-        let fd = open(path.path, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
+        let temporary = path.deletingPathExtension().appendingPathExtension("\(getpid()).tmp")
+        let fd = open(temporary.path, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
         guard fd >= 0 else { return false }
         let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         do {
             try handle.write(contentsOf: data)
             try handle.close()
+            guard rename(temporary.path, path.path) == 0 else { throw CocoaError(.fileWriteUnknown) }
             return true
         } catch {
+            try? FileManager.default.removeItem(at: temporary)
             return false
         }
     }
