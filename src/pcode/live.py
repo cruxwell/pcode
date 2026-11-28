@@ -35,7 +35,6 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.anthropic import AnthropicStaleThinkingBlockWarning
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.file_system import FileSystem
@@ -109,8 +108,10 @@ from pcode.worker_channel import WorkerHub
 
 # Pydantic AI already recovered (it resent without the stale thinking) and
 # recorded the drop on the response, so the warning is noise even in the
-# library log, and a wall of stderr where that log is not installed.
-warnings.filterwarnings("ignore", category=AnthropicStaleThinkingBlockWarning)
+# library log, and a wall of stderr where that log is not installed. Matched by
+# message: its category lives in `pydantic_ai.models.anthropic`, and importing
+# that loads the Anthropic SDK (~80 MB) into sessions on other providers.
+warnings.filterwarnings("ignore", message=r".* rejected a replayed thinking block:")
 
 
 _SIGNING_PROVIDERS = frozenset({"anthropic", "claude"})

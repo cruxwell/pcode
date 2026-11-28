@@ -219,7 +219,12 @@ def test_native_composer_chrome_hides_terminal_status_and_toolbar(monkeypatch):
             "btw_running": 0,
             "btw_ready": 1,
             "cache_note": "",
+            "draft": False,
         }
+        buffer = session.default_buffer
+        monkeypatch.setattr(session, "default_buffer", SimpleNamespace(text="half a thought"))
+        assert layout.native_composer_payload()["draft"] is True
+        monkeypatch.setattr(session, "default_buffer", buffer)
         # Running a single tool reports coarse "Working" (no command text).
         activity.tools.record(
             ToolStarted(call_id="c1", name="shell", detail="ls -la", command="ls -la")

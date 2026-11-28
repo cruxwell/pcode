@@ -65,7 +65,7 @@ final class PCodeAppHooksImpl: NSObject, PCodeAppHooks {
         // has sessions, so reopening a closed empty window doesn't add one.
         let controller = PCodeWorkspaceController.shared(ghostty)
         let wasVisible = controller.window?.isVisible == true
-        if wasVisible || !controller.workspace.panes.isEmpty {
+        if wasVisible || !controller.workspace.panes.isEmpty || !controller.workspace.dormant.isEmpty {
             controller.workspace.newSession()
         }
         PCodeWorkspaceController.show(ghostty)

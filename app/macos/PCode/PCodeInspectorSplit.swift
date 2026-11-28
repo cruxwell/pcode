@@ -37,6 +37,25 @@ enum PCodeHostControlRPC {
         }
     }
 
+    /// Ask the session's host to stop once its pane's terminal has gone and it
+    /// is idle, keeping the worktree (`SessionHost.release`). False when the
+    /// host is unreachable or too old to know `release`: then the pane must
+    /// not be torn down, since a plain idle stop tidies the session away.
+    static func release(
+        sessionID: String,
+        hostID: String?,
+        completion: @escaping @MainActor (Bool) -> Void
+    ) {
+        queue.async {
+            var ok = false
+            if let socketPath = PCodeSessionInfo.hostSocketPath(forSessionID: sessionID, hostID: hostID),
+               case .success(let value) = sendRequestWithReply(socketPath: socketPath, method: "release", args: []) {
+                ok = (value as? Bool) == true
+            }
+            Task { @MainActor in completion(ok) }
+        }
+    }
+
     struct ControlError: LocalizedError {
         let message: String
         var errorDescription: String? { message }

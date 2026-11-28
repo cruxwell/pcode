@@ -299,6 +299,70 @@ struct PCodeSidebarTests {
         return try JSONDecoder().decode(PCodeSessionInfo.self, from: Data(json.utf8))
     }
 
+    private func makeInfo(_ id: String, workspace: String, created: String) throws -> PCodeSessionInfo {
+        let json = """
+        {"id":"\(id)","workspace":"\(workspace)","created":"\(created)","updated":"\(created)","title":"\(id)","turns":1}
+        """
+        return try JSONDecoder().decode(PCodeSessionInfo.self, from: Data(json.utf8))
+    }
+
+    @Test func dormantSessionsAreOpenRowsNotRecents() throws {
+        let proj = PCodeWorkspace.normalizePath("/tmp/dormant-proj")
+        let old = try makeInfo("old", workspace: proj, created: "2026-01-01T00:00:00+00:00")
+        let new = try makeInfo("new", workspace: proj, created: "2026-02-01T00:00:00+00:00")
+        let recent = try makeInfo("recent", workspace: proj, created: "2026-03-01T00:00:00+00:00")
+        let groups = PCodeWorkspace.buildProjectGroups(
+            panes: [], projectPathForPane: { $0.projectPath }, history: [recent, new, old],
+            detachedHostStatuses: [:], pinnedFolders: [], hiddenFolders: [proj],
+            starredSessionIDs: ["old"], dormant: [old, new])
+        // Listed even in a hidden folder, as open panes are.
+        let group = try #require(groups.first)
+        #expect(group.openRows.map(\.sessionID) == ["old", "new"], "starred first, then newest")
+        #expect(group.starredOpenRows.map(\.sessionID) == ["old"])
+        #expect(group.recentSessions.map(\.id) == ["recent"])
+        #expect(group.activity == .idle)
+        #expect(group.hasUnseen(["new"]))
+    }
+
+    private func composer(jobs: Int = 0, btwReady: Int = 0, draft: Bool? = false) throws -> PCodeComposerStatus {
+        let draftField = draft.map { ",\"draft\":\($0)" } ?? ""
+        let json = """
+        {"busy":false,"phase":"","send_mode":"steering","send_mode_once":false,"starting":false,"steering_pending":0,"queued":0,"jobs":\(jobs),"btw_running":0,"btw_ready":\(btwReady),"cache_note":""\(draftField)}
+        """
+        return try #require(PCodeComposerStatus.decode(base64: Data(json.utf8).base64EncodedString()))
+    }
+
+    @Test func hibernatesOnlyAnIdleHiddenPaneWithNothingToLose() throws {
+        func decide(
+            hiddenFor: TimeInterval = 700, after: TimeInterval = 600, ready: Bool = true,
+            activity: PCodeSessionPane.Activity = .idle, hostState: String? = "idle",
+            composer: PCodeComposerStatus? = nil, hasShell: Bool = false, turns: Int = 3
+        ) -> Bool {
+            let work = composer == nil ? PCodePaneWork() : PCodePaneWork(status: composer)
+            return PCodeWorkspace.shouldHibernate(
+                hiddenFor: hiddenFor, after: after, ready: ready, activity: activity,
+                hostState: hostState, work: work, hasShell: hasShell, turns: turns)
+        }
+        #expect(decide())
+        #expect(!decide(after: 0), "0 minutes turns hibernation off")
+        #expect(!decide(hiddenFor: 100))
+        #expect(!decide(ready: false))
+        #expect(!decide(activity: .running))
+        #expect(!decide(activity: .failed), "an unseen failure stays live")
+        #expect(!decide(hostState: nil), "no host to release")
+        #expect(!decide(hostState: "working"))
+        #expect(!decide(hasShell: true), "its shell would be killed")
+        #expect(!decide(turns: 0), "its host would delete a turnless session")
+        #expect(!decide(composer: try composer(draft: true)), "unsent text")
+        #expect(!decide(composer: try composer(jobs: 1)))
+        #expect(!decide(composer: try composer(btwReady: 1)))
+        #expect(!decide(composer: try composer(draft: nil)), "a pcode too old to report drafts")
+        #expect(PCodePaneWork(queued: 1).isQuiet == false, "a native composer's queued prompt")
+        #expect(!PCodeWorkspace.shouldHibernate(
+            hiddenFor: 700, after: 600, ready: true, activity: .idle, hostState: "idle",
+            work: nil, hasShell: false, turns: 3), "a composer not attached can't tell")
+    }
+
     @Test func quietProjectKeepsItsFolderAndExactCounts() throws {
         let busy = PCodeWorkspace.normalizePath("/tmp/busy-proj")
         let quiet = PCodeWorkspace.normalizePath("/tmp/quiet-proj")

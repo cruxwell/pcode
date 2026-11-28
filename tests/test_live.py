@@ -43,6 +43,30 @@ def test_other_model_strings_are_passed_unchanged(tmp_path):
     assert constructor.call_args.args == ("openai:example",)
 
 
+def test_stale_thinking_block_warning_is_silenced():
+    # Matched by message so pcode.live need not import the Anthropic SDK; this
+    # catches upstream rewording it. A subprocess, so pytest's filters stay out.
+    import subprocess
+    import sys
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-W",
+            "error",
+            "-c",
+            "import pcode.live\n"
+            "from pydantic_ai.models.anthropic._thinking_binding import (\n"
+            "    warn_stale_thinking_block_recovery,\n"
+            ")\n"
+            "warn_stale_thinking_block_recovery('claude-test')\n",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_stream_runs_real_coder_read_tool_and_retains_history(tmp_path):
     (tmp_path / "sample.txt").write_text("a unique workspace marker")
     requests = []
